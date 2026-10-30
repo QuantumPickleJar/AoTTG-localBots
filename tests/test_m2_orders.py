@@ -109,8 +109,8 @@ class OrdersTest(unittest.TestCase):
         self.assertTrue(panel._open)
         self.assertTrue(panel._panel.active)
         self.assertIn(("cursor", True), camera)
-        self.assertIn(("lock", True), camera)
-        self.assertEqual(inputs[-1], False)
+        self.assertNotIn(("lock", True), camera)
+        self.assertEqual(len(inputs), 1)
         keys.clear()
         panel.OnFrame()
         self.assertTrue(panel._open)
@@ -120,6 +120,7 @@ class OrdersTest(unittest.TestCase):
         self.assertFalse(panel._panel.active)
         self.assertEqual(camera[-1], ("cursor", False))
         self.assertEqual(inputs[-1], True)
+        self.assertIn(("lock", False), camera)
 
     def test_commands_are_pending_until_matching_m2_controller_acks(self):
         panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
@@ -181,6 +182,7 @@ class OrdersTest(unittest.TestCase):
         self.assertTrue(roots[0].children[0].removed)
         self.assertEqual(camera[-1], ("cursor", False))
         self.assertEqual(inputs[-1], True)
+        self.assertIn(("lock", False), camera)
 
     def test_nonmaster_cannot_create_menu_or_issue_orders(self):
         panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller(master=False)
