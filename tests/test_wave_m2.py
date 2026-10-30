@@ -244,14 +244,21 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "PlanApproach")
         self.assertTrue(any("target_selected" in m and "distance=" in m for m in w.messages))
 
-    def test_distant_target_dispatches_a_hook_approach(self):
+    def test_distant_target_first_walks_then_dispatches_hook_near_titan(self):
         w = World()
         w.tick()
         w.titan.Position = Vector(0, 0, 600)
         w.titan.NapePosition = Vector(0, 8, 602)
-        w.hit = NS(Point=Vector(4, 20, 48), Distance=46.0)
         w.controller.Enter("AcquireTarget", "test")
         w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertTrue(any(action[0] == "move_to_target" for action in w.cadet.calls))
+        # Mock physical progress from the engine's continuing MoveToTarget state.
+        w.cadet.Position = Vector(0, 0, 570)
+        w.tick()
+        self.assertEqual(w.controller._state, "PlanApproach")
+        w.hit = NS(Point=Vector(0, 20, 610), Distance=44.0)
         w.tick()
         self.assertEqual(w.controller._state, "TraverseAttach")
         self.assertTrue(any(action[0] == "launch" for action in w.cadet.calls))
