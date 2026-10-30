@@ -274,6 +274,56 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertNotEqual(w.controller._state, "Hold")
 
+    def test_order_ack_is_written_only_by_live_m2_controller(self):
+        w = World()
+        w.tick()
+        self.assertIn("AICadetsM2Heartbeat-AICadetsM2-1", w.persistent)
+        w.persistent.update({
+            "AICadetsCmdSequence": 9,
+            "AICadetsCmdMode": "Hold",
+            "AICadetsCmdScope": "all",
+        })
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertEqual(w.persistent["AICadetsM2AckSeq-AICadetsM2-1"], 9)
+        self.assertEqual(w.persistent["AICadetsM2AckMode-AICadetsM2-1"], "Hold")
+        self.assertEqual(w.persistent["AICadetsM2AckState-AICadetsM2-1"], "Hold")
+        self.assertEqual(w.persistent["AICadetsM2State-AICadetsM2-1"], "Hold")
+        self.assertTrue(any("order_applied" in x and "seq=9" in x for x in w.messages))
+
+    def test_scope_mismatch_does_not_emit_false_ack(self):
+        w = World()
+        w.tick()
+        w.persistent.update({
+            "AICadetsCmdSequence": 6,
+            "AICadetsCmdMode": "Explore",
+            "AICadetsCmdScope": "AICadetsM2-2",
+        })
+        w.tick()
+        self.assertNotIn("AICadetsM2AckSeq-AICadetsM2-1", w.persistent)
+        self.assertTrue(any("order_ignored" in x for x in w.messages))
+
+    def test_hold_release_restores_explore_and_ack_without_new_cadet(self):
+        w = World()
+        w.tick()
+        w.persistent.update({
+            "AICadetsCmdSequence": 1,
+            "AICadetsCmdMode": "Hold",
+            "AICadetsCmdScope": "AICadetsM2-1",
+        })
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        w.persistent.update({
+            "AICadetsCmdSequence": 2,
+            "AICadetsCmdMode": "Explore",
+            "AICadetsCmdScope": "all",
+        })
+        w.tick()
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertEqual(w.persistent["AICadetsM2AckSeq-AICadetsM2-1"], 2)
+        self.assertEqual(w.persistent["AICadetsM2AckState-AICadetsM2-1"], "Explore")
+        self.assertEqual(w.spawns, 1)
+
     def test_hold_explore_engage_orders_switch_states(self):
         w = World()
         w.tick()
