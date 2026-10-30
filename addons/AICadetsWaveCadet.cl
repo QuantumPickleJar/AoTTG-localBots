@@ -16,7 +16,7 @@ addon AICadetsWaveCadet
     ApproachHeight = 6.0;
     RetreatDistance = 24.0;
     TraverseProgressMin = 4.0;
-    MaxTraversePerTarget = 5;
+    MaxTraversePerTarget = 30;
     MaxTargetRetries = 3;
     MaxRecoveriesPerTarget = 2;
     Diagnostics = true;
@@ -28,6 +28,7 @@ addon AICadetsWaveCadet
     _stateStart = 0.0;
     _runStart = 0.0;
     _nextTickReport = 0.0;
+    _noTargetCooldownUntil = 0.0;
     _cadet = null;
     _cadetName = "";
     _runId = "";
@@ -135,7 +136,7 @@ addon AICadetsWaveCadet
         }
         if (Time.GameTime >= self._nextTickReport)
         {
-            self._nextTickReport = Time.GameTime + 1.0;
+            self._nextTickReport = Time.GameTime + 5.0;
             self.LogEvent("mission_snapshot", "titans=" + Convert.ToString(Game.Titans.Count) + " humans=" + Convert.ToString(Game.Humans.Count) + " player_humans=" + Convert.ToString(Game.PlayerHumans.Count));
         }
         if (self.IsTraverseState() && Time.GameTime >= self._nextRiskCheck)
@@ -151,7 +152,7 @@ addon AICadetsWaveCadet
 
         if (self._state == "Regroup")
         {
-            if (Time.GameTime - self._stateStart >= 0.35)
+            if (Time.GameTime - self._stateStart >= 0.35 && Time.GameTime >= self._noTargetCooldownUntil)
             {
                 self.Enter("AcquireTarget", "regroup_complete");
             }
@@ -267,7 +268,7 @@ addon AICadetsWaveCadet
 
     function SpawnCadet(host)
     {
-        if (self.HookReach < 20.0 || self.HookReach > 70.0 || self.AnchorRise < 4.0 || self.AnchorRise > 25.0 || self.BurstSeconds < 0.1 || self.BurstSeconds > 0.8 || self.MinGasReserve < 4.0 || self.MinAttackGas <= self.MinGasReserve || self.AttackRange < 6.0 || self.AttackRange > 18.0 || self.MaxTraversePerTarget < 1 || self.MaxTraversePerTarget > 8 || self.MaxTargetRetries < 1 || self.MaxTargetRetries > 6 || self.MaxRecoveriesPerTarget < 0 || self.MaxRecoveriesPerTarget > 4)
+        if (self.HookReach < 20.0 || self.HookReach > 70.0 || self.AnchorRise < 4.0 || self.AnchorRise > 25.0 || self.BurstSeconds < 0.1 || self.BurstSeconds > 0.8 || self.MinGasReserve < 4.0 || self.MinAttackGas <= self.MinGasReserve || self.AttackRange < 6.0 || self.AttackRange > 18.0 || self.MaxTraversePerTarget < 1 || self.MaxTraversePerTarget > 40 || self.MaxTargetRetries < 1 || self.MaxTargetRetries > 6 || self.MaxRecoveriesPerTarget < 0 || self.MaxRecoveriesPerTarget > 4)
         {
             self.Terminate("failure", "invalid_settings");
             return;
@@ -321,27 +322,37 @@ addon AICadetsWaveCadet
         return "";
     }
 
+    # Search all existing live Titans, not only those within a fixed combat radius.
+    # A distant valid target is a navigation goal; proximity should affect approach,
+    # not whether the target exists.
     function AcquireTarget()
     {
         self._target = null;
         self._targetViewId = 0;
         self._targetDamaged = false;
         self._targetKilled = false;
-        best = -100000.0;
+        best = -1000000.0;
+        listed = 0;
+        alive = 0;
+        banned = 0;
+        nearest = -1.0;
         for (titan in Game.Titans)
         {
+            listed = listed + 1;
             if (!titan.IsAlive)
             {
                 continue;
             }
-            if (self._bannedTargetViewId != 0 && titan.ViewID == self._bannedTargetViewId && Time.GameTime < self._banUntil)
-            {
-                continue;
-            }
+            alive = alive + 1;
             toNape = titan.NapePosition - self._cadet.Position;
             distance = toNape.Magnitude;
-            if (distance > 220.0)
+            if (nearest < 0.0 || distance < nearest)
             {
+                nearest = distance;
+            }
+            if (self._bannedTargetViewId != 0 && titan.ViewID == self._bannedTargetViewId && Time.GameTime < self._banUntil)
+            {
+                banned = banned + 1;
                 continue;
             }
             score = 260.0 - distance;
@@ -362,15 +373,24 @@ addon AICadetsWaveCadet
         }
         if (self._target == null)
         {
-            self.LogEvent("target_none", "reason=no_alive_titan");
+            reason = "no_alive_titans";
+            if (alive > 0 && banned > 0)
+            {
+                reason = "all_candidates_temporarily_banned";
+            }
+            self.LogEvent("target_none", "reason=" + reason + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive) + " banned=" + Convert.ToString(banned) + " nearest=" + Convert.ToString(nearest));
+            # Leave room for wave spawns / temporary target bans without 3 log lines
+            # every 0.35 seconds, which previously exhausted the 260-print budget.
+            self._noTargetCooldownUntil = Time.GameTime + 2.5;
             self.Enter("Regroup", "no_target");
             return;
         }
+        self._noTargetCooldownUntil = 0.0;
         self._targetRetryCount = 0;
         self._targetTraverseCount = 0;
         self._targetRecoveries = 0;
         self._lastDistanceToNape = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
-        self.LogEvent("target_selected", "view_id=" + Convert.ToString(self._targetViewId) + " distance=" + Convert.ToString(self._lastDistanceToNape));
+        self.LogEvent("target_selected", "view_id=" + Convert.ToString(self._targetViewId) + " distance=" + Convert.ToString(self._lastDistanceToNape) + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive));
         self.Enter("PlanApproach", "target_selected");
     }
 
@@ -421,7 +441,7 @@ addon AICadetsWaveCadet
             self._trStartDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
         }
         self._trStartPosition = self._cadet.Position;
-        self.LogEvent("traverse_start", "mode=" + mode + " goal=" + Convert.ToString(goal));
+        self.LogEvent("traverse_start", "mode=" + mode + " goal=" + Convert.ToString(goal) + " target_dist=" + Convert.ToString(self._trStartDistance) + " attempts=" + Convert.ToString(self._targetTraverseCount));
         self.BeginTraverseLeg();
     }
 
@@ -432,13 +452,12 @@ addon AICadetsWaveCadet
         horizontalVelocity = Vector3(velocity.X, 0.0, velocity.Z);
         toGoal = self._traverseGoal - self._cadet.Position;
         baseDirection = Vector3.Normalize(Vector3(toGoal.X, 0.0, toGoal.Z));
+        # Blend existing momentum with goal bearing so the second leg remains
+        # target-directed. Following velocity alone can steer away from a Titan.
+        self._direction = baseDirection;
         if (self._trLeg == 2 && horizontalVelocity.Magnitude >= 2.0)
         {
-            self._direction = horizontalVelocity.Normalized;
-        }
-        else
-        {
-            self._direction = baseDirection;
+            self._direction = Vector3.Normalize(baseDirection * 0.8 + horizontalVelocity.Normalized * 0.2);
         }
         self._anchor = null;
         self._bestScore = -100000.0;
@@ -453,8 +472,17 @@ addon AICadetsWaveCadet
         self.ConsiderAnchor(Vector3.Normalize(self._direction - right * 0.45), rise);
         self.ConsiderAnchor(self._direction, rise * 1.6);
         self.ConsiderAnchor(Vector3.Normalize(self._direction + right * 0.8), rise);
+        # City streets often have no forward-facing hookable wall; search
+        # both lateral building facades before abandoning a long-range goal.
         if (self._anchor == null)
         {
+            self.ConsiderAnchor(Vector3.Normalize(self._direction - right * 0.8), rise);
+            self.ConsiderAnchor(Vector3.Normalize(self._direction + right * 1.8), rise);
+            self.ConsiderAnchor(Vector3.Normalize(self._direction - right * 1.8), rise);
+        }
+        if (self._anchor == null)
+        {
+            self.LogEvent("anchor_search_failed", "goal=" + Convert.ToString(self._traverseGoal) + " position=" + Convert.ToString(self._cadet.Position) + " leg=" + Convert.ToString(self._trLeg));
             self._trOutcome = "no_suitable_anchor";
             self.FinishTraverse();
             return;
@@ -666,7 +694,28 @@ addon AICadetsWaveCadet
         {
             self._direction = Vector3.Normalize(Vector3(self._cadet.Forward.X, 0.0, self._cadet.Forward.Z));
         }
-        recoverGoal = self._cadet.Position + self._direction * 22.0 + Vector3(0.0, 10.0, 0.0);
+        # After a blocked/empty forward corridor, try a different lateral
+        # approach on each bounded recovery attempt instead of repeating the
+        # same heading and getting the same no-anchor result.
+        if (self._target != null && self._target.IsAlive)
+        {
+            toTarget = self._target.NapePosition - self._cadet.Position;
+            flatTarget = Vector3(toTarget.X, 0.0, toTarget.Z);
+            if (flatTarget.Magnitude >= 1.0)
+            {
+                self._direction = flatTarget.Normalized;
+            }
+        }
+        right = Vector3(self._direction.Z, 0.0, 0.0 - self._direction.X);
+        if (self._targetRecoveries == 1)
+        {
+            self._direction = Vector3.Normalize(self._direction + right * 0.8);
+        }
+        else
+        {
+            self._direction = Vector3.Normalize(self._direction - right * 0.8);
+        }
+        recoverGoal = self._cadet.Position + self._direction * 30.0 + Vector3(0.0, 10.0, 0.0);
         self.StartTraverse(recoverGoal, "recover");
     }
 
@@ -716,7 +765,9 @@ addon AICadetsWaveCadet
             return;
         }
         alignment = Vector3.Dot(horizontal.Normalized, self._direction);
-        if (alignment < 0.3)
+        # Lateral anchors are permissible when they still move the cadet
+        # at least slightly toward the current travel bearing.
+        if (alignment < 0.05)
         {
             return;
         }
