@@ -1,5 +1,13 @@
 # Changelog
 
+## M1 two-anchor experiment — unreleased, awaiting gameplay validation
+
+- Add separate `AICadetsTraversal.cl`; preserve the confirmed v0.1.1 probe byte-for-byte.
+- Two sequential left-hook cycles with a velocity-directed second search, finite deadlines, resource/ownership checks, collision abort and explicit cleanup.
+- Add per-leg diagnostics, final metrics, conservative duplicate prevention and documented migration limitations.
+- Add pinned API-name/arity checks and source-driven mocked control-flow tests to CI; these do not establish in-game compatibility.
+- Add [manual acceptance and rollback instructions](M1_TESTING.md).
+
 ## v0.1.1 — Costume lookup fix (2026-10-29)
 
 - Fix the first in-game report (`AICadetsProbe.addon:57`): replace blank custom costume lookup `(0, "")` with bundled preset `(1, "Levi")`.

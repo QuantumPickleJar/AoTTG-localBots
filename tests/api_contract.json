@@ -1,0 +1,190 @@
+{
+  "revision": "ded03751aee1b1179141aeb534faa2f1fc266aff",
+  "reviewed": "2026-10-29",
+  "types": {
+    "Game": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Game.md",
+      "methods": {
+        "SpawnHumanAt": {
+          "signature": "function SpawnHumanAt(costume: int, costumeName: string, loadout: string, position: Vector3, rotationY: float = 0) -> Human",
+          "min_args": 4,
+          "max_args": 5
+        },
+        "Print": {
+          "signature": "function Print(message: Object)",
+          "min_args": 1,
+          "max_args": 1
+        }
+      },
+      "properties": [
+        "AIHumans"
+      ]
+    },
+    "Human": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Human.md",
+      "methods": {
+        "Idle": {
+          "signature": "function Idle()",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "AimAt": {
+          "signature": "function AimAt(position: Vector3)",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "Jump": {
+          "signature": "function Jump()",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "UseGas": {
+          "signature": "function UseGas(useGas: bool)",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "LaunchHookLeft": {
+          "signature": "function LaunchHookLeft(aimPoint: Vector3)",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "ReleaseHookLeft": {
+          "signature": "function ReleaseHookLeft()",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "ReleaseHookRight": {
+          "signature": "function ReleaseHookRight()",
+          "min_args": 0,
+          "max_args": 0
+        }
+      },
+      "properties": [
+        "CurrentGas",
+        "LeftHookEnabled",
+        "LeftHookReady",
+        "IsHookedLeft"
+      ]
+    },
+    "Character": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Character.md",
+      "methods": {
+        "SetDisplayName": {
+          "signature": "function SetDisplayName(name: string, showTag: bool = True)",
+          "min_args": 1,
+          "max_args": 2
+        }
+      },
+      "properties": [
+        "Name",
+        "IsAlive",
+        "IsMine",
+        "Position",
+        "Velocity",
+        "Forward",
+        "Right"
+      ]
+    },
+    "Physics": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Physics.md",
+      "methods": {
+        "LineCast": {
+          "signature": "function LineCast(start: Vector3, end: Vector3, collideWith: string) -> LineCastHitResult",
+          "min_args": 3,
+          "max_args": 3
+        }
+      },
+      "properties": []
+    },
+    "Vector3": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Collections/Vector3.md",
+      "methods": {
+        "Distance": {
+          "signature": "function Distance(a: Vector3, b: Vector3) -> float",
+          "min_args": 2,
+          "max_args": 2
+        },
+        "Dot": {
+          "signature": "function Dot(a: Vector3, b: Vector3) -> float",
+          "min_args": 2,
+          "max_args": 2
+        },
+        "Normalize": {
+          "signature": "function Normalize(value: Vector3) -> Vector3",
+          "min_args": 1,
+          "max_args": 1
+        }
+      },
+      "properties": [
+        "X",
+        "Y",
+        "Z",
+        "Normalized",
+        "Magnitude"
+      ]
+    },
+    "Network": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Network.md",
+      "methods": {},
+      "properties": [
+        "IsMasterClient",
+        "MyPlayer"
+      ]
+    },
+    "Time": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Time.md",
+      "methods": {},
+      "properties": [
+        "GameTime"
+      ]
+    },
+    "Player": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Player.md",
+      "methods": {},
+      "properties": [
+        "Character"
+      ]
+    },
+    "Convert": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Utility/Convert.md",
+      "methods": {
+        "ToString": {
+          "signature": "function ToString(value: Object) -> string",
+          "min_args": 1,
+          "max_args": 1
+        }
+      },
+      "properties": []
+    },
+    "LineCastHitResult": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Collections/LineCastHitResult.md",
+      "methods": {},
+      "properties": [
+        "Point",
+        "Distance"
+      ]
+    },
+    "LoadoutEnum": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Enums/LoadoutEnum.md",
+      "methods": {},
+      "properties": [
+        "HumanBlades"
+      ]
+    },
+    "CollideWithEnum": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Enums/CollideWithEnum.md",
+      "methods": {},
+      "properties": [
+        "MapObjects",
+        "MapEditor"
+      ]
+    },
+    "Object": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/objects/Object.md",
+      "methods": {},
+      "properties": [
+        "Type"
+      ]
+    }
+  }
+}

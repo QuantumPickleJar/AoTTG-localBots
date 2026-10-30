@@ -6,6 +6,8 @@ An experimental, local-first **AoTTG2 Custom Logic add-on** for one AI Scout's f
 
 ## Run the first test
 
+**M1 experiment:** `addons/AICadetsTraversal.cl` adds two consecutive anchors on a separate add-on. It is **awaiting in-game validation**. Follow [the M1 test procedure](docs/M1_TESTING.md) and [design/API notes](docs/M1_DESIGN.md). Enable only one AI Cadets add-on at a time. The instructions below remain the known-good M0 regression test.
+
 1. Download/copy `addons/AICadetsProbe.cl` to `Documents/AoTTG2/Addons/` (create folder if necessary). Do not put this in the `CustomLogic` game-mode directory.
 2. Open AoTTG2 and create a **private** game, selecting a quiet map with a nearby wall or substantial tree. Choose the normal game mode as you ordinarily would. The official docs indicate add-ons are configurable in the **General** panel of game creation.
 3. Turn on the **AICadetsProbe** add-on. If prompted, leave the defaults. For the initial test, **do not enable realism mode**; that is a separate later acceptance test.
@@ -38,7 +40,7 @@ Unlike a standalone custom game-mode script (`class Main`), an `addon` can be se
 
 ## Development environment
 
-VS Code has the community extension [AoTTG 2 Custom Logic](https://marketplace.visualstudio.com/items?itemName=Jagerente.aottg2cl) for Custom Logic syntax, editing, and bundling imports. This repository intentionally starts as one self-contained `.cl` file to remove build-time dependencies. GitHub Actions currently runs limited static checks; **it cannot validate the AoTTG2 interpreter or hooks in-game**.
+VS Code has the community extension [AoTTG 2 Custom Logic](https://marketplace.visualstudio.com/items?itemName=Jagerente.aottg2cl) for Custom Logic syntax, editing, and bundling imports. Each experiment is a self-contained `.cl` add-on with no build-time dependencies. GitHub Actions runs static API/structure checks, M0 hash protection and source-driven mocked control-flow tests; **it cannot validate the AoTTG2 interpreter or hooks in-game**. Local check commands and limitations are in [M1_DESIGN.md](docs/M1_DESIGN.md#automated-checks).
 
 ## Source references
 

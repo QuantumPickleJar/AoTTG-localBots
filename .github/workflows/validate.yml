@@ -3,17 +3,24 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   static-smoke:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run limited static API checks
-        run: python scripts/check_probe.py
+      - name: Preserve M0 and check pinned API names and arity
+        run: |
+          python scripts/check_probe.py
+          python scripts/check_traversal.py
+      - name: Test M1 control flow with mocked engine observations
+        run: python -m unittest discover -s tests -v
+      - name: Check whitespace
+        run: git show --format= --check HEAD
       - name: Summarize limitations
-        run: echo 'PASS does not establish AoTTG2 parser acceptance or in-game hook movement.'
+        run: echo 'PASS covers static checks and mocked control flow only. AoTTG2 parsing, physics, networking, and realism still need gameplay testing.' >> "$GITHUB_STEP_SUMMARY"
