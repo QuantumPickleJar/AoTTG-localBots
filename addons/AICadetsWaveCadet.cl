@@ -791,7 +791,7 @@ addon AICadetsWaveCadet
         }
         baseDir = baseDir.Normalized;
         right = Vector3(baseDir.Z, 0.0, 0.0 - baseDir.X);
-        pattern = self._exploreIndex % 4;
+        pattern = self._exploreIndex;
         if (pattern == 0)
         {
             return Vector3.Normalize(baseDir + right * 0.4);
@@ -828,14 +828,15 @@ addon AICadetsWaveCadet
             self._exploreNextAction = Time.GameTime + 0.5;
             return;
         }
-        if (self._exploreDirection == null || self._exploreFailures > 0)
+        self._exploreIndex = self._exploreIndex + 1;
+        if (self._exploreIndex >= 4)
         {
-            self._exploreIndex = self._exploreIndex + 1;
+            self._exploreIndex = 0;
         }
         self._exploreDirection = self.ChooseExploreHeading();
         self._exploreStartPosition = self._cadet.Position;
         exploreGoal = self._cadet.Position + self._exploreDirection * self.ExploreSegmentDistance + Vector3(0.0, self.AnchorRise, 0.0);
-        self.LogEvent("explore_step", "pattern=" + Convert.ToString(self._exploreIndex % 4) + " goal=" + Convert.ToString(exploreGoal) + " failures=" + Convert.ToString(self._exploreFailures));
+        self.LogEvent("explore_step", "pattern=" + Convert.ToString(self._exploreIndex) + " goal=" + Convert.ToString(exploreGoal) + " failures=" + Convert.ToString(self._exploreFailures));
         if (self._cadet.LeftHookReady && self._cadet.CurrentGas > self.MinAttackGas && self._exploreFailures < 3)
         {
             self.StartTraverse(exploreGoal, "explore");
@@ -862,7 +863,6 @@ addon AICadetsWaveCadet
             self.LogEvent("explore_ground", "direction=" + Convert.ToString(direction));
         }
         self._exploreNextAction = Time.GameTime + self.ExploreGroundSeconds;
-        self._exploreIndex = self._exploreIndex + 1;
         self._exploreFailures = 0;
     }
 
