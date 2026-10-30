@@ -1,0 +1,45 @@
+t,source,kind,msg,line
+0.0,watcher,watch_started,watch_started,2
+0.01999999,watcher,scout_found,scout_found,3
+0.03999998,watcher,change,"change pos=(19.00, 25.20, -540.00) vel=(0.00, 0.00, 0.00) gas=115 hooked=false hooking=false ready=true grounded=true hookpos=none",4
+0.2599999,watcher,sample,"sample pos=(19.00, 25.20, -540.00) vel=(0.00, 0.00, 0.00) gas=115 hooked=false hooking=false ready=true grounded=true hookpos=none",5
+1.019999,watcher,change,"change pos=(19.00, 25.20, -540.00) vel=(0.00, 0.00, 0.00) gas=114.8 hooked=false hooking=true ready=false grounded=true hookpos=(18.81, 25.77, -539.86)",6
+1.159999,watcher,change,"change pos=(19.00, 25.98, -540.00) vel=(0.00, 19.20, 0.00) gas=114.8 hooked=false hooking=true ready=false grounded=false hookpos=(18.90, 33.65, -520.40)",7
+1.319999,watcher,change,"change pos=(19.00, 28.92, -539.97) vel=(0.00, 23.85, 1.68) gas=114.796 hooked=true hooking=false ready=false grounded=false hookpos=(19.00, 42.03, -499.69)",8
+1.539999,watcher,sample,"sample pos=(19.00, 34.23, -538.47) vel=(0.00, 24.19, 11.12) gas=114.7121 hooked=true hooking=false ready=false grounded=false hookpos=(19.00, 42.03, -499.69)",9
+1.759999,watcher,sample,"sample pos=(19.00, 39.47, -534.86) vel=(0.00, 23.37, 20.80) gas=114.6241 hooked=true hooking=false ready=false grounded=false hookpos=(19.00, 42.03, -499.69)",10
+1.959998,watcher,change,"change pos=(19.00, 43.92, -529.73) vel=(0.00, 20.69, 29.68) gas=114.5521 hooked=false hooking=false ready=true grounded=false hookpos=none",11
+2.079998,watcher,change,"change pos=(19.00, 46.24, -526.17) vel=(0.00, 18.29, 29.68) gas=114.3521 hooked=false hooking=true ready=false grounded=false hookpos=(18.86, 46.83, -525.97)",12
+2.299998,watcher,sample,"sample pos=(19.00, 49.73, -519.64) vel=(0.00, 13.89, 29.68) gas=114.3521 hooked=false hooking=true ready=false grounded=false hookpos=(34.91, 55.63, -490.76)",13
+2.339998,watcher,change,"change pos=(19.02, 50.36, -518.42) vel=(0.84, 17.76, 31.21) gas=114.3481 hooked=true hooking=false ready=false grounded=false hookpos=(36.85, 56.69, -486.51)",14
+2.559998,watcher,sample,"sample pos=(19.80, 54.17, -510.56) vel=(5.94, 16.87, 39.44) gas=114.2602 hooked=true hooking=false ready=false grounded=false hookpos=(36.85, 56.69, -486.51)",15
+2.779998,watcher,sample,"sample pos=(21.83, 57.66, -500.96) vel=(12.16, 14.37, 46.96) gas=114.1722 hooked=true hooking=false ready=false grounded=false hookpos=(36.85, 56.69, -486.51)",16
+2.979997,watcher,change,"change pos=(25.01, 59.99, -490.96) vel=(19.29, 9.22, 52.02) gas=114.1003 hooked=false hooking=false ready=true grounded=false hookpos=none",17
+3.119997,watcher,possible_impact,"possible_impact dt=0.01999998 pre_pos=(27.33, 60.93, -484.72) pos=(27.63, 61.03, -483.90) pre_vel=(19.29, 6.82, 52.02) post_vel=(0.00, 4.77, 38.68) delta_v=23.54361 layer=MapObjects hit=(28.13, 62.21, -482.55) normal=(-1.00, 0.00, 0.00) distance=2.330009",18
+3.199997,watcher,sample,"sample pos=(27.63, 61.33, -480.81) vel=(0.00, 3.17, 38.68) gas=114.1003 hooked=false hooking=false ready=true grounded=false hookpos=none",19
+3.419997,watcher,sample,"sample pos=(27.63, 61.51, -472.30) vel=(0.00, -1.23, 38.68) gas=114.1003 hooked=false hooking=false ready=true grounded=false hookpos=none",20
+3.639997,watcher,sample,"sample pos=(27.63, 60.71, -463.79) vel=(0.00, -5.63, 38.68) gas=114.1003 hooked=false hooking=false ready=true grounded=false hookpos=none",21
+3.859997,watcher,sample,"sample pos=(27.63, 58.94, -455.28) vel=(0.00, -10.03, 38.68) gas=114.1003 hooked=false hooking=false ready=true grounded=false hookpos=none",22
+3.999996,watcher,landing_velocity_change,"landing_velocity_change dt=0.01999998 pre_pos=(27.63, 57.57, -450.64) pos=(27.63, 57.61, -449.89) pre_vel=(0.00, -12.43, 38.68) post_vel=(-0.03, 0.00, 28.29) delta_v=16.19667 map_hit=none",23
+3.999996,watcher,change,"change pos=(27.63, 57.61, -449.89) vel=(-0.03, 0.00, 28.29) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",24
+4.199996,watcher,sample,"sample pos=(27.63, 57.46, -445.53) vel=(0.02, 0.99, 15.42) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",25
+4.399996,watcher,sample,"sample pos=(27.63, 57.51, -443.06) vel=(0.00, -1.20, 10.16) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",26
+4.599996,watcher,sample,"sample pos=(27.63, 57.53, -441.57) vel=(-0.01, 0.38, 6.02) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",27
+4.659996,watcher,change,"change pos=(27.63, 57.55, -441.24) vel=(-0.01, -0.05, 5.50) gas=114.1003 hooked=false hooking=false ready=true grounded=false hookpos=none",28
+4.859996,watcher,sample,"sample pos=(27.63, 57.10, -440.14) vel=(-0.01, -4.05, 5.50) gas=114.1003 hooked=false hooking=false ready=true grounded=false hookpos=none",29
+4.979996,watcher,change,"change pos=(27.63, 56.44, -439.48) vel=(0.00, -6.45, 5.28) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",30
+5.179996,watcher,sample,"sample pos=(27.63, 56.43, -438.63) vel=(0.00, 0.00, 3.51) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",31
+5.379995,watcher,sample,"sample pos=(27.63, 56.43, -438.07) vel=(0.00, 0.00, 2.33) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",32
+5.579995,watcher,sample,"sample pos=(27.63, 56.43, -437.70) vel=(0.00, 0.00, 1.55) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",33
+5.779995,watcher,sample,"sample pos=(27.62, 56.43, -437.45) vel=(0.00, 0.00, 1.03) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",34
+5.979995,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",35
+7.999993,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",36
+10.00004,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",37
+12.00008,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",38
+14.00013,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",39
+16.00018,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",40
+18.00022,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",41
+20.00027,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",42
+22.00031,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",43
+24.00036,watcher,sample,"sample pos=(27.62, 56.43, -437.41) vel=(0.00, 0.00, 0.00) gas=114.1003 hooked=false hooking=false ready=true grounded=true hookpos=none",44
+25.02038,watcher,watch_timeout,watch_timeout,45

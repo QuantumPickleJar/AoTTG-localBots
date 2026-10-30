@@ -1,0 +1,48 @@
+# Optional M1 observer
+
+The separate `AICadetsWatcher` add-on records only the local, owned AI named `AICadetsM1`; it does not direct the bot or record player movement. Install `AICadetsWatcher.cl` alongside the current traversal add-on in `Documents/AoTTG2/Addons/`. Enable watcher with either:
+
+- baseline: `AICadetsTraversal.cl` (`AICadetsM1`)
+- reliability candidate: `AICadetsTraversalReliable.cl` (keeps bot name `AICadetsM1` for watcher compatibility)
+
+For candidate runs, the watcher remains intentionally unchanged and independent. Spawn as host and test as described in M1_TESTING.md.
+
+The watcher looks for the bot for up to 45 seconds, then observes for up to 25 seconds after discovery. It records position, velocity, gas, ground and left-hook status and hook position every 0.2 game seconds, plus fixed-tick observations when hook/ground status changes. It saves at discovery, approximately once per game second during observation, and at the end. Short events between ticks, decisions inside the controller, gas command state, collision forces, and frames before discovery may be missed. An abrupt crash may lose the last second. Completion and failure reasons remain in the traversal add-on's chat messages, so include screenshots of those messages if available. All timestamps are game time; samples are observations, not proof of causality.
+
+Watch chat for `[AI Cadets Watch] Recording to PersistentData/AICadetsM1WatchN`. The file should appear in `Documents/AoTTG2/PersistentData/`. When the watcher says recording saved or 25 seconds have elapsed, send the corresponding file here. Each run selects a new numbered name, up to 100 slots, without intentionally replacing old recordings. Archive or delete old watcher files to free slots. A game restart/recreated lobby is recommended between runs. If the file is missing, report the exact chat/console error and check the actual folder; file creation and the trace's encoding are not yet verified in-game.
+
+**Review before sharing:** AoTTG2's `PersistentData.SaveToFile` saves the current shared persistent-data collection, so this file could contain unrelated properties from other scripts or modes. The watcher does not call `Clear()` because that could disrupt them. Open the file as text, retain the `AICadetsM1WatchTrace` property and remove unrelated properties if necessary. Do not upload a file containing data you do not intend to share. No upload is automatic. The watcher stops on ownership/master loss; logging after this point is not guaranteed.
+
+The optional watcher is untested in the live interpreter. Its own disk writes may slightly affect timing and unencrypted local files use storage; at 5 samples/sec for 25 seconds the trace is bounded to roughly 125 samples plus events, though shared persistent data can make the file larger. SaveToFile may replace its own run file each second, not append; exact serialization and persistence behavior must be verified in game. Disable the add-on to stop recording; existing files remain until manually removed.
+
+API references: [PersistentData](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/PersistentData.md), [Human](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Human.md), [callbacks](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/callbacks/main.md).
+
+## Possible impact clues (v2)
+
+The watcher checks velocity at each fixed tick and records `possible_impact` when velocity changes by at least 8 units/second in one tick while prior speed is at least 5. It records before/after position and velocity and linecasts forward along the prior velocity on both map layers; where available it includes hit point, normal, distance and layer. Events have a 0.2-second cooldown. These thresholds are uncalibrated and may miss glancing or gradual collisions. Hook forces, landings and other rapid velocity changes can trigger false positives; a nearby linecast hit is not proof of contact. No reliable collider identity or collision impulse is claimed.
+
+The documented [OnCollisionEnter(other: Object)](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/callbacks/components.md) applies to components attached to MapObjects, not a general AI-human/add-on callback. Tests on built-in map geometry therefore use the velocity/linecast clue. [Physics.LineCast](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Physics.md) is a query, not a contact event.
+
+Test against an obvious wall impact, a clear swing/release, and a landing. Compare the `possible_impact` lines and timestamps with video; report missed or misleading detections. Behavior is statically checked, not yet verified in game.
+
+## v3 collector refinements
+
+Moving/airborne samples remain at 0.2 seconds; grounded, stationary, unhooked observations use a 2-second heartbeat. Hook/ground transitions are still checked each tick and postpone the next periodic sample to avoid duplicate rows. Only dirty traces are written. A 500-record hard limit writes an explicit terminal marker and flushes; the existing time limit remains. Files are never silently pruned.
+
+Velocity changes now include the elapsed observation interval and separate landing, hook-transition, unexplained-change and possible-impact labels. A hook transition near a surface remains visible as ambiguous evidence instead of being discarded. These categories are diagnostic interpretations, not collision confirmations. The detector still has uncalibrated thresholds, a single linecast and a 0.2-second event cooldown. Vector string formatting from the game rounds values; this is not a full-precision physics trace. Internal controller commands/reasons remain outside this independent observer.
+
+Regression evidence: uploaded Watch1 showed a hook-induced false positive and wall/balcony events; Watch3 showed a wall scrape and a landing with no ray hit. New helper tests execute the actual source helper bodies under mocks, covering category selection, idle/airborne sampling and explicit record limits. Live v3 testing remains required.
+
+## Correlating with controller decisions
+
+For `AICadetsTraversalReliable`, controller decisions are emitted as machine-readable chat lines with prefix `[AI Cadets M1R]`. To correlate:
+
+1. Save copied controller chat lines to a text file.
+2. Run:
+
+```sh
+python tools/analyze_m1_run.py --controller-log controller.log --watch-file AICadetsM1Watch7.txt --output timeline.md
+```
+
+This produces a merged timeline of controller (`verified`) and watcher (`observed`/`inferred`) events.
+Watcher impact labels remain diagnostic clues, not collision callbacks.
