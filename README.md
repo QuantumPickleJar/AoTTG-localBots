@@ -2,7 +2,7 @@
 
 An experimental, local-first **AoTTG2 Custom Logic add-on** for one AI Scout's first ODM maneuver. This project is independently developed and is not endorsed by the AoTTG2 team.
 
-**Status:** API-reviewed proof of concept, **not game-tested**. AoTTG2 uses a Custom Logic dialect (this `.cl` is **not** ordinary C# or a Unity DLL). It needs in-game parser and behavior validation before we can call the maneuver successful.
+**Status:** **Milestone M0 single-host ODM maneuver confirmed in game on 2026-10-29** (report: `docs/TEST_REPORT.md`). The Scout spawned, launched and attached a hook, used gas, released, and traveled 43.68573 game units while using 0.4518585 gas units. Multi-client synchronization, repeatability, and realism mode remain **untested**. AoTTG2 uses a Custom Logic dialect (this `.cl` is **not** ordinary C# or a Unity DLL).
 
 ## Run the first test
 
@@ -13,16 +13,16 @@ An experimental, local-first **AoTTG2 Custom Logic add-on** for one AI Scout's f
 5. Observe the on-screen chat/console: `Scout spawned` → `Hook launched` → `Hook attached` → `Gas off` → `Probe finished`.
 6. Record what happened and any console errors (see `docs/TEST_REPORT.md`). Restart the round to try a new anchor surface.
 
-If the addon fails to compile or spawns but cannot hook, please **do not substitute arbitrary API guesses**. Record the exact line/error and use the official documentation to make a targeted correction. **Fix in v0.1.1:** the first version passed `costume=0, costumeName=""` to `Game.SpawnHumanAt`. Inspection of the publicly available AoTTG2 source fork shows `SpawnAIHumanAt` looks for an **exact named costume preset** and returns `null` if none matches, whereupon the Custom Logic wrapper may throw a `NullReferenceException`. v0.1.1 uses `costume=1, costumeName="Levi"`, a named preset in the fork's `HumanCustom.json`. This still needs verification against the current live game. If you customize/remove built-in preset sets or the live build uses different names, try the name of a known existing Costume1 preset; do not use a blank name.
+If the addon fails to compile or spawns but cannot hook, please **do not substitute arbitrary API guesses**. Record the exact line/error and use the official documentation to make a targeted correction. **Fix in v0.1.1:** the first version passed `costume=0, costumeName=""` to `Game.SpawnHumanAt`. Inspection of the publicly available AoTTG2 source fork shows `SpawnAIHumanAt` looks for an **exact named costume preset** and returns `null` if none matches, whereupon the Custom Logic wrapper may throw a `NullReferenceException`. v0.1.1 uses `costume=1, costumeName="Levi"`, a named preset in the fork's `HumanCustom.json`. This costume fix was verified in an in-game test; the source fork may still differ from future live builds. If you customize/remove built-in preset sets or the live build uses different names, try the name of a known existing Costume1 preset; do not use a blank name.
 
 This is a test-only workaround; later we should expose character preset selection as an add-on setting with safe validation, rather than defaulting every AI Scout to Levi.
 
-## Reported bug and reproduction
+## Reported bug, fix, and successful test
 
 - v0.1.0 failed at add-on line 57 with `Object reference not set to an instance of an object` in `Game.SpawnHumanAt`.
 - Likely root cause: the empty named costume does not resolve; the game attempts to wrap `null`.
 - v0.1.1 changes that **one spawn argument pair**; ODM timing and logic are unchanged.
-- To retest: replace your existing `Documents/AoTTG2/Addons/AICadetsProbe.cl` with the new one, recreate the game/round, and record the next message or error. No installation of Unity, Harmony, or a separate mod loader is necessary.
+- To retest: replace your existing `Documents/AoTTG2/Addons/AICadetsProbe.cl` with the new one, recreate the game/round, and record the next message or error. No installation of Unity, Harmony, or a separate mod loader was necessary for the successful test.
 - Public source used for diagnosis: [InGameManager.SpawnAIHumanAt](https://github.com/douglasfelix076/Aottg2-Unity-Hex/blob/main/Assets/Scripts/GameManagers/InGameManager.cs), [CustomLogicHumanBuiltin constructor](https://github.com/douglasfelix076/Aottg2-Unity-Hex/blob/main/Assets/Scripts/CustomLogic/Builtin/Entities/CustomLogicHumanBuiltin.cs), [preset data](https://github.com/douglasfelix076/Aottg2-Unity-Hex/blob/main/Assets/StreamingAssets/Presets/HumanCustom.json). This fork is not necessarily the live AoTTG2 source; behavior may differ.
 
 ## What it does and doesn't do
