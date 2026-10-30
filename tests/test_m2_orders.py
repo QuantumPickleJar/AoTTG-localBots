@@ -156,6 +156,8 @@ class OrdersTest(unittest.TestCase):
         self.assertEqual(data["AICadetsCmdMode"], "Explore")
         self.assertEqual(data["AICadetsCmdSequence"], 1)
         self.assertIn("NOT APPLIED #1: no owned M2 cadet", panel._responseLabel.Text)
+        self.assertEqual(sum("REQUESTED seq=1" in m for m in logs), 1)
+        self.assertEqual(sum("APPLIED seq=1" in m for m in logs), 0)
         humans.append(NS(Name="AICadetsM2-2", IsAlive=True, IsMine=True))
         time.GameTime = 5.0
         data["AICadetsM2Heartbeat-AICadetsM2-2"] = 5.0
@@ -164,6 +166,9 @@ class OrdersTest(unittest.TestCase):
         panel.RefreshStatus()
         self.assertIn("APPLIED #1", panel._responseLabel.Text)
         self.assertIn("AICadetsM2-2 [Explore]", panel._rosterLabel.Text)
+        self.assertEqual(sum("APPLIED seq=1" in m for m in logs), 1)
+        panel.RefreshStatus()
+        self.assertEqual(sum("APPLIED seq=1" in m for m in logs), 1)
         panel.SelectAll()
         panel.Resupply()
         self.assertEqual(data["AICadetsCmdSequence"], 2)
