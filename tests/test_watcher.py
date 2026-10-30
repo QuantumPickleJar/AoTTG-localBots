@@ -58,6 +58,7 @@ class WatcherBehavior(unittest.TestCase):
         self.assertEqual(self.w.SampleInterval(), 0.2)
 
     def test_record_limit_is_explicit(self):
+        self.w.Flush = lambda: None
         self.w._records = 499
         self.w._trace = ''
         self.w.Record('sample')
