@@ -155,7 +155,7 @@ class OrdersTest(unittest.TestCase):
         self.assertEqual(data["AICadetsCmdScope"], "AICadetsM2-2")
         self.assertEqual(data["AICadetsCmdMode"], "Explore")
         self.assertEqual(data["AICadetsCmdSequence"], 1)
-        self.assertIn("PENDING #1", panel._responseLabel.Text)
+        self.assertIn("NOT APPLIED #1: no owned M2 cadet", panel._responseLabel.Text)
         humans.append(NS(Name="AICadetsM2-2", IsAlive=True, IsMine=True))
         time.GameTime = 5.0
         data["AICadetsM2Heartbeat-AICadetsM2-2"] = 5.0
