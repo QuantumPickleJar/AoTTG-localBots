@@ -160,13 +160,16 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
 
-    def test_low_gas_terminates_safely(self):
+    def test_critical_gas_switches_to_supply_search_without_refill_cheating(self):
         w = World()
         w.tick()
         w.cadet.CurrentGas = 2.0
         w.tick()
-        self.assertEqual(w.controller._state, "Done")
-        self.assertTrue(any("insufficient_odm_resources" in m for m in w.messages))
+        self.assertEqual(w.controller._state, "SeekSupply")
+        self.assertEqual(w.cadet.CurrentGas, 2.0)
+        w.tick()
+        self.assertEqual(w.controller._state, "ExploreSupply")
+        self.assertTrue(any("supply_not_visible" in m for m in w.messages))
 
     def test_confirmed_kill_flow(self):
         w = World()
