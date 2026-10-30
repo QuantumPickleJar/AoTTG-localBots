@@ -31,6 +31,7 @@ class Cadet:
         self.CurrentGas = 120.0
         self.IsAlive = self.IsMine = self.LeftHookEnabled = self.LeftHookReady = True
         self.IsHookedLeft = False
+        self.Grounded = True
         self.ViewID = 777
         self.Name = "Levi"
         self.attacking = False
@@ -44,6 +45,9 @@ class Cadet:
 
     def AimAt(self, position):
         self.calls.append(("aim", position))
+
+    def Move(self, direction):
+        self.calls.append(("move", direction))
 
     def Jump(self):
         self.calls.append(("jump",))
@@ -86,6 +90,7 @@ class World:
         self.host = NS(Character=NS(Type="Human", IsAlive=True, Position=Vector(0, 0, 0), Forward=Vector(0, 0, 1), Right=Vector(1, 0, 0)))
         self.network = NS(IsMasterClient=True, MyPlayer=self.host)
         self.messages = []
+        self.persistent = {}
         self.spawns = 0
         self.ai_humans = CLList()
         self.titans = CLList([self.titan])
@@ -97,7 +102,11 @@ class World:
                 "Vector3": Vector,
                 "Time": self.time,
                 "Network": self.network,
-                "PersistentData": NS(SetProperty=lambda k, v: None, SaveToFile=lambda f, e: True),
+                "PersistentData": NS(
+                    SetProperty=lambda k, v: self.persistent.__setitem__(k, v),
+                    GetProperty=lambda k, default: self.persistent.get(k, default),
+                    SaveToFile=lambda f, e: True,
+                ),
                 "Game": NS(
                     SpawnHumanAt=self.spawn,
                     AIHumans=self.ai_humans,
@@ -211,6 +220,66 @@ class WaveM2Tests(unittest.TestCase):
         w = World()
         self.assertGreaterEqual(w.controller.MaxTraversePerTarget, 20)
         self.assertLessEqual(w.controller.MaxTraversePerTarget, 40)
+
+    def test_empty_roster_starts_exploration_not_idle_regroup(self):
+        w = World()
+        w.tick()
+        w.titans.items.clear()
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertTrue(any("no_target_start_patrol" in m for m in w.messages))
+
+    def test_exploration_uses_physical_hook_maneuver_with_surface(self):
+        w = World()
+        w.tick()
+        w.titans.items.clear()
+        w.hit = NS(Point=Vector(4, 20, 48), Distance=46.0)
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "TraverseAttach")
+        self.assertTrue(any(a[0] == "launch" for a in w.cadet.calls))
+
+    def test_exploration_ground_fallback_without_hookable_surface(self):
+        w = World()
+        w.tick()
+        w.titans.items.clear()
+        w.controller.Enter("Explore", "test")
+        w.controller._exploreFailures = 3
+        w.tick()
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertTrue(any(a[0] == "move" for a in w.cadet.calls))
+
+    def test_specific_order_does_not_control_unselected_cadet(self):
+        w = World()
+        w.tick()
+        w.persistent.update({
+            "AICadetsCmdSequence": 1,
+            "AICadetsCmdMode": "Hold",
+            "AICadetsCmdScope": "AICadetsM2-2",
+        })
+        w.tick()
+        self.assertNotEqual(w.controller._state, "Hold")
+
+    def test_hold_explore_engage_orders_switch_states(self):
+        w = World()
+        w.tick()
+        w.persistent.update({
+            "AICadetsCmdSequence": 1,
+            "AICadetsCmdMode": "Hold",
+            "AICadetsCmdScope": "all",
+        })
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        w.persistent["AICadetsCmdSequence"] = 2
+        w.persistent["AICadetsCmdMode"] = "Explore"
+        w.tick()
+        self.assertEqual(w.controller._state, "Explore")
+        w.persistent["AICadetsCmdSequence"] = 3
+        w.persistent["AICadetsCmdMode"] = "Engage"
+        w.tick()
+        self.assertEqual(w.controller._state, "AcquireTarget")
 
     def test_retry_bans_target(self):
         w = World()
