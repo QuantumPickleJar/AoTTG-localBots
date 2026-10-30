@@ -1,8 +1,4 @@
-"""Source-driven mock checks of the optional M2 command-panel addon.
-
-These tests execute the translated addon methods, not Unity UI or the AoTTG2
-Custom Logic interpreter. In-game widget binding still requires a live test.
-"""
+"""Mocked M2 F8 order-menu behavior; NOT an AoTTG2 UI-runtime integration test."""
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -17,11 +13,12 @@ class Element:
         self.Text = text
         self.children = []
         self.removed = False
+        self.active = True
 
     def Absolute(self, *args):
         return self
 
-    def Right(self, *args):
+    def Left(self, *args):
         return self
 
     def Top(self, *args):
@@ -30,7 +27,14 @@ class Element:
     def Width(self, *args):
         return self
 
+    def Height(self, *args):
+        return self
+
     def Padding(self, *args):
+        return self
+
+    def Active(self, value=True):
+        self.active = value
         return self
 
     def Add(self, element):
@@ -46,12 +50,20 @@ class OrdersTest(unittest.TestCase):
         persistent = {}
         roots = []
         logs = []
+        keypresses = set()
+        camera = []
+        inputs = []
+        humans = []
+        time = NS(GameTime=2.0)
+
         def make_root():
             root = Element()
             roots.append(root)
             return root
+
         ui = NS(
             VisualElement=lambda: Element(),
+            ScrollView=lambda: Element(),
             Label=lambda value: Element(value),
             Button=lambda value, callback: NS(Text=value, callback=callback),
             GetRootVisualElement=make_root,
@@ -59,55 +71,125 @@ class OrdersTest(unittest.TestCase):
         controller = load_controller(
             {
                 "UI": ui,
-                "Network": NS(IsMasterClient=master, MyPlayer=NS(Character=NS(Type="Human", IsAlive=True, Position=NS(X=10.0, Y=5.0, Z=-12.0)))),
+                "Input": NS(
+                    GetKeyDown=lambda key: key in keypresses,
+                    SetHumanKeysEnabled=lambda enabled: inputs.append(enabled),
+                ),
+                "Camera": NS(
+                    SetCameraLocked=lambda locked: camera.append(("lock", locked)),
+                    SetCursorVisible=lambda visible: camera.append(("cursor", visible)),
+                ),
+                "Time": time,
+                "Network": NS(
+                    IsMasterClient=master,
+                    MyPlayer=NS(Character=NS(
+                        Type="Human", IsAlive=True,
+                        Position=NS(X=10.0, Y=5.0, Z=-12.0))),
+                ),
                 "PersistentData": NS(
                     GetProperty=lambda key, default: persistent.get(key, default),
                     SetProperty=lambda key, value: persistent.__setitem__(key, value),
                 ),
-                "Game": NS(Print=logs.append),
+                "Game": NS(Print=logs.append, AIHumans=humans),
                 "Convert": NS(ToString=str),
             },
             SOURCE,
             class_name="AICadetsCommandPanel",
         )
-        return controller, persistent, roots, logs
+        return controller, persistent, roots, logs, keypresses, camera, inputs, humans, time
 
-    def test_master_receives_panel_and_actions(self):
-        panel, data, roots, logs = self.make_controller()
+    def test_menu_hidden_by_default_f8_controls_cursor_without_pause(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
         panel.OnGameStart()
         self.assertEqual(len(roots), 1)
-        self.assertEqual(len(roots[0].children), 1)
-        buttons = [e for e in panel._panel.children if hasattr(e, "callback")]
-        self.assertEqual(len(buttons), 10)
+        self.assertFalse(panel._panel.active)
+        self.assertEqual(camera, [])
+        keys.add("CustomKey/F8")
+        panel.OnFrame()
+        self.assertTrue(panel._open)
+        self.assertTrue(panel._panel.active)
+        self.assertIn(("cursor", True), camera)
+        self.assertIn(("lock", True), camera)
+        self.assertEqual(inputs[-1], False)
+        keys.clear()
+        panel.OnFrame()
+        self.assertTrue(panel._open)
+        keys.add("CustomKey/F8")
+        panel.OnFrame()
+        self.assertFalse(panel._open)
+        self.assertFalse(panel._panel.active)
+        self.assertEqual(camera[-1], ("cursor", False))
+        self.assertEqual(inputs[-1], True)
+
+    def test_commands_are_pending_until_matching_m2_controller_acks(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        panel.OpenMenu()
+        buttons = [e for e in panel._actions.children if hasattr(e, "callback")]
+        self.assertEqual(len(buttons), 11)
         panel.SelectTwo()
         panel.Explore()
         self.assertEqual(data["AICadetsCmdScope"], "AICadetsM2-2")
         self.assertEqual(data["AICadetsCmdMode"], "Explore")
         self.assertEqual(data["AICadetsCmdSequence"], 1)
+        self.assertIn("PENDING #1", panel._responseLabel.Text)
+        humans.append(NS(Name="AICadetsM2-2", IsAlive=True, IsMine=True))
+        time.GameTime = 5.0
+        data["AICadetsM2Heartbeat-AICadetsM2-2"] = 5.0
+        data["AICadetsM2State-AICadetsM2-2"] = "Explore"
+        data["AICadetsM2AckSeq-AICadetsM2-2"] = 1
+        panel.RefreshStatus()
+        self.assertIn("APPLIED #1", panel._responseLabel.Text)
+        self.assertIn("AICadetsM2-2 [Explore]", panel._rosterLabel.Text)
+        panel.SelectAll()
+        panel.Resupply()
+        self.assertEqual(data["AICadetsCmdSequence"], 2)
+        self.assertEqual(data["AICadetsCmdMode"], "Resupply")
+        self.assertIn("PENDING #2", panel._responseLabel.Text)
+        panel.Hold()
+        self.assertEqual(data["AICadetsCmdSequence"], 3)
+        panel.Engage()
+        self.assertEqual(data["AICadetsCmdSequence"], 4)
+
+    def test_m1_only_does_not_appear_controllable(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        humans.append(NS(Name="AICadetsM1", IsAlive=True, IsMine=True))
+        panel.OnGameStart()
+        panel.OpenMenu()
+        panel.Hold()
+        self.assertIn("No owned M2 cadets", panel._rosterLabel.Text)
+        self.assertIn("M1 demo bots: 1", panel._rosterLabel.Text)
+        self.assertIn("PENDING #1", panel._responseLabel.Text)
+
+    def test_mark_supply_is_waypoint_not_fake_refill(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
         panel.MarkSupply()
         self.assertEqual(data["AICadetsSupplyRevision"], 1)
         self.assertEqual(data["AICadetsSupplyX"], 10.0)
+        self.assertEqual(data["AICadetsSupplyY"], 5.0)
         self.assertEqual(data["AICadetsSupplyZ"], -12.0)
-        panel.SelectAll()
-        panel.Hold()
-        self.assertEqual(data["AICadetsCmdScope"], "all")
-        self.assertEqual(data["AICadetsCmdMode"], "Hold")
-        self.assertEqual(data["AICadetsCmdSequence"], 2)
-        panel.Engage()
-        self.assertEqual(data["AICadetsCmdSequence"], 3)
-        self.assertEqual(data["AICadetsCmdMode"], "Engage")
-        panel.Resupply()
-        self.assertEqual(data["AICadetsCmdSequence"], 4)
-        self.assertEqual(data["AICadetsCmdMode"], "Resupply")
-        panel.OnGameEnd()
-        self.assertTrue(panel._panel is None)
+        self.assertNotIn("CurrentGas", data)
 
-    def test_nonmaster_has_no_panel_and_no_commands(self):
-        panel, data, roots, logs = self.make_controller(master=False)
+    def test_close_and_game_end_restore_controls(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        panel.OpenMenu()
+        panel.OnGameEnd()
+        self.assertIsNone(panel._panel)
+        self.assertFalse(panel._open)
+        self.assertTrue(roots[0].children[0].removed)
+        self.assertEqual(camera[-1], ("cursor", False))
+        self.assertEqual(inputs[-1], True)
+
+    def test_nonmaster_cannot_create_menu_or_issue_orders(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller(master=False)
         panel.OnGameStart()
         self.assertEqual(roots, [])
+        panel.OnFrame()
         panel.Hold()
         self.assertEqual(data, {})
+
 
 if __name__ == "__main__":
     unittest.main()
