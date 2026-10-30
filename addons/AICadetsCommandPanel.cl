@@ -18,6 +18,7 @@ addon AICadetsCommandPanel
     _responseLabel = null;
     _seq = 0;
     _pendingSeq = 0;
+    _reportedAckSeq = 0;
     _pendingMode = "none";
     _pendingScope = "all";
     _nextRefresh = 0.0;
@@ -242,7 +243,7 @@ addon AICadetsCommandPanel
         self._pendingMode = mode;
         PersistentData.SetProperty("AICadetsCmdSequence", self._seq);
         self._responseLabel.Text = "SENT #" + Convert.ToString(self._seq) + " " + mode + " | waiting for M2 ack";
-        Game.Print("[AI Cadets Orders] submitted seq=" + Convert.ToString(self._seq) + " scope=" + self._selected + " mode=" + mode + " (not yet applied)");
+        Game.Print("[AI Cadets Orders] REQUESTED seq=" + Convert.ToString(self._seq) + " scope=" + self._selected + " mode=" + mode);
         self.RefreshStatus();
     }
 
@@ -320,6 +321,11 @@ addon AICadetsCommandPanel
             if (acked > 0)
             {
                 self._responseLabel.Text = "APPLIED #" + Convert.ToString(self._pendingSeq) + " " + self._pendingMode + " by " + Convert.ToString(acked) + " M2 cadet(s)";
+                if (self._reportedAckSeq != self._pendingSeq)
+                {
+                    self._reportedAckSeq = self._pendingSeq;
+                    Game.Print("[AI Cadets Orders] APPLIED seq=" + Convert.ToString(self._pendingSeq) + " mode=" + self._pendingMode + " confirmed_by=" + Convert.ToString(acked));
+                }
             }
             if (acked == 0)
             {
