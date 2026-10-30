@@ -59,7 +59,7 @@ class OrdersTest(unittest.TestCase):
         controller = load_controller(
             {
                 "UI": ui,
-                "Network": NS(IsMasterClient=master),
+                "Network": NS(IsMasterClient=master, MyPlayer=NS(Character=NS(Type="Human", IsAlive=True, Position=NS(X=10.0, Y=5.0, Z=-12.0)))),
                 "PersistentData": NS(
                     GetProperty=lambda key, default: persistent.get(key, default),
                     SetProperty=lambda key, value: persistent.__setitem__(key, value),
@@ -78,12 +78,16 @@ class OrdersTest(unittest.TestCase):
         self.assertEqual(len(roots), 1)
         self.assertEqual(len(roots[0].children), 1)
         buttons = [e for e in panel._panel.children if hasattr(e, "callback")]
-        self.assertEqual(len(buttons), 8)
+        self.assertEqual(len(buttons), 10)
         panel.SelectTwo()
         panel.Explore()
         self.assertEqual(data["AICadetsCmdScope"], "AICadetsM2-2")
         self.assertEqual(data["AICadetsCmdMode"], "Explore")
         self.assertEqual(data["AICadetsCmdSequence"], 1)
+        panel.MarkSupply()
+        self.assertEqual(data["AICadetsSupplyRevision"], 1)
+        self.assertEqual(data["AICadetsSupplyX"], 10.0)
+        self.assertEqual(data["AICadetsSupplyZ"], -12.0)
         panel.SelectAll()
         panel.Hold()
         self.assertEqual(data["AICadetsCmdScope"], "all")
@@ -92,6 +96,9 @@ class OrdersTest(unittest.TestCase):
         panel.Engage()
         self.assertEqual(data["AICadetsCmdSequence"], 3)
         self.assertEqual(data["AICadetsCmdMode"], "Engage")
+        panel.Resupply()
+        self.assertEqual(data["AICadetsCmdSequence"], 4)
+        self.assertEqual(data["AICadetsCmdMode"], "Resupply")
         panel.OnGameEnd()
         self.assertTrue(panel._panel is None)
 
