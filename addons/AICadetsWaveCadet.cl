@@ -343,7 +343,7 @@ addon AICadetsWaveCadet
 
     function SpawnCadet(host)
     {
-        if (self.HookReach < 20.0 || self.HookReach > 70.0 || self.AnchorRise < 4.0 || self.AnchorRise > 25.0 || self.BurstSeconds < 0.1 || self.BurstSeconds > 0.8 || self.MinGasReserve < 4.0 || self.MinAttackGas <= self.MinGasReserve || self.AttackRange < 6.0 || self.AttackRange > 18.0 || self.MaxTraversePerTarget < 1 || self.MaxTraversePerTarget > 40 || self.MaxTargetRetries < 1 || self.MaxTargetRetries > 6 || self.MaxRecoveriesPerTarget < 0 || self.MaxRecoveriesPerTarget > 4)
+        if (self.HookReach < 20.0 || self.HookReach > 70.0 || self.AnchorRise < 4.0 || self.AnchorRise > 25.0 || self.BurstSeconds < 0.1 || self.BurstSeconds > 0.8 || self.MinGasReserve < 4.0 || self.MinAttackGas <= self.MinGasReserve || self.AttackRange < 6.0 || self.AttackRange > 18.0 || self.MaxTraversePerTarget < 1 || self.MaxTraversePerTarget > 40 || self.MaxTargetRetries < 1 || self.MaxTargetRetries > 6 || self.MaxRecoveriesPerTarget < 0 || self.MaxRecoveriesPerTarget > 4 || self.ResupplyTriggerGas <= self.MinAttackGas || self.ResupplyTriggerGas > 100.0 || self.SupplyArrivalRange < 3.0 || self.SupplyArrivalRange > 12.0 || self.SupplySearchTimeout < 20.0 || self.SupplySearchTimeout > 180.0)
         {
             self.Terminate("failure", "invalid_settings");
             return;
@@ -939,6 +939,11 @@ addon AICadetsWaveCadet
         self.StopODM();
         self._cadet.Idle();
         self.LogEvent("order_received", "mode=" + order + " scope=" + scope);
+        if (order == "Resupply" && self.IsSupplyState())
+        {
+            self.LogEvent("resupply_already_in_progress", "gas=" + Convert.ToString(self._cadet.CurrentGas));
+            return;
+        }
         if (self.IsSupplyState())
         {
             self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
