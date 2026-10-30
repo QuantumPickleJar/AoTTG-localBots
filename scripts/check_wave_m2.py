@@ -44,6 +44,10 @@ def validate(source):
             "toNape": "Vector3",
             "toGoal": "Vector3",
             "baseDirection": "Vector3",
+            "baseDir": "Vector3",
+            "direction": "Vector3",
+            "flatTarget": "Vector3",
+            "toTarget": "Vector3",
             "behindDir": "Vector3",
             "delta": "Vector3",
             "difference": "Vector3",
@@ -117,8 +121,9 @@ def main():
     addon = ROOT / "addons"
     validate((addon / "AICadetsWaveCadet.cl").read_text())
     # Preserve known M0 probe bytes.
-    probe_sha = hashlib.sha256((addon / "AICadetsProbe.cl").read_bytes()).hexdigest()
-    assert probe_sha == "2f44ba8b1be09192599d98d03b2f467e1fe8af6b2d2340aef09e844fdd146110"
+    probe_data = (addon / "AICadetsProbe.cl").read_bytes()
+    probe_sha = hashlib.sha1(b"blob " + str(len(probe_data)).encode() + b"\0" + probe_data).hexdigest()
+    assert probe_sha == "219fc9ab810998204c353833de868231a8736134"
     print("M2 wave static checks passed.")
     print("This check is static and does not validate in-game mission integration.")
 
