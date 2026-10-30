@@ -44,6 +44,8 @@ addon AICadetsWaveCadet
     _exploreFailures = 0;
     _orderSequence = 0;
     _orderMode = "Engage";
+    _nextOrderStatus = 0.0;
+    _lastAppliedOrderSequence = 0;
     _resumeAfterSupply = "Engage";
     _supplyPoint = null;
     _supplySource = "none";
@@ -160,6 +162,11 @@ addon AICadetsWaveCadet
             return;
         }
         self.ReadOrders();
+        if (Time.GameTime >= self._nextOrderStatus)
+        {
+            self._nextOrderStatus = Time.GameTime + 1.0;
+            self.PublishOrderStatus();
+        }
         if (self._state == "Hold")
         {
             return;
@@ -374,6 +381,9 @@ addon AICadetsWaveCadet
         self._direction = Vector3.Normalize(Vector3(host.Forward.X, 0.0, host.Forward.Z));
         self.LogEvent("cadet_spawned", "name=" + self._cadetName + " view_id=" + Convert.ToString(self._cadet.ViewID));
         self.Enter("Regroup", "spawned");
+        self.PublishOrderStatus();
+        # Orders sent during WaitHost must not silently disappear.
+        self.ReadOrders();
     }
 
     function FindCadetName()
@@ -916,6 +926,32 @@ addon AICadetsWaveCadet
     # Shared master-owned, local-only command channel. The UI addon increments
     # the sequence when the user presses Engage / Explore / Hold for All or one
     # named bot. The command is never persisted to disk by this feature.
+    # The command panel writes a request. Only this owned movement controller
+    # can acknowledge it as accepted, AFTER changing its own operational state.
+    # No ack means no active M2 controller received the message.
+    function AcknowledgeOrder(sequence, order)
+    {
+        key = self._cadetName;
+        self._lastAppliedOrderSequence = sequence;
+        PersistentData.SetProperty("AICadetsM2AckSeq-" + key, sequence);
+        PersistentData.SetProperty("AICadetsM2AckState-" + key, self._state);
+        PersistentData.SetProperty("AICadetsM2AckMode-" + key, order);
+        self.LogEvent("order_applied", "seq=" + Convert.ToString(sequence) + " mode=" + order + " state=" + self._state);
+        self.PublishOrderStatus();
+    }
+
+    function PublishOrderStatus()
+    {
+        if (self._cadet == null || !self._cadet.IsMine || self._cadetName == "")
+        {
+            return;
+        }
+        key = self._cadetName;
+        PersistentData.SetProperty("AICadetsM2Heartbeat-" + key, Time.GameTime);
+        PersistentData.SetProperty("AICadetsM2State-" + key, self._state);
+        PersistentData.SetProperty("AICadetsM2Mode-" + key, self._orderMode);
+    }
+
     function ReadOrders()
     {
         sequence = PersistentData.GetProperty("AICadetsCmdSequence", 0);
@@ -927,29 +963,29 @@ addon AICadetsWaveCadet
         scope = PersistentData.GetProperty("AICadetsCmdScope", "all");
         if (scope != "all" && scope != self._cadetName)
         {
+            self.LogEvent("order_ignored", "seq=" + Convert.ToString(sequence) + " scope=" + scope);
             return;
         }
         order = PersistentData.GetProperty("AICadetsCmdMode", "Engage");
         if (order != "Engage" && order != "Explore" && order != "Hold" && order != "Resupply")
         {
+            self.LogEvent("order_rejected", "seq=" + Convert.ToString(sequence) + " mode=" + order);
             return;
         }
         previousMode = self._orderMode;
-        self._orderMode = order;
         self.StopODM();
         self._cadet.Idle();
-        self.LogEvent("order_received", "mode=" + order + " scope=" + scope);
-        if (order == "Resupply" && self.IsSupplyState())
-        {
-            self.LogEvent("resupply_already_in_progress", "gas=" + Convert.ToString(self._cadet.CurrentGas));
-            return;
-        }
-        if (self.IsSupplyState())
-        {
-            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
-        }
+        self.LogEvent("order_received", "seq=" + Convert.ToString(sequence) + " mode=" + order + " scope=" + scope);
+
         if (order == "Resupply")
         {
+            if (self.IsSupplyState())
+            {
+                self._orderMode = "Resupply";
+                self.LogEvent("resupply_already_in_progress", "gas=" + Convert.ToString(self._cadet.CurrentGas));
+                self.AcknowledgeOrder(sequence, order);
+                return;
+            }
             if (previousMode == "Explore")
             {
                 self._resumeAfterSupply = "Explore";
@@ -958,12 +994,21 @@ addon AICadetsWaveCadet
             {
                 self._resumeAfterSupply = "Engage";
             }
+            self._orderMode = "Resupply";
             self.BeginResupply("manual_order");
+            self.AcknowledgeOrder(sequence, order);
             return;
         }
+
+        if (self.IsSupplyState())
+        {
+            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+        }
+        self._orderMode = order;
         if (order == "Hold")
         {
             self.Enter("Hold", "user_hold");
+            self.AcknowledgeOrder(sequence, order);
             return;
         }
         if (order == "Explore")
@@ -971,240 +1016,13 @@ addon AICadetsWaveCadet
             self._target = null;
             self._targetViewId = 0;
             self._exploreNextAction = 0.0;
+            self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
             self.Enter("Explore", "user_explore");
+            self.AcknowledgeOrder(sequence, order);
             return;
         }
         self.Enter("AcquireTarget", "user_engage");
-    }
-
-    function IsSupplyState()
-    {
-        return self._state == "SeekSupply" || self._state == "AtSupply" || self._state == "ExploreSupply" || (self.IsTraverseState() && self._traverseMode == "supply");
-    }
-
-    # Only actual station interactions can grant gas. Never write CurrentGas
-    # or call RefillImmediate. Set AutoRefillGas while seeking: the documented
-    # SupplyStation collider determines when an owned human can replenish.
-    function BeginResupply(reason)
-    {
-        if (self.IsSupplyState())
-        {
-            return;
-        }
-        if (self._orderMode != "Resupply")
-        {
-            self._resumeAfterSupply = self._orderMode;
-        }
-        self.StopODM();
-        self._cadet.Idle();
-        self._supplyGasBefore = self._cadet.CurrentGas;
-        self._supplySearchStarted = Time.GameTime;
-        self._supplyArrivalStarted = 0.0;
-        self._supplyScanDue = 0.0;
-        self._supplyMoveDue = 0.0;
-        self._supplyLastProgressAt = Time.GameTime;
-        self._supplyLastPosition = self._cadet.Position;
-        self._supplyWaypoint = null;
-        self._supplyDetour = 0;
-        self._supplyPoint = null;
-        self._supplySource = "none";
-        self._supplyAutoRefillBefore = self._cadet.AutoRefillGas;
-        self._cadet.AutoRefillGas = true;
-        self.LogEvent("resupply_requested", "reason=" + reason + " gas=" + Convert.ToString(self._supplyGasBefore));
-        self.Enter("SeekSupply", reason);
-    }
-
-    function FindNearestSupply()
-    {
-        best = 10000000.0;
-        self._supplyPoint = null;
-        self._supplySource = "none";
-        # Official components can be enumerated in Custom Logic maps. Built-in
-        # City scene supply objects may not be MapObjects; use host-mark fallback.
-        for (station in Map.FindMapObjectsByComponent("SupplyStation"))
-        {
-            if (station != null)
-            {
-                distance = Vector3.Distance(self._cadet.Position, station.Position);
-                if (distance < best)
-                {
-                    best = distance;
-                    self._supplyPoint = station.Position;
-                    self._supplySource = "map_component";
-                }
-            }
-        }
-        version = PersistentData.GetProperty("AICadetsSupplyRevision", 0);
-        if (version > 0)
-        {
-            point = Vector3(PersistentData.GetProperty("AICadetsSupplyX", 0.0), PersistentData.GetProperty("AICadetsSupplyY", 0.0), PersistentData.GetProperty("AICadetsSupplyZ", 0.0));
-            distance = Vector3.Distance(self._cadet.Position, point);
-            if (distance < best)
-            {
-                best = distance;
-                self._supplyPoint = point;
-                self._supplySource = "host_marked_unverified";
-            }
-        }
-        if (self._supplyPoint != null)
-        {
-            self.LogEvent("supply_selected", "source=" + self._supplySource + " distance=" + Convert.ToString(best) + " point=" + Convert.ToString(self._supplyPoint));
-        }
-        else
-        {
-            self.LogEvent("supply_not_visible", "source=no_map_component_or_host_marker");
-        }
-    }
-
-    # Progress-checked navigation: prefer documented AI ground MoveTo, use
-    # nearby linecasts to select a finite lateral detour when stuck, and
-    # preserve ODM as an airborne fallback if adequate gas remains.
-    function SeekSupplyStep()
-    {
-        if (Time.GameTime - self._supplySearchStarted > self.SupplySearchTimeout)
-        {
-            self.LogEvent("resupply_failed", "reason=search_timeout gas=" + Convert.ToString(self._cadet.CurrentGas));
-            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
-            self.Enter("Hold", "supply_search_timeout");
-            return;
-        }
-        if (self._supplyPoint == null)
-        {
-            self.FindNearestSupply();
-            if (self._supplyPoint == null)
-            {
-                self._exploreNextAction = 0.0;
-                self.Enter("ExploreSupply", "no_registered_station");
-                return;
-            }
-        }
-        distance = Vector3.Distance(self._cadet.Position, self._supplyPoint);
-        if (distance <= self.SupplyArrivalRange)
-        {
-            self.StopODM();
-            self._cadet.Idle();
-            self._supplyArrivalStarted = Time.GameTime;
-            self.LogEvent("supply_arrived", "source=" + self._supplySource + " gas=" + Convert.ToString(self._cadet.CurrentGas));
-            self.Enter("AtSupply", "within_supply_radius");
-            return;
-        }
-        if (Vector3.Distance(self._cadet.Position, self._supplyLastPosition) >= 3.0)
-        {
-            self._supplyLastPosition = self._cadet.Position;
-            self._supplyLastProgressAt = Time.GameTime;
-            self._supplyWaypoint = null;
-        }
-        if (Time.GameTime - self._supplyLastProgressAt >= 8.0)
-        {
-            self._supplyLastProgressAt = Time.GameTime;
-            self._supplyDetour = self._supplyDetour + 1;
-            toStation = self._supplyPoint - self._cadet.Position;
-            flat = Vector3(toStation.X, 0.0, toStation.Z);
-            if (flat.Magnitude >= 1.0)
-            {
-                direction = flat.Normalized;
-                right = Vector3(direction.Z, 0.0, 0.0 - direction.X);
-                if (self._supplyDetour == 1)
-                {
-                    self._supplyWaypoint = self._cadet.Position + direction * 12.0 + right * 18.0;
-                }
-                else
-                {
-                    self._supplyWaypoint = self._cadet.Position + direction * 12.0 - right * 18.0;
-                    self._supplyDetour = 0;
-                }
-                self.LogEvent("supply_detour", "waypoint=" + Convert.ToString(self._supplyWaypoint));
-            }
-        }
-        if (Time.GameTime >= self._supplyMoveDue)
-        {
-            self._supplyMoveDue = Time.GameTime + 0.8;
-            waypoint = self._supplyPoint;
-            if (self._supplyWaypoint != null)
-            {
-                waypoint = self._supplyWaypoint;
-                if (Vector3.Distance(self._cadet.Position, waypoint) <= 5.0)
-                {
-                    self._supplyWaypoint = null;
-                    waypoint = self._supplyPoint;
-                }
-            }
-            if (self._cadet.Grounded)
-            {
-                self._cadet.MoveTo(waypoint, self.SupplyArrivalRange);
-                self.LogEvent("supply_ground_route", "remaining=" + Convert.ToString(distance) + " waypoint=" + Convert.ToString(waypoint));
-            }
-            if (!self._cadet.Grounded && self._cadet.CurrentGas > self.MinAttackGas + 4.0 && self._cadet.LeftHookReady)
-            {
-                self.StartTraverse(waypoint + Vector3(0.0, 6.0, 0.0), "supply");
-            }
-        }
-    }
-
-    function AtSupplyStep()
-    {
-        # Collision-based AutoRefillGas is active, but do not claim success
-        # unless CurrentGas rises. This also detects a wrong host marker.
-        if (Time.GameTime - self._supplyArrivalStarted >= self.SupplyRefillTimeout)
-        {
-            self.LogEvent("supply_not_refilling", "source=" + self._supplySource + " gas=" + Convert.ToString(self._cadet.CurrentGas));
-            self._supplyPoint = null;
-            self._exploreNextAction = 0.0;
-            self.Enter("ExploreSupply", "station_inactive_or_unverified");
-        }
-    }
-
-    function ExploreSupplyStep()
-    {
-        if (Time.GameTime - self._supplySearchStarted > self.SupplySearchTimeout)
-        {
-            self.LogEvent("resupply_failed", "reason=station_not_found gas=" + Convert.ToString(self._cadet.CurrentGas));
-            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
-            self._cadet.Idle();
-            self.Enter("Hold", "no_supply_available");
-            return;
-        }
-        if (Time.GameTime >= self._supplyScanDue)
-        {
-            self._supplyScanDue = Time.GameTime + 6.0;
-            self.FindNearestSupply();
-            if (self._supplyPoint != null)
-            {
-                self.Enter("SeekSupply", "station_discovered");
-                return;
-            }
-        }
-        if (Time.GameTime >= self._exploreNextAction && self._cadet.Grounded)
-        {
-            self._exploreIndex = self._exploreIndex + 1;
-            if (self._exploreIndex >= 4)
-            {
-                self._exploreIndex = 0;
-            }
-            self._exploreDirection = self.ChooseExploreHeading();
-            waypoint = self._cadet.Position + self._exploreDirection * 35.0;
-            self._cadet.MoveTo(waypoint, 4.0);
-            self._exploreNextAction = Time.GameTime + 7.0;
-            self.LogEvent("supply_search_patrol", "waypoint=" + Convert.ToString(waypoint) + " gas=" + Convert.ToString(self._cadet.CurrentGas));
-        }
-    }
-
-    function CompleteResupply(reason)
-    {
-        self.LogEvent("resupply_verified", "reason=" + reason + " gas_before=" + Convert.ToString(self._supplyGasBefore) + " gas_after=" + Convert.ToString(self._cadet.CurrentGas));
-        self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
-        self._supplyPoint = null;
-        self._cadet.Idle();
-        if (self._resumeAfterSupply == "Explore")
-        {
-            self._orderMode = "Explore";
-            self.Enter("Explore", "resupplied_resume_patrol");
-        }
-        else
-        {
-            self._orderMode = "Engage";
-            self.Enter("AcquireTarget", "resupplied_resume_combat");
-        }
+        self.AcknowledgeOrder(sequence, order);
     }
 
     function RefreshTarget()
@@ -1356,5 +1174,6 @@ addon AICadetsWaveCadet
         Game.Print("[AI Cadets M2] result_class=" + resultClass + " result_reason=" + reason + " run_id=" + self._runId + " cadet=" + self._cadetName + " target_retry=" + Convert.ToString(self._targetRetryCount) + " target_traverses=" + Convert.ToString(self._targetTraverseCount) + " target_recoveries=" + Convert.ToString(self._targetRecoveries) + " kills_observed=" + Convert.ToString(self._killsObserved) + " titan_deaths_observed=" + Convert.ToString(self._titanDeathsObserved));
         self.SaveReportIfEnabled();
         self.Enter("Done", "terminated");
+        self.PublishOrderStatus();
     }
 }
