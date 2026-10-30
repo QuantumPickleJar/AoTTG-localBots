@@ -21,7 +21,9 @@ addon AICadetsWaveCadet
     MaxRecoveriesPerTarget = 2;
     ExploreSegmentDistance = 58.0;
     ExploreScanSeconds = 2.5;
-    ExploreGroundSeconds = 2.0;
+    ExploreGroundSeconds = 9.0;
+    GroundApproachThreshold = 68.0;
+    GroundProgressWindow = 5.0;
     ResupplyTriggerGas = 38.0;
     SupplyArrivalRange = 6.0;
     SupplySearchTimeout = 100.0;
@@ -45,6 +47,12 @@ addon AICadetsWaveCadet
     _exploreDirection = null;
     _exploreStartPosition = null;
     _exploreFailures = 0;
+    _groundGoal = null;
+    _groundStartPosition = null;
+    _groundProgressPosition = null;
+    _groundMovementStartedAt = 0.0;
+    _groundNextCheck = 0.0;
+    _groundStalledChecks = 0;
     _orderSequence = 0;
     _orderMode = "Engage";
     _nextOrderStatus = 0.0;
@@ -225,6 +233,16 @@ addon AICadetsWaveCadet
         if (self._state == "ExploreSupply")
         {
             self.ExploreSupplyStep();
+            return;
+        }
+        if (self._state == "ExploreGround")
+        {
+            self.ExploreGroundStep();
+            return;
+        }
+        if (self._state == "ApproachGround")
+        {
+            self.ApproachGroundStep();
             return;
         }
         if (self._state == "Explore")
@@ -532,6 +550,11 @@ addon AICadetsWaveCadet
             behindDir = Vector3.Normalize(Vector3(delta.X, 0.0, delta.Z)) * -1.0;
         }
         goal = nape - behindDir * self.ApproachBehindDistance + Vector3(0.0, self.ApproachHeight, 0.0);
+        if (self._lastDistanceToNape > self.GroundApproachThreshold && self._cadet.Grounded)
+        {
+            self.StartGroundApproach();
+            return;
+        }
         self.StartTraverse(goal, "approach");
     }
 
@@ -673,6 +696,11 @@ addon AICadetsWaveCadet
         {
             self.LogEvent("supply_traverse_end", "outcome=" + self._trOutcome + " position=" + Convert.ToString(self._cadet.Position));
             self.Enter("SeekSupply", "supply_flight_complete");
+            return;
+        }
+        if (self._traverseMode == "approach" && self._trOutcome == "no_suitable_anchor" && self._cadet.Grounded)
+        {
+            self.StartGroundApproach();
             return;
         }
         if (self._traverseMode == "explore")
@@ -922,6 +950,64 @@ addon AICadetsWaveCadet
 
     # Human.Move is a documented ordinary controller action; use it only when
     # grounded and a short forward map probe does not report a wall.
+    # Ground navigation uses engine's persistent AI MoveTo state. Do not
+    # invoke Idle or a new hook search until the route completes or times out.
+    function StartGroundApproach()
+    {
+        if (!self.RefreshTarget())
+        {
+            self.Enter("AcquireTarget", "ground_target_lost");
+            return;
+        }
+        self._groundProgressPosition = self._cadet.Position;
+        self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+        self._groundStalledChecks = 0;
+        self._cadet.MoveToTarget(self._target, 24.0);
+        self.Enter("ApproachGround", "navigate_to_titan");
+        self.LogEvent("motion_command", "kind=ground_target view_id=" + Convert.ToString(self._targetViewId) + " ai_state=" + self._cadet.GetAIState());
+    }
+
+    function ApproachGroundStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "ground_target_invalid");
+            return;
+        }
+        distance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
+        if (distance <= self.GroundApproachThreshold)
+        {
+            self._cadet.Idle();
+            self.LogEvent("motion_destination_near", "kind=ground_target distance=" + Convert.ToString(distance));
+            self.Enter("PlanApproach", "ground_approach_close");
+            return;
+        }
+        if (Time.GameTime >= self._groundNextCheck)
+        {
+            progress = Vector3.Distance(self._cadet.Position, self._groundProgressPosition);
+            self.LogEvent("motion_observed", "kind=ground_target moved=" + Convert.ToString(progress) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
+            self._groundProgressPosition = self._cadet.Position;
+            self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+            if (progress < 1.0)
+            {
+                self._groundStalledChecks = self._groundStalledChecks + 1;
+            }
+            else
+            {
+                self._groundStalledChecks = 0;
+            }
+            if (self._groundStalledChecks >= 2)
+            {
+                self.LogEvent("motion_stalled", "kind=ground_target dist=" + Convert.ToString(distance));
+                self._cadet.Idle();
+                self._exploreNextAction = 0.0;
+                self._exploreFailures = 3;
+                self.Enter("Explore", "ground_approach_stalled");
+            }
+        }
+    }
+
     function ExploreGroundMove()
     {
         direction = self._exploreDirection;
@@ -930,15 +1016,57 @@ addon AICadetsWaveCadet
         if (self.MapHit(start, ahead) != null)
         {
             self._exploreIndex = self._exploreIndex + 1;
+            if (self._exploreIndex >= 4)
+            {
+                self._exploreIndex = 0;
+            }
             direction = self.ChooseExploreHeading();
         }
-        if (self._cadet.Grounded)
+        self._groundGoal = self._cadet.Position + direction * self.ExploreSegmentDistance;
+        self._groundStartPosition = self._cadet.Position;
+        self._groundProgressPosition = self._cadet.Position;
+        self._groundMovementStartedAt = Time.GameTime;
+        self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+        self._groundStalledChecks = 0;
+        self._cadet.MoveTo(self._groundGoal, 4.0);
+        self.Enter("ExploreGround", "persistent_ground_patrol");
+        self.LogEvent("motion_command", "kind=ground_explore goal=" + Convert.ToString(self._groundGoal) + " ai_state=" + self._cadet.GetAIState());
+    }
+
+    function ExploreGroundStep()
+    {
+        if (self._orderMode == "Engage" && Time.GameTime >= self._exploreNextScan)
         {
-            self._cadet.Move(direction);
-            self.LogEvent("explore_ground", "direction=" + Convert.ToString(direction));
+            self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
+            self.AcquireTarget();
+            if (self._target != null)
+            {
+                return;
+            }
+            self.Enter("ExploreGround", "patrol_while_scanning");
         }
-        self._exploreNextAction = Time.GameTime + self.ExploreGroundSeconds;
-        self._exploreFailures = 0;
+        if (Vector3.Distance(self._cadet.Position, self._groundGoal) <= 5.0 || Time.GameTime - self._groundMovementStartedAt >= self.ExploreGroundSeconds)
+        {
+            moved = Vector3.Distance(self._cadet.Position, self._groundStartPosition);
+            self.LogEvent("motion_segment_done", "kind=ground_explore moved=" + Convert.ToString(moved));
+            self._cadet.Idle();
+            self._exploreFailures = 0;
+            self._exploreNextAction = Time.GameTime + 0.1;
+            self.Enter("Explore", "ground_patrol_finished");
+            return;
+        }
+        if (Time.GameTime >= self._groundNextCheck)
+        {
+            moved = Vector3.Distance(self._cadet.Position, self._groundProgressPosition);
+            self.LogEvent("motion_observed", "kind=ground_explore moved=" + Convert.ToString(moved) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
+            self._groundProgressPosition = self._cadet.Position;
+            self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+            if (moved < 1.0)
+            {
+                self._groundStalledChecks = self._groundStalledChecks + 1;
+                self.LogEvent("motion_stalled", "kind=ground_explore check=" + Convert.ToString(self._groundStalledChecks));
+            }
+        }
     }
 
     # Shared master-owned, local-only command channel. The UI addon increments
