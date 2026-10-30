@@ -36,6 +36,7 @@ class Cadet:
         self.Grounded = True
         self.ViewID = 777
         self.Name = "Levi"
+        self.ai_state = "Idle"
         self.attacking = False
         self.calls = []
 
@@ -43,7 +44,11 @@ class Cadet:
         self.calls.append(("name", name, tag))
 
     def Idle(self):
+        self.ai_state = "Idle"
         self.calls.append(("idle",))
+
+    def GetAIState(self):
+        return self.ai_state
 
     def AimAt(self, position):
         self.calls.append(("aim", position))
@@ -52,7 +57,12 @@ class Cadet:
         self.calls.append(("move", direction))
 
     def MoveTo(self, position, range):
+        self.ai_state = "MoveTo"
         self.calls.append(("move_to", position, range))
+
+    def MoveToTarget(self, target, range):
+        self.ai_state = "MoveTo"
+        self.calls.append(("move_to_target", target, range))
 
     def Jump(self):
         self.calls.append(("jump",))
@@ -293,8 +303,57 @@ class WaveM2Tests(unittest.TestCase):
         w.controller.Enter("Explore", "test")
         w.controller._exploreFailures = 3
         w.tick()
-        self.assertEqual(w.controller._state, "Explore")
-        self.assertTrue(any(a[0] == "move" for a in w.cadet.calls))
+        self.assertEqual(w.controller._state, "ExploreGround")
+        self.assertTrue(any(a[0] == "move_to" for a in w.cadet.calls))
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+
+    def test_persistent_patrol_not_interrupted_by_repeated_anchor_search(self):
+        w = World()
+        w.tick()
+        w.titans.items.clear()
+        w.controller.Enter("Explore", "test")
+        w.controller._exploreFailures = 3
+        w.tick()
+        self.assertEqual(w.controller._state, "ExploreGround")
+        calls_before = list(w.cadet.calls)
+        w.tick(3.0)
+        self.assertEqual(w.controller._state, "ExploreGround")
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        self.assertEqual(w.cadet.calls, calls_before)
+        w.tick(2.1)
+        self.assertTrue(any("motion_observed" in m and "kind=ground_explore" in m for m in w.messages))
+        self.assertEqual(w.controller._state, "ExploreGround")
+
+    def test_distant_titan_dispatches_persistent_ground_chase(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(0, 0, 600)
+        w.titan.NapePosition = Vector(0, 8, 602)
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        self.assertTrue(any(call[0] == "move_to_target" for call in w.cadet.calls))
+        self.assertTrue(any("motion_command" in m and "kind=ground_target" in m for m in w.messages))
+        w.tick(5.1)
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertTrue(any("motion_observed" in m for m in w.messages))
+
+    def test_ground_chase_reaches_hook_distance_without_fake_motion(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(0, 0, 600)
+        w.titan.NapePosition = Vector(0, 8, 602)
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "ApproachGround")
+        w.cadet.Position = Vector(0, 0, 560)
+        w.tick()
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertEqual(w.cadet.ai_state, "Idle")
+        self.assertTrue(any("motion_destination_near" in m for m in w.messages))
 
     def test_specific_order_does_not_control_unselected_cadet(self):
         w = World()
