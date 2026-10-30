@@ -14,7 +14,7 @@ CONTRACT = json.loads((ROOT / "tests/api_contract.json").read_text())
 BASELINES = {
     "AICadetsTraversal.cl": "4c1d23c628d18f98500d2c3f20f5d954c1ea17fd",
     "AICadetsWatcher.cl": "5b3e1720b6e3d66b4fc35d0c9957306b67203b57",
-    "AICadetsProbe.cl": "2f44ba8b1be09192599d98d03b2f467e1fe8af6b2d2340aef09e844fdd146110",  # sha256
+    "AICadetsProbe.cl": "219fc9ab810998204c353833de868231a8736134",  # Git blob SHA verified against main
 }
 
 
@@ -107,7 +107,7 @@ def main():
     addon = ROOT / "addons"
     assert normalized_blob_sha(addon / "AICadetsTraversal.cl") == BASELINES["AICadetsTraversal.cl"], "Recovered baseline traversal changed"
     assert normalized_blob_sha(addon / "AICadetsWatcher.cl") == BASELINES["AICadetsWatcher.cl"], "Recovered baseline watcher changed"
-    assert hashlib.sha256((addon / "AICadetsProbe.cl").read_bytes()).hexdigest() == BASELINES["AICadetsProbe.cl"], "Known-good v0.1.1 probe changed"
+    assert git_blob_sha(addon / "AICadetsProbe.cl") == BASELINES["AICadetsProbe.cl"], "Known-good v0.1.1 probe changed"
     validate((addon / "AICadetsTraversalReliable.cl").read_text())
     print("Reliable traversal static checks passed; baseline add-ons remain source-identical.")
     print("This check is static and cannot validate live AoTTG2 parser/physics behavior.")
