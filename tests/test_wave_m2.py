@@ -281,7 +281,8 @@ class WaveM2Tests(unittest.TestCase):
         w.persistent["AICadetsCmdSequence"] = 3
         w.persistent["AICadetsCmdMode"] = "Engage"
         w.tick()
-        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertEqual(w.controller._orderMode, "Engage")
+        self.assertEqual(w.controller._state, "PlanApproach")
 
     def test_retry_bans_target(self):
         w = World()
