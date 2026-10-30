@@ -12,7 +12,7 @@ During autonomous **Engage** mode (the default), Explore periodically rescans al
 
 `addons/AICadetsCommandPanel.cl` uses documented UI `GetRootVisualElement`, `VisualElement`, `Label`, and `Button(text, clickEvent)`. It is host-only, separately selectable, and never issues movement calls.
 
-Choose a recipient using one of the buttons **All cadets**, **M2 Cadet 1**, **M2 Cadet 2**, **M2 Cadet 3**, **M2 Cadet 4**. Then press **ENGAGE Titans**, **EXPLORE map**, or **HOLD position**.
+Choose a recipient using one of the buttons **All cadets**, **M2 Cadet 1**, **M2 Cadet 2**, **M2 Cadet 3**, **M2 Cadet 4**. Then press **ENGAGE Titans**, **EXPLORE map**, **HOLD position**, or **RESUPPLY now**. The panel also has **MARK supply here** to register the living host's current world position as a candidate supply station for the current lobby. The marker is **not proof** that a native supply collider exists there.
 
 Buttons publish three local/shared PersistentData properties in order:
 - `AICadetsCmdScope` (`all` or the exact name `AICadetsM2-N`)
@@ -63,3 +63,24 @@ Separate PR `feat/m2-independent-watcher` adds `AICadetsM2Watcher.cl`, a passive
 The four patrol patterns are an intentionally simple initial maneuver policy, **not** trained exploration or a full path planner. Ground fallback uses `Human.Move` documented game controls but is not yet observed in-game. A lack of forward/lateral hookable surfaces can still block ODM; a nearby obstacle can block grounded running. The panel uses UI methods documented for Custom Logic, but add-on callback binding must be validated live.
 
 This feature is a testable M2 navigation slice, not proof that nape strikes, kill attribution, and wave progression have passed. Keep the prior `main` files for immediate rollback and never merge a PR based solely on mock/static tests.
+
+## Supply search, routing and verified refill (new)
+
+- **Low gas threshold:** The cadet automatically diverts into `SeekSupply` at or below `ResupplyTriggerGas=38`; manual **RESUPPLY now** issues the same request, scoped to All or one M2 instance. Emergency `MinGasReserve` now prevents gas-intensive ODM while the cadet uses grounded supply routing; it no longer immediately deletes the AI's ability to return to a station.
+- **Discovery:** Call documented `Map.FindMapObjectsByComponent("SupplyStation")` to select the nearest accessible custom-map station. This API may **not** include built-in City 1 scene supply stations. When the list is empty, stand **at a real station** with your own host character and click **MARK supply here**. This transmits a session-only world-position hint via PersistentData; the controller can route toward it. Only the most recently marked host station is retained in this initial slice.
+- **Navigation:** While grounded, use `Human.MoveTo(waypoint, stoppingRange)` toward the station, with bounded progress monitoring and alternating left/right detours if stationary for 8 seconds. When airborne with sufficient remaining gas, use normal physical ODM with the `supply` traverse mode. This is a hybrid waypoint router, **not** a complete map-wide navmesh implementation. It can still fail in awkward geometry.
+- **Resupplying:** Temporarily enable the documented `Human.AutoRefillGas` flag while seeking supply; the `SupplyStation` component determines if and when a refill really happens inside its collision region. Never write `CurrentGas`, invoke `RefillImmediate`, spawn resources, or grant gas based on coordinates alone. A successful `resupply_verified` event requires actual `CurrentGas` increase. Restore the previous `AutoRefillGas` setting after supply completion, cancellation, or controlled termination.
+- **Failure handling:** If the marked station is false/inactive, emit `supply_not_refilling` and continue bounded foot exploration; if search exceeds 100 seconds, stop safely with a reason. If no candidate station exists, `ExploreSupply` tries to discover one every six seconds and uses physical ground travel. Do not loop indefinitely.
+- **Resume:** Successful resupply returns to `AcquireTarget` for Engage orders or `Explore` for explicit patrol orders. The cadet doesn't claim combat success just because it refilled.
+- **UI scope:** Use **All cadets** or choose **M2 Cadet 1–4** before Resupply. This initial M2 addon spawns one cadet; additional instances must be separately validated before team-control acceptance.
+
+### City 1 resupply lobby trial
+
+1. In a new private Training / City 1 / Waves lobby, enable **AICadetsWaveCadet** and (only after M2-alone works) **AICadetsCommandPanel**, both from this same branch. Disable the M1 demo bots and old M1 watcher.
+2. Locate a working supply station with your own character; stand within its refill area. Press **MARK supply here**.
+3. Select **M2 Cadet 1** (or **All**) and press **RESUPPLY now**. If the bot already has full gas, you can still observe routing, but do not expect a positive gas increase until resources are actually consumed.
+4. Expect `resupply_requested`, `supply_selected source=host_marked_unverified`, repeated `supply_ground_route` or physical `traverse_start mode=supply`, `supply_arrived`, then `resupply_verified` only on observed increase.
+5. If it reports `supply_not_refilling`, confirm the marked position really overlaps a functional station trigger; do not silently increase resources. If `supply_not_visible`, station discovery was empty: the host marker may not have been sent or is not present in this game session.
+6. Finally, test **Hold** while returning to station, then **Engage** to resume. Retest after lobby recreation. Film the M2 cadet, show the exact M2 chat events, and note whether built-in stations appear in the component enumeration.
+
+**Status:** Static/mocked checks only; M2 UI, native supply triggers, and City routing need gameplay validation before merging.
