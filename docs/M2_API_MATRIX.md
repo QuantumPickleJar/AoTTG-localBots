@@ -65,5 +65,14 @@
 
 ## Current blocker status
 
-No hard API blocker found for: target acquisition, approach attempts, attack issuing, damage/death observation, and basic mission-state observation.  
+No hard API blocker found for: target acquisition, approach attempts, attack issuing, damage/death observation, and basic mission-state observation.
 Remaining blockers are validation blockers (gameplay confirmation), not interface absence.
+
+## M2 resupply and navigation (experimental)
+
+- Official [Human.MoveTo(position, range)](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Human.md) moves an AI human toward a point. Navigation still needs live testing for City obstacles; our finite detour waypoints are not a general navmesh solver.
+- Official [Map.FindMapObjectsByComponent](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Map.md) can return custom map objects carrying a `SupplyStation` component. No evidence yet that built-in City scene stations are included in this collection.
+- Official [SupplyStation component example](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/examples/components/supplystation.md) activates gas refill inside its collision region when a human has `AutoRefillGas` enabled. A host-marked station is a navigation hint only; success requires `CurrentGas` to increase via the game's own supply interaction.
+- Manual fallback: master host stands at an actual station and presses **MARK supply here** in the M2 command panel. This records only a session-local waypoint, not a verified station entity.
+- No direct edits to `CurrentGas`, no `RefillImmediate`, no fabricated supply encounters. If a station is unavailable, the cadet searches on foot with a deadline and eventually safely holds; it does not fake a replenishment.
+- Live acceptance still required for `AutoRefillGas` on AI-owned humans, built-in City 1 station discovery, and waypoint/ODM hybrid navigation.
