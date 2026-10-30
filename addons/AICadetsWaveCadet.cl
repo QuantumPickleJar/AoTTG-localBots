@@ -1025,6 +1025,236 @@ addon AICadetsWaveCadet
         self.AcknowledgeOrder(sequence, order);
     }
 
+    function IsSupplyState()
+    {
+        return self._state == "SeekSupply" || self._state == "AtSupply" || self._state == "ExploreSupply" || (self.IsTraverseState() && self._traverseMode == "supply");
+    }
+
+    # Only actual station interactions can grant gas. Never write CurrentGas
+    # or call RefillImmediate. Set AutoRefillGas while seeking: the documented
+    # SupplyStation collider determines when an owned human can replenish.
+    function BeginResupply(reason)
+    {
+        if (self.IsSupplyState())
+        {
+            return;
+        }
+        if (self._orderMode != "Resupply")
+        {
+            self._resumeAfterSupply = self._orderMode;
+        }
+        self.StopODM();
+        self._cadet.Idle();
+        self._supplyGasBefore = self._cadet.CurrentGas;
+        self._supplySearchStarted = Time.GameTime;
+        self._supplyArrivalStarted = 0.0;
+        self._supplyScanDue = 0.0;
+        self._supplyMoveDue = 0.0;
+        self._supplyLastProgressAt = Time.GameTime;
+        self._supplyLastPosition = self._cadet.Position;
+        self._supplyWaypoint = null;
+        self._supplyDetour = 0;
+        self._supplyPoint = null;
+        self._supplySource = "none";
+        self._supplyAutoRefillBefore = self._cadet.AutoRefillGas;
+        self._cadet.AutoRefillGas = true;
+        self.LogEvent("resupply_requested", "reason=" + reason + " gas=" + Convert.ToString(self._supplyGasBefore));
+        self.Enter("SeekSupply", reason);
+    }
+
+    function FindNearestSupply()
+    {
+        best = 10000000.0;
+        self._supplyPoint = null;
+        self._supplySource = "none";
+        # Official components can be enumerated in Custom Logic maps. Built-in
+        # City scene supply objects may not be MapObjects; use host-mark fallback.
+        for (station in Map.FindMapObjectsByComponent("SupplyStation"))
+        {
+            if (station != null)
+            {
+                distance = Vector3.Distance(self._cadet.Position, station.Position);
+                if (distance < best)
+                {
+                    best = distance;
+                    self._supplyPoint = station.Position;
+                    self._supplySource = "map_component";
+                }
+            }
+        }
+        version = PersistentData.GetProperty("AICadetsSupplyRevision", 0);
+        if (version > 0)
+        {
+            point = Vector3(PersistentData.GetProperty("AICadetsSupplyX", 0.0), PersistentData.GetProperty("AICadetsSupplyY", 0.0), PersistentData.GetProperty("AICadetsSupplyZ", 0.0));
+            distance = Vector3.Distance(self._cadet.Position, point);
+            if (distance < best)
+            {
+                best = distance;
+                self._supplyPoint = point;
+                self._supplySource = "host_marked_unverified";
+            }
+        }
+        if (self._supplyPoint != null)
+        {
+            self.LogEvent("supply_selected", "source=" + self._supplySource + " distance=" + Convert.ToString(best) + " point=" + Convert.ToString(self._supplyPoint));
+        }
+        else
+        {
+            self.LogEvent("supply_not_visible", "source=no_map_component_or_host_marker");
+        }
+    }
+
+    # Progress-checked navigation: prefer documented AI ground MoveTo, use
+    # nearby linecasts to select a finite lateral detour when stuck, and
+    # preserve ODM as an airborne fallback if adequate gas remains.
+    function SeekSupplyStep()
+    {
+        if (Time.GameTime - self._supplySearchStarted > self.SupplySearchTimeout)
+        {
+            self.LogEvent("resupply_failed", "reason=search_timeout gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+            self.Enter("Hold", "supply_search_timeout");
+            return;
+        }
+        if (self._supplyPoint == null)
+        {
+            self.FindNearestSupply();
+            if (self._supplyPoint == null)
+            {
+                self._exploreNextAction = 0.0;
+                self.Enter("ExploreSupply", "no_registered_station");
+                return;
+            }
+        }
+        distance = Vector3.Distance(self._cadet.Position, self._supplyPoint);
+        if (distance <= self.SupplyArrivalRange)
+        {
+            self.StopODM();
+            self._cadet.Idle();
+            self._supplyArrivalStarted = Time.GameTime;
+            self.LogEvent("supply_arrived", "source=" + self._supplySource + " gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self.Enter("AtSupply", "within_supply_radius");
+            return;
+        }
+        if (Vector3.Distance(self._cadet.Position, self._supplyLastPosition) >= 3.0)
+        {
+            self._supplyLastPosition = self._cadet.Position;
+            self._supplyLastProgressAt = Time.GameTime;
+            self._supplyWaypoint = null;
+        }
+        if (Time.GameTime - self._supplyLastProgressAt >= 8.0)
+        {
+            self._supplyLastProgressAt = Time.GameTime;
+            self._supplyDetour = self._supplyDetour + 1;
+            toStation = self._supplyPoint - self._cadet.Position;
+            flat = Vector3(toStation.X, 0.0, toStation.Z);
+            if (flat.Magnitude >= 1.0)
+            {
+                direction = flat.Normalized;
+                right = Vector3(direction.Z, 0.0, 0.0 - direction.X);
+                if (self._supplyDetour == 1)
+                {
+                    self._supplyWaypoint = self._cadet.Position + direction * 12.0 + right * 18.0;
+                }
+                else
+                {
+                    self._supplyWaypoint = self._cadet.Position + direction * 12.0 - right * 18.0;
+                    self._supplyDetour = 0;
+                }
+                self.LogEvent("supply_detour", "waypoint=" + Convert.ToString(self._supplyWaypoint));
+            }
+        }
+        if (Time.GameTime >= self._supplyMoveDue)
+        {
+            self._supplyMoveDue = Time.GameTime + 0.8;
+            waypoint = self._supplyPoint;
+            if (self._supplyWaypoint != null)
+            {
+                waypoint = self._supplyWaypoint;
+                if (Vector3.Distance(self._cadet.Position, waypoint) <= 5.0)
+                {
+                    self._supplyWaypoint = null;
+                    waypoint = self._supplyPoint;
+                }
+            }
+            if (self._cadet.Grounded)
+            {
+                self._cadet.MoveTo(waypoint, self.SupplyArrivalRange);
+                self.LogEvent("supply_ground_route", "remaining=" + Convert.ToString(distance) + " waypoint=" + Convert.ToString(waypoint));
+            }
+            if (!self._cadet.Grounded && self._cadet.CurrentGas > self.MinAttackGas + 4.0 && self._cadet.LeftHookReady)
+            {
+                self.StartTraverse(waypoint + Vector3(0.0, 6.0, 0.0), "supply");
+            }
+        }
+    }
+
+    function AtSupplyStep()
+    {
+        # Collision-based AutoRefillGas is active, but do not claim success
+        # unless CurrentGas rises. This also detects a wrong host marker.
+        if (Time.GameTime - self._supplyArrivalStarted >= self.SupplyRefillTimeout)
+        {
+            self.LogEvent("supply_not_refilling", "source=" + self._supplySource + " gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self._supplyPoint = null;
+            self._exploreNextAction = 0.0;
+            self.Enter("ExploreSupply", "station_inactive_or_unverified");
+        }
+    }
+
+    function ExploreSupplyStep()
+    {
+        if (Time.GameTime - self._supplySearchStarted > self.SupplySearchTimeout)
+        {
+            self.LogEvent("resupply_failed", "reason=station_not_found gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+            self._cadet.Idle();
+            self.Enter("Hold", "no_supply_available");
+            return;
+        }
+        if (Time.GameTime >= self._supplyScanDue)
+        {
+            self._supplyScanDue = Time.GameTime + 6.0;
+            self.FindNearestSupply();
+            if (self._supplyPoint != null)
+            {
+                self.Enter("SeekSupply", "station_discovered");
+                return;
+            }
+        }
+        if (Time.GameTime >= self._exploreNextAction && self._cadet.Grounded)
+        {
+            self._exploreIndex = self._exploreIndex + 1;
+            if (self._exploreIndex >= 4)
+            {
+                self._exploreIndex = 0;
+            }
+            self._exploreDirection = self.ChooseExploreHeading();
+            waypoint = self._cadet.Position + self._exploreDirection * 35.0;
+            self._cadet.MoveTo(waypoint, 4.0);
+            self._exploreNextAction = Time.GameTime + 7.0;
+            self.LogEvent("supply_search_patrol", "waypoint=" + Convert.ToString(waypoint) + " gas=" + Convert.ToString(self._cadet.CurrentGas));
+        }
+    }
+
+    function CompleteResupply(reason)
+    {
+        self.LogEvent("resupply_verified", "reason=" + reason + " gas_before=" + Convert.ToString(self._supplyGasBefore) + " gas_after=" + Convert.ToString(self._cadet.CurrentGas));
+        self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+        self._supplyPoint = null;
+        self._cadet.Idle();
+        if (self._resumeAfterSupply == "Explore")
+        {
+            self._orderMode = "Explore";
+            self.Enter("Explore", "resupplied_resume_patrol");
+        }
+        else
+        {
+            self._orderMode = "Engage";
+            self.Enter("AcquireTarget", "resupplied_resume_combat");
+        }
+    }
+
     function RefreshTarget()
     {
         if (self._targetViewId == 0)
