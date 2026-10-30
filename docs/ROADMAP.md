@@ -1,12 +1,12 @@
 # Roadmap
 
 ## M0 — Minimal runtime proof
-- [ ] Add-on parses in the current AoTTG2 build.
-- [ ] One `[BOT]` Scout spawns on master client.
+- [x] Add-on parses in the tested AoTTG2 build (2026-10-29).
+- [x] One `[BOT]` Scout spawns in the tested host session.
 - [ ] Other multiplayer client sees same Scout (test only in opt-in private lobby).
-- [ ] Linecast finds a genuine surface.
-- [ ] Left hook launches, attaches, short gas burst activates, and hook releases.
-- [ ] Logs distance, attachment timeout, and gas use without console errors.
+- [x] Linecast finds a genuine surface in the tested scenario.
+- [x] Left hook launches, attaches, short gas burst activates, and hook releases (one successful run).
+- [x] Logs displacement and gas usage at completion without reported console errors (one successful run; timeout path untested).
 - [ ] Restarting a round does not duplicate Scouts.
 
 ## M1 — Physical maneuver reliability
