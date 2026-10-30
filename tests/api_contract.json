@@ -66,6 +66,11 @@
           "signature": "function Attack(attackOn: bool)",
           "min_args": 1,
           "max_args": 1
+        },
+        "Move": {
+          "signature": "function Move(direction: Vector3)",
+          "min_args": 1,
+          "max_args": 1
         }
       },
       "properties": [
@@ -183,6 +188,11 @@
         },
         "SaveToFile": {
           "signature": "function SaveToFile(fileName: string, encrypted: bool)",
+          "min_args": 2,
+          "max_args": 2
+        },
+        "GetProperty": {
+          "signature": "function GetProperty(property: string, defaultValue: Object) -> Object",
           "min_args": 2,
           "max_args": 2
         }
