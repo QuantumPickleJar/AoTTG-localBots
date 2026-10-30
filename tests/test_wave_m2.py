@@ -29,6 +29,8 @@ class Cadet:
         self.Velocity = Vector(0, 0, 0)
         self.Forward = Vector(0, 0, 1)
         self.CurrentGas = 120.0
+        self.MaxGas = 120.0
+        self.AutoRefillGas = False
         self.IsAlive = self.IsMine = self.LeftHookEnabled = self.LeftHookReady = True
         self.IsHookedLeft = False
         self.Grounded = True
@@ -48,6 +50,9 @@ class Cadet:
 
     def Move(self, direction):
         self.calls.append(("move", direction))
+
+    def MoveTo(self, position, range):
+        self.calls.append(("move_to", position, range))
 
     def Jump(self):
         self.calls.append(("jump",))
@@ -91,6 +96,7 @@ class World:
         self.network = NS(IsMasterClient=True, MyPlayer=self.host)
         self.messages = []
         self.persistent = {}
+        self.supply_stations = CLList()
         self.spawns = 0
         self.ai_humans = CLList()
         self.titans = CLList([self.titan])
@@ -117,6 +123,7 @@ class World:
                     Print=self.messages.append,
                 ),
                 "Physics": NS(LineCast=self.cast),
+                "Map": NS(FindMapObjectsByComponent=lambda name: self.supply_stations if name == "SupplyStation" else CLList()),
                 "Convert": NS(ToString=str),
                 "Range": lambda a, b, c: range(a, b, c),
                 "LoadoutEnum": NS(HumanBlades="Blades"),
@@ -283,6 +290,85 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._orderMode, "Engage")
         self.assertEqual(w.controller._state, "PlanApproach")
+
+    def test_low_gas_enters_resupply_instead_of_terminating(self):
+        w = World()
+        w.tick()
+        w.cadet.CurrentGas = 31.0
+        w.tick()
+        self.assertEqual(w.controller._state, "SeekSupply")
+        self.assertTrue(w.cadet.AutoRefillGas)
+        self.assertTrue(any("resupply_requested" in m for m in w.messages))
+
+    def test_supply_station_is_selected_and_ground_routed(self):
+        w = World()
+        w.tick()
+        w.cadet.CurrentGas = 32.0
+        w.supply_stations.append(NS(Position=Vector(4, 0, 60)))
+        w.tick()
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "SeekSupply")
+        self.assertEqual(w.controller._supplySource, "map_component")
+        self.assertTrue(any(x[0] == "move_to" for x in w.cadet.calls))
+
+    def test_host_marker_routes_when_station_not_exposed(self):
+        w = World()
+        w.tick()
+        w.cadet.CurrentGas = 28.0
+        w.persistent.update({
+            "AICadetsSupplyRevision": 1,
+            "AICadetsSupplyX": 4.0,
+            "AICadetsSupplyY": 0.0,
+            "AICadetsSupplyZ": 30.0,
+        })
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._supplySource, "host_marked_unverified")
+        self.assertTrue(any(x[0] == "move_to" for x in w.cadet.calls))
+
+    def test_arrival_alone_does_not_refill(self):
+        w = World()
+        w.tick()
+        w.cadet.CurrentGas = 25.0
+        w.supply_stations.append(NS(Position=Vector(4, 0, 1)))
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "AtSupply")
+        w.tick(1)
+        self.assertEqual(w.controller._state, "AtSupply")
+        self.assertFalse(any("resupply_verified" in x for x in w.messages))
+
+    def test_actual_gas_increase_resumes_engage(self):
+        w = World()
+        w.tick()
+        w.cadet.CurrentGas = 20.0
+        w.supply_stations.append(NS(Position=Vector(4, 0, 1)))
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "AtSupply")
+        w.cadet.CurrentGas = 111.0
+        w.tick()
+        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertFalse(w.cadet.AutoRefillGas)
+        self.assertTrue(any("resupply_verified" in x for x in w.messages))
+
+    def test_resupply_order_is_scoped_and_uses_ground_navigation(self):
+        w = World()
+        w.tick()
+        w.persistent.update({
+            "AICadetsCmdSequence": 1,
+            "AICadetsCmdMode": "Resupply",
+            "AICadetsCmdScope": "AICadetsM2-1",
+            "AICadetsSupplyRevision": 1,
+            "AICadetsSupplyX": 4.0,
+            "AICadetsSupplyY": 0.0,
+            "AICadetsSupplyZ": 50.0,
+        })
+        w.tick()
+        self.assertEqual(w.controller._state, "SeekSupply")
+        w.tick()
+        self.assertEqual(w.controller._supplySource, "host_marked_unverified")
 
     def test_retry_bans_target(self):
         w = World()
