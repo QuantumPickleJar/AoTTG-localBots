@@ -1129,7 +1129,7 @@ addon AICadetsWaveCadet
                 self._cadet.MoveTo(waypoint, self.SupplyArrivalRange);
                 self.LogEvent("supply_ground_route", "remaining=" + Convert.ToString(distance) + " waypoint=" + Convert.ToString(waypoint));
             }
-            else if (self._cadet.CurrentGas > self.MinAttackGas + 4.0 && self._cadet.LeftHookReady)
+            if (!self._cadet.Grounded && self._cadet.CurrentGas > self.MinAttackGas + 4.0 && self._cadet.LeftHookReady)
             {
                 self.StartTraverse(waypoint + Vector3(0.0, 6.0, 0.0), "supply");
             }
