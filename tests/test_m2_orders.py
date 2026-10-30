@@ -103,7 +103,7 @@ class OrdersTest(unittest.TestCase):
         panel.OnGameStart()
         self.assertEqual(len(roots), 1)
         self.assertFalse(panel._panel.active)
-        self.assertEqual(camera, [])
+        self.assertEqual(camera, [("lock", False), ("cursor", False)])
         keys.add("CustomKey/F8")
         panel.OnFrame()
         self.assertTrue(panel._open)
@@ -182,7 +182,31 @@ class OrdersTest(unittest.TestCase):
         panel.Hold()
         self.assertIn("No owned M2 cadets", panel._rosterLabel.Text)
         self.assertIn("M1 demo bots: 1", panel._rosterLabel.Text)
-        self.assertIn("PENDING #1", panel._responseLabel.Text)
+        self.assertIn("NOT APPLIED #1: no owned M2 cadet", panel._responseLabel.Text)
+
+    def test_terminated_m2_shows_reason_not_pending_forever(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        panel.OpenMenu()
+        humans.append(NS(Name="AICadetsM2-1", IsAlive=True, IsMine=True))
+        data["AICadetsM2State-AICadetsM2-1"] = "Done"
+        data["AICadetsM2Heartbeat-AICadetsM2-1"] = 2.0
+        data["AICadetsM2TerminalReason-AICadetsM2-1"] = "repeated_start"
+        panel.Hold()
+        self.assertIn("TERMINATED: repeated_start", panel._rosterLabel.Text)
+        self.assertIn("NOT APPLIED #1: controller terminated", panel._responseLabel.Text)
+        # Do not misclassify a Done cadet as merely missing a heartbeat.
+        time.GameTime = 20.0
+        panel.RefreshStatus()
+        self.assertIn("TERMINATED: repeated_start", panel._rosterLabel.Text)
+
+    def test_absent_cadet_shows_last_terminal_reason_as_history(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        data["AICadetsM2State-AICadetsM2-1"] = "Done"
+        data["AICadetsM2TerminalReason-AICadetsM2-1"] = "invalid_state"
+        panel.OnGameStart()
+        panel.OpenMenu()
+        self.assertIn("Previous M2-1 ended: invalid_state", panel._rosterLabel.Text)
 
     def test_mark_supply_is_waypoint_not_fake_refill(self):
         panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
