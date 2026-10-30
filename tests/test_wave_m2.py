@@ -209,12 +209,14 @@ class WaveM2Tests(unittest.TestCase):
         w.titans.items.clear()
         w.controller.Enter("AcquireTarget", "test")
         w.tick()
-        self.assertEqual(w.controller._state, "Regroup")
+        self.assertEqual(w.controller._state, "Explore")
         self.assertTrue(any("reason=no_alive_titans listed=0 alive=0" in m for m in w.messages))
+        w.controller._exploreNextAction = 100.0
         w.tick(0.4)
-        self.assertEqual(w.controller._state, "Regroup")
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertTrue(w.controller._exploreNextScan > w.time.GameTime)
         w.tick(2.2)
-        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertEqual(w.controller._state, "Explore")
 
     def test_wide_traversal_budget_remains_bounded(self):
         w = World()
