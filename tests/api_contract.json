@@ -76,6 +76,16 @@
           "signature": "function MoveTo(position: Vector3, range: float)",
           "min_args": 2,
           "max_args": 2
+        },
+        "MoveToTarget": {
+          "signature": "function MoveToTarget(target: Object, range: float)",
+          "min_args": 2,
+          "max_args": 2
+        },
+        "GetAIState": {
+          "signature": "function GetAIState() -> string",
+          "min_args": 0,
+          "max_args": 0
         }
       },
       "properties": [
