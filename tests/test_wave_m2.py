@@ -160,6 +160,39 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
 
+    def test_second_game_start_does_not_terminate_live_controller(self):
+        w = World()
+        w.tick()
+        self.assertEqual(w.spawns, 1)
+        self.assertNotEqual(w.controller._state, "Done")
+        w.controller.OnGameStart()
+        self.assertNotEqual(w.controller._state, "Done")
+        w.tick(0.4)
+        self.assertNotEqual(w.controller._state, "Done")
+        self.assertEqual(w.spawns, 1)
+        self.assertTrue(any("duplicate_start_ignored" in m for m in w.messages))
+
+    def test_spawn_latch_is_independent_of_terminal_state(self):
+        w = World()
+        w.tick()
+        self.assertEqual(w.spawns, 1)
+        self.assertTrue(w.controller._spawnLatched)
+        self.assertNotEqual(w.controller._state, "Done")
+        self.assertIn("AICadetsM2RunId-AICadetsM2-1", w.persistent)
+        self.assertEqual(w.persistent["AICadetsM2TerminalReason-AICadetsM2-1"], "none")
+
+    def test_termination_exposes_reason_and_timestamp(self):
+        w = World()
+        w.tick()
+        w.controller.Terminate("failure", "unit_test_shutdown")
+        self.assertEqual(w.controller._state, "Done")
+        self.assertEqual(w.persistent["AICadetsM2State-AICadetsM2-1"], "Done")
+        self.assertEqual(w.persistent["AICadetsM2TerminalReason-AICadetsM2-1"], "unit_test_shutdown")
+        self.assertEqual(w.persistent["AICadetsM2TerminalTime-AICadetsM2-1"], w.time.GameTime)
+        w.persistent.update({"AICadetsCmdSequence": 3, "AICadetsCmdScope": "all", "AICadetsCmdMode": "Explore"})
+        w.tick()
+        self.assertNotIn("AICadetsM2AckSeq-AICadetsM2-1", w.persistent)
+
     def test_critical_gas_switches_to_supply_search_without_refill_cheating(self):
         w = World()
         w.tick()
