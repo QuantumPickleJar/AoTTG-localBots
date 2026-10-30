@@ -19,6 +19,9 @@ addon AICadetsWaveCadet
     MaxTraversePerTarget = 30;
     MaxTargetRetries = 3;
     MaxRecoveriesPerTarget = 2;
+    ExploreSegmentDistance = 58.0;
+    ExploreScanSeconds = 2.5;
+    ExploreGroundSeconds = 2.0;
     Diagnostics = true;
     SaveRunReport = false;
 
@@ -29,6 +32,14 @@ addon AICadetsWaveCadet
     _runStart = 0.0;
     _nextTickReport = 0.0;
     _noTargetCooldownUntil = 0.0;
+    _exploreNextScan = 0.0;
+    _exploreNextAction = 0.0;
+    _exploreIndex = 0;
+    _exploreDirection = null;
+    _exploreStartPosition = null;
+    _exploreFailures = 0;
+    _orderSequence = 0;
+    _orderMode = "Engage";
     _cadet = null;
     _cadetName = "";
     _runId = "";
@@ -78,6 +89,7 @@ addon AICadetsWaveCadet
             return;
         }
         self._runStart = Time.GameTime;
+        self._orderSequence = PersistentData.GetProperty("AICadetsCmdSequence", 0);
         self._runId = "m2-" + Convert.ToString(Time.GameTime);
         self.Enter("WaitHost", "startup");
         self.LogEvent("ready", "run_id=" + self._runId + " host_timeout=30");
@@ -134,6 +146,11 @@ addon AICadetsWaveCadet
             self.Terminate("safe_termination", "game_ending");
             return;
         }
+        self.ReadOrders();
+        if (self._state == "Hold")
+        {
+            return;
+        }
         if (Time.GameTime >= self._nextTickReport)
         {
             self._nextTickReport = Time.GameTime + 5.0;
@@ -150,16 +167,33 @@ addon AICadetsWaveCadet
             }
         }
 
+        if (self._state == "Explore")
+        {
+            self.ExploreStep();
+            return;
+        }
         if (self._state == "Regroup")
         {
             if (Time.GameTime - self._stateStart >= 0.35 && Time.GameTime >= self._noTargetCooldownUntil)
             {
-                self.Enter("AcquireTarget", "regroup_complete");
+                if (self._orderMode == "Explore")
+                {
+                    self.Enter("Explore", "regroup_explore");
+                }
+                else
+                {
+                    self.Enter("AcquireTarget", "regroup_complete");
+                }
             }
             return;
         }
         if (self._state == "AcquireTarget")
         {
+            if (self._orderMode == "Explore")
+            {
+                self.Enter("Explore", "manual_patrol");
+                return;
+            }
             self.AcquireTarget();
             return;
         }
@@ -381,11 +415,20 @@ addon AICadetsWaveCadet
             self.LogEvent("target_none", "reason=" + reason + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive) + " banned=" + Convert.ToString(banned) + " nearest=" + Convert.ToString(nearest));
             # Leave room for wave spawns / temporary target bans without 3 log lines
             # every 0.35 seconds, which previously exhausted the 260-print budget.
-            self._noTargetCooldownUntil = Time.GameTime + 2.5;
-            self.Enter("Regroup", "no_target");
+            self._noTargetCooldownUntil = Time.GameTime + self.ExploreScanSeconds;
+            self._exploreNextScan = self._noTargetCooldownUntil;
+            if (self._orderMode == "Engage")
+            {
+                self.Enter("Explore", "no_target_start_patrol");
+            }
+            else
+            {
+                self.Enter("Explore", "explore_order");
+            }
             return;
         }
         self._noTargetCooldownUntil = 0.0;
+        self._cadet.Idle();
         self._targetRetryCount = 0;
         self._targetTraverseCount = 0;
         self._targetRecoveries = 0;
@@ -441,6 +484,7 @@ addon AICadetsWaveCadet
             self._trStartDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
         }
         self._trStartPosition = self._cadet.Position;
+        self._cadet.Idle();
         self.LogEvent("traverse_start", "mode=" + mode + " goal=" + Convert.ToString(goal) + " target_dist=" + Convert.ToString(self._trStartDistance) + " attempts=" + Convert.ToString(self._targetTraverseCount));
         self.BeginTraverseLeg();
     }
@@ -556,6 +600,22 @@ addon AICadetsWaveCadet
         self.StopODM();
         self._targetTraverseCount = self._targetTraverseCount + 1;
         self.LogEvent("traverse_end", "mode=" + self._traverseMode + " outcome=" + self._trOutcome + " legs=" + Convert.ToString(self._trLeg));
+        if (self._traverseMode == "explore")
+        {
+            distance = Vector3.Distance(self._cadet.Position, self._trStartPosition);
+            self.LogEvent("explore_traverse_end", "outcome=" + self._trOutcome + " distance=" + Convert.ToString(distance) + " pattern=" + Convert.ToString(self._exploreIndex));
+            if (distance < self.TraverseProgressMin)
+            {
+                self._exploreFailures = self._exploreFailures + 1;
+            }
+            else
+            {
+                self._exploreFailures = 0;
+            }
+            self._exploreNextAction = Time.GameTime + 0.75;
+            self.Enter("Explore", "patrol_step_finished");
+            return;
+        }
         if (self._traverseMode == "retreat")
         {
             self.Enter("Regroup", "retreat_complete");
@@ -717,6 +777,134 @@ addon AICadetsWaveCadet
         }
         recoverGoal = self._cadet.Position + self._direction * 30.0 + Vector3(0.0, 10.0, 0.0);
         self.StartTraverse(recoverGoal, "recover");
+    }
+
+    # Lightweight maneuver-policy dispatcher: currently four bounded patterns.
+    # Routes are actual heading/rise choices, not cosmetic animations. Each
+    # pattern can later be moved into its own named skill implementation.
+    function ChooseExploreHeading()
+    {
+        baseDir = Vector3(self._cadet.Forward.X, 0.0, self._cadet.Forward.Z);
+        if (baseDir.Magnitude < 0.1)
+        {
+            baseDir = Vector3(0.0, 0.0, 1.0);
+        }
+        baseDir = baseDir.Normalized;
+        right = Vector3(baseDir.Z, 0.0, 0.0 - baseDir.X);
+        pattern = self._exploreIndex % 4;
+        if (pattern == 0)
+        {
+            return Vector3.Normalize(baseDir + right * 0.4);
+        }
+        if (pattern == 1)
+        {
+            return Vector3.Normalize(baseDir - right * 0.7);
+        }
+        if (pattern == 2)
+        {
+            return Vector3.Normalize(baseDir + right * 0.85);
+        }
+        return Vector3.Normalize(baseDir - right * 0.35);
+    }
+
+    function ExploreStep()
+    {
+        if (self._orderMode == "Engage" && Time.GameTime >= self._exploreNextScan)
+        {
+            self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
+            self.AcquireTarget();
+            if (self._target != null)
+            {
+                return;
+            }
+        }
+        if (Time.GameTime < self._exploreNextAction)
+        {
+            return;
+        }
+        if (self._cadet.Velocity.Magnitude > 9.0 && !self._cadet.Grounded)
+        {
+            # Avoid overriding a coasting maneuver with a new initial jump.
+            self._exploreNextAction = Time.GameTime + 0.5;
+            return;
+        }
+        if (self._exploreDirection == null || self._exploreFailures > 0)
+        {
+            self._exploreIndex = self._exploreIndex + 1;
+        }
+        self._exploreDirection = self.ChooseExploreHeading();
+        self._exploreStartPosition = self._cadet.Position;
+        exploreGoal = self._cadet.Position + self._exploreDirection * self.ExploreSegmentDistance + Vector3(0.0, self.AnchorRise, 0.0);
+        self.LogEvent("explore_step", "pattern=" + Convert.ToString(self._exploreIndex % 4) + " goal=" + Convert.ToString(exploreGoal) + " failures=" + Convert.ToString(self._exploreFailures));
+        if (self._cadet.LeftHookReady && self._cadet.CurrentGas > self.MinAttackGas && self._exploreFailures < 3)
+        {
+            self.StartTraverse(exploreGoal, "explore");
+            return;
+        }
+        self.ExploreGroundMove();
+    }
+
+    # Human.Move is a documented ordinary controller action; use it only when
+    # grounded and a short forward map probe does not report a wall.
+    function ExploreGroundMove()
+    {
+        direction = self._exploreDirection;
+        start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
+        ahead = start + direction * 4.0;
+        if (self.MapHit(start, ahead) != null)
+        {
+            self._exploreIndex = self._exploreIndex + 1;
+            direction = self.ChooseExploreHeading();
+        }
+        if (self._cadet.Grounded)
+        {
+            self._cadet.Move(direction);
+            self.LogEvent("explore_ground", "direction=" + Convert.ToString(direction));
+        }
+        self._exploreNextAction = Time.GameTime + self.ExploreGroundSeconds;
+        self._exploreIndex = self._exploreIndex + 1;
+        self._exploreFailures = 0;
+    }
+
+    # Shared master-owned, local-only command channel. The UI addon increments
+    # the sequence when the user presses Engage / Explore / Hold for All or one
+    # named bot. The command is never persisted to disk by this feature.
+    function ReadOrders()
+    {
+        sequence = PersistentData.GetProperty("AICadetsCmdSequence", 0);
+        if (sequence == self._orderSequence)
+        {
+            return;
+        }
+        self._orderSequence = sequence;
+        scope = PersistentData.GetProperty("AICadetsCmdScope", "all");
+        if (scope != "all" && scope != self._cadetName)
+        {
+            return;
+        }
+        order = PersistentData.GetProperty("AICadetsCmdMode", "Engage");
+        if (order != "Engage" && order != "Explore" && order != "Hold")
+        {
+            return;
+        }
+        self._orderMode = order;
+        self.StopODM();
+        self._cadet.Idle();
+        self.LogEvent("order_received", "mode=" + order + " scope=" + scope);
+        if (order == "Hold")
+        {
+            self.Enter("Hold", "user_hold");
+            return;
+        }
+        if (order == "Explore")
+        {
+            self._target = null;
+            self._targetViewId = 0;
+            self._exploreNextAction = 0.0;
+            self.Enter("Explore", "user_explore");
+            return;
+        }
+        self.Enter("AcquireTarget", "user_engage");
     }
 
     function RefreshTarget()
