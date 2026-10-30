@@ -327,11 +327,11 @@ addon AICadetsCommandPanel
                 {
                     self._responseLabel.Text = "NOT APPLIED #" + Convert.ToString(self._pendingSeq) + ": no owned M2 cadet";
                 }
-                else if (stopped == count)
+                elif (stopped == count)
                 {
                     self._responseLabel.Text = "NOT APPLIED #" + Convert.ToString(self._pendingSeq) + ": controller terminated";
                 }
-                else if (unresponsive == count)
+                elif (unresponsive == count)
                 {
                     self._responseLabel.Text = "NOT APPLIED #" + Convert.ToString(self._pendingSeq) + ": no live heartbeat";
                 }
