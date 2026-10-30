@@ -122,6 +122,28 @@ class OrdersTest(unittest.TestCase):
         self.assertEqual(inputs[-1], True)
         self.assertIn(("lock", False), camera)
 
+    def test_f9_recovery_with_desynchronized_menu_state(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        panel.OpenMenu()
+        panel._open = False
+        keys.add("CustomKey/F9")
+        panel.OnFrame()
+        self.assertFalse(panel._panel.active)
+        self.assertEqual(camera[-1], ("cursor", False))
+        self.assertEqual(inputs[-1], True)
+
+    def test_menu_timeout_restores_normal_play(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        panel.OpenMenu()
+        time.GameTime += panel.MenuMaxSeconds + 1.0
+        panel.OnTick()
+        self.assertFalse(panel._open)
+        self.assertFalse(panel._panel.active)
+        self.assertEqual(camera[-1], ("cursor", False))
+        self.assertEqual(inputs[-1], True)
+
     def test_commands_are_pending_until_matching_m2_controller_acks(self):
         panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
         panel.OnGameStart()
