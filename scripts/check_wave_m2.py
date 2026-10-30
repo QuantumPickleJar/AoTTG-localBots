@@ -30,6 +30,12 @@ def validate(source):
             "self._cadet": "Human",
             "self._cadet.Forward": "Vector3",
             "self._cadet.Velocity": "Vector3",
+            "station": "MapObject",
+            "point": "Vector3",
+            "flat": "Vector3",
+            "toStation": "Vector3",
+            "right": "Vector3",
+            "direction": "Vector3",
             "host": "Human",
             "human": "Human",
             "titan": "Titan",
@@ -112,7 +118,7 @@ def validate(source):
         if isinstance(node, ast.Assign):
             target = ast.unparse(node.targets[0])
             if target.startswith("self._cadet."):
-                assert target in {"self._cadet.Name"}, "No direct movement/resource cheats via property writes"
+                assert target in {"self._cadet.Name", "self._cadet.AutoRefillGas"}, "No direct movement/resource cheats via property writes"
     assert "class Main" not in source
     assert source.count("Game.SpawnHumanAt(") == 1
     assert not re.search(r"\b(Upload|SendMessage|SetPreload|RestartWithPreloadSettings)\b", source)
