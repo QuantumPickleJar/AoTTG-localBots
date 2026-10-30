@@ -17,6 +17,9 @@ addon AICadetsWatcher
     _previousVelocity = null;
     _previousPosition = null;
     _nextImpact = 0.0;
+    _previousTime = 0.0;
+    _dirty = false;
+    _records = 0;
 
     function OnGameStart()
     {
@@ -47,7 +50,7 @@ addon AICadetsWatcher
             return;
         }
         self._start = Time.GameTime;
-        self._trace = "AICadetsWatcher v2; times=GameTime; samples=0.2s; max=25s after discovery\n";
+        self._trace = "AICadetsWatcher v3; times=GameTime; moving=0.2s; idle=2s; max_records=500; max=25s after discovery\n";
         self.Record("watch_started");
         self.Flush();
         Game.Print("[AI Cadets Watch] Recording to PersistentData/" + self._file);
@@ -107,6 +110,7 @@ addon AICadetsWatcher
         if (self._scout.IsHookedLeft != self._lastHook || self._scout.IsHookingLeft != self._lastHooking || self._scout.Grounded != self._lastGrounded)
         {
             self.Snapshot("change");
+            self._nextSample = Time.GameTime + 0.2;
             self._lastHook = self._scout.IsHookedLeft;
             self._lastHooking = self._scout.IsHookingLeft;
             self._lastGrounded = self._scout.Grounded;
@@ -114,9 +118,9 @@ addon AICadetsWatcher
         if (Time.GameTime >= self._nextSample)
         {
             self.Snapshot("sample");
-            self._nextSample = Time.GameTime + 0.2;
+            self._nextSample = Time.GameTime + self.SampleInterval();
         }
-        if (Time.GameTime >= self._nextSave)
+        if (self._dirty && Time.GameTime >= self._nextSave)
         {
             self.Flush();
         }
@@ -149,17 +153,64 @@ addon AICadetsWatcher
                 {
                     detail = "layer=" + layer + " hit=" + Convert.ToString(hit.Point) + " normal=" + Convert.ToString(hit.Normal) + " distance=" + Convert.ToString(hit.Distance);
                 }
-                self.Record("possible_impact pre_pos=" + Convert.ToString(self._previousPosition) + " pos=" + Convert.ToString(position) + " pre_vel=" + Convert.ToString(self._previousVelocity) + " post_vel=" + Convert.ToString(velocity) + " delta_v=" + Convert.ToString(change) + " " + detail);
+                kind = self.MotionEvent(self._lastHook, self._scout.IsHookedLeft, self._lastGrounded, self._scout.Grounded, hit != null);
+                self.Record(kind + " dt=" + Convert.ToString(Time.GameTime - self._previousTime) + " pre_pos=" + Convert.ToString(self._previousPosition) + " pos=" + Convert.ToString(position) + " pre_vel=" + Convert.ToString(self._previousVelocity) + " post_vel=" + Convert.ToString(velocity) + " delta_v=" + Convert.ToString(change) + " " + detail);
                 self._nextImpact = Time.GameTime + 0.2;
             }
         }
         self._previousVelocity = velocity;
         self._previousPosition = position;
+        self._previousTime = Time.GameTime;
+    }
+
+    function SampleInterval()
+    {
+        if (self._scout.Grounded && self._scout.Velocity.Magnitude < 0.1 && !self._scout.IsHookedLeft && !self._scout.IsHookingLeft)
+        {
+            return 2.0;
+        }
+        return 0.2;
+    }
+
+    function MotionEvent(wasHooked, hooked, wasGrounded, grounded, mapHit)
+    {
+        if (!wasGrounded && grounded)
+        {
+            return "landing_velocity_change";
+        }
+        if (wasHooked != hooked)
+        {
+            if (mapHit)
+            {
+                return "hook_transition_near_surface";
+            }
+            return "hook_transition_velocity_change";
+        }
+        if (mapHit)
+        {
+            return "possible_impact";
+        }
+        return "unexplained_velocity_change";
     }
 
     function Record(event)
     {
+        if (self._records >= 500)
+        {
+            return;
+        }
+        self._records = self._records + 1;
+        self._dirty = true;
+        if (self._records == 500)
+        {
+            event = "record_limit_reached";
+            self._finished = true;
+        }
         self._trace = self._trace + Convert.ToString(Time.GameTime) + " " + event + "\n";
+        if (self._finished)
+        {
+            self.Flush();
+        }
     }
 
     function Snapshot(kind)
@@ -178,5 +229,6 @@ addon AICadetsWatcher
         PersistentData.SetProperty("AICadetsM1WatchTrace", self._trace);
         PersistentData.SaveToFile(self._file, false);
         self._nextSave = Time.GameTime + 1.0;
+        self._dirty = false;
     }
 }

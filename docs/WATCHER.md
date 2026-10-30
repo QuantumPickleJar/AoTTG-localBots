@@ -19,3 +19,11 @@ The watcher checks velocity at each fixed tick and records `possible_impact` whe
 The documented [OnCollisionEnter(other: Object)](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/callbacks/components.md) applies to components attached to MapObjects, not a general AI-human/add-on callback. Tests on built-in map geometry therefore use the velocity/linecast clue. [Physics.LineCast](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Physics.md) is a query, not a contact event.
 
 Test against an obvious wall impact, a clear swing/release, and a landing. Compare the `possible_impact` lines and timestamps with video; report missed or misleading detections. Behavior is statically checked, not yet verified in game.
+
+## v3 collector refinements
+
+Moving/airborne samples remain at 0.2 seconds; grounded, stationary, unhooked observations use a 2-second heartbeat. Hook/ground transitions are still checked each tick and postpone the next periodic sample to avoid duplicate rows. Only dirty traces are written. A 500-record hard limit writes an explicit terminal marker and flushes; the existing time limit remains. Files are never silently pruned.
+
+Velocity changes now include the elapsed observation interval and separate landing, hook-transition, unexplained-change and possible-impact labels. A hook transition near a surface remains visible as ambiguous evidence instead of being discarded. These categories are diagnostic interpretations, not collision confirmations. The detector still has uncalibrated thresholds, a single linecast and a 0.2-second event cooldown. Vector string formatting from the game rounds values; this is not a full-precision physics trace. Internal controller commands/reasons remain outside this independent observer.
+
+Regression evidence: uploaded Watch1 showed a hook-induced false positive and wall/balcony events; Watch3 showed a wall scrape and a landing with no ray hit. New helper tests execute the actual source helper bodies under mocks, covering category selection, idle/airborne sampling and explicit record limits. Live v3 testing remains required.
