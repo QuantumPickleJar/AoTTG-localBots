@@ -1182,8 +1182,10 @@ addon AICadetsWaveCadet
                 self._exploreIndex = 0;
             }
             self._exploreDirection = self.ChooseExploreHeading();
-            self.ExploreGroundMove();
-            self.LogEvent("supply_search_patrol", "gas=" + Convert.ToString(self._cadet.CurrentGas));
+            waypoint = self._cadet.Position + self._exploreDirection * 35.0;
+            self._cadet.MoveTo(waypoint, 4.0);
+            self._exploreNextAction = Time.GameTime + 7.0;
+            self.LogEvent("supply_search_patrol", "waypoint=" + Convert.ToString(waypoint) + " gas=" + Convert.ToString(self._cadet.CurrentGas));
         }
     }
 
