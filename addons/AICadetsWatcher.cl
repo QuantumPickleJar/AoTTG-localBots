@@ -14,6 +14,9 @@ addon AICadetsWatcher
     _lastHook = false;
     _lastHooking = false;
     _lastGrounded = false;
+    _previousVelocity = null;
+    _previousPosition = null;
+    _nextImpact = 0.0;
 
     function OnGameStart()
     {
@@ -44,7 +47,7 @@ addon AICadetsWatcher
             return;
         }
         self._start = Time.GameTime;
-        self._trace = "AICadetsWatcher v1; times=GameTime; samples=0.2s; max=25s after discovery\n";
+        self._trace = "AICadetsWatcher v2; times=GameTime; samples=0.2s; max=25s after discovery\n";
         self.Record("watch_started");
         self.Flush();
         Game.Print("[AI Cadets Watch] Recording to PersistentData/" + self._file);
@@ -100,6 +103,7 @@ addon AICadetsWatcher
             self._finished = true;
             return;
         }
+        self.CheckImpact();
         if (self._scout.IsHookedLeft != self._lastHook || self._scout.IsHookingLeft != self._lastHooking || self._scout.Grounded != self._lastGrounded)
         {
             self.Snapshot("change");
@@ -116,6 +120,41 @@ addon AICadetsWatcher
         {
             self.Flush();
         }
+    }
+
+    # A change in velocity is only a clue, not a collision callback.
+    function CheckImpact()
+    {
+        velocity = self._scout.Velocity;
+        position = self._scout.Position;
+        if (self._previousVelocity != null && self._previousPosition != null && Time.GameTime >= self._nextImpact)
+        {
+            difference = velocity - self._previousVelocity;
+            change = difference.Magnitude;
+            if (change >= 8.0 && self._previousVelocity.Magnitude >= 5.0)
+            {
+                start = self._previousPosition + Vector3(0.0, 1.0, 0.0);
+                end = position + Vector3(0.0, 1.0, 0.0) + self._previousVelocity.Normalized * 3.0;
+                mapHit = Physics.LineCast(start, end, CollideWithEnum.MapObjects);
+                editorHit = Physics.LineCast(start, end, CollideWithEnum.MapEditor);
+                hit = mapHit;
+                layer = "MapObjects";
+                if (hit == null || (editorHit != null && editorHit.Distance < hit.Distance))
+                {
+                    hit = editorHit;
+                    layer = "MapEditor";
+                }
+                detail = "map_hit=none";
+                if (hit != null)
+                {
+                    detail = "layer=" + layer + " hit=" + Convert.ToString(hit.Point) + " normal=" + Convert.ToString(hit.Normal) + " distance=" + Convert.ToString(hit.Distance);
+                }
+                self.Record("possible_impact pre_pos=" + Convert.ToString(self._previousPosition) + " pos=" + Convert.ToString(position) + " pre_vel=" + Convert.ToString(self._previousVelocity) + " post_vel=" + Convert.ToString(velocity) + " delta_v=" + Convert.ToString(change) + " " + detail);
+                self._nextImpact = Time.GameTime + 0.2;
+            }
+        }
+        self._previousVelocity = velocity;
+        self._previousPosition = position;
     }
 
     function Record(event)

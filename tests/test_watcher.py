@@ -17,6 +17,11 @@ class WatcherChecks(unittest.TestCase):
         self.assertEqual(s.count('{'), s.count('}'))
         self.assertFalse(re.search(r'PersistentData\.Clear\s*\(', s))
         self.assertFalse(re.search(r'\.(UseGas|LaunchHookLeft|ReleaseHookLeft|Move|Jump)\s*\(', s))
+        self.assertIn('possible_impact', s)
+        self.assertIn('change >= 8.0', s)
+        self.assertIn('Time.GameTime + 0.2', s)
+        self.assertIn('Physics.LineCast(start, end, CollideWithEnum.MapObjects)', s)
+        self.assertIn('Physics.LineCast(start, end, CollideWithEnum.MapEditor)', s)
         for prop in ('Position', 'Velocity', 'CurrentGas', 'IsHookedLeft', 'IsHookingLeft', 'LeftHookReady', 'Grounded', 'LeftHookPosition'):
             self.assertIn('self._scout.' + prop, s)
 
