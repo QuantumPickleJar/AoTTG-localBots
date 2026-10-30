@@ -356,6 +356,23 @@ class WaveM2Tests(unittest.TestCase):
         self.assertFalse(w.cadet.AutoRefillGas)
         self.assertTrue(any("resupply_verified" in x for x in w.messages))
 
+    def test_unmapped_supply_search_patrol_can_detect_natural_refill(self):
+        w = World()
+        w.tick()
+        w.cadet.CurrentGas = 9.0
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "ExploreSupply")
+        w.tick()
+        self.assertTrue(any(a[0] == "move_to" for a in w.cadet.calls))
+        self.assertTrue(w.cadet.AutoRefillGas)
+        # Simulate a real in-game station's own refill, not a controller write.
+        w.cadet.CurrentGas = 99.0
+        w.tick()
+        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertFalse(w.cadet.AutoRefillGas)
+        self.assertTrue(any("resupply_verified" in x for x in w.messages))
+
     def test_resupply_order_is_scoped_and_uses_ground_navigation(self):
         w = World()
         w.tick()
