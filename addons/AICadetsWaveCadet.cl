@@ -30,7 +30,10 @@ addon AICadetsWaveCadet
     SaveRunReport = false;
 
     _started = false;
+    _spawnLatched = false;
     _eligible = false;
+    _terminationReason = "none";
+    _lastPublishedState = "Dormant";
     _state = "Dormant";
     _stateStart = 0.0;
     _runStart = 0.0;
@@ -99,7 +102,9 @@ addon AICadetsWaveCadet
     {
         if (self._started)
         {
-            self.Terminate("safe_termination", "repeated_start");
+            # Game/mode callbacks may be repeated. They must not kill an
+            # already owned and functioning WaveCadet controller.
+            self.LogEvent("duplicate_start_ignored", "state=" + self._state);
             return;
         }
         self._started = true;
@@ -109,6 +114,8 @@ addon AICadetsWaveCadet
             return;
         }
         self._runStart = Time.GameTime;
+        self._terminationReason = "none";
+        self._spawnLatched = false;
         self._orderSequence = PersistentData.GetProperty("AICadetsCmdSequence", 0);
         self._runId = "m2-" + Convert.ToString(Time.GameTime);
         self.Enter("WaitHost", "startup");
@@ -128,6 +135,11 @@ addon AICadetsWaveCadet
         }
         if (self._state == "WaitHost")
         {
+            if (self._spawnLatched)
+            {
+                self.Terminate("failure", "spawn_latched_but_waiting");
+                return;
+            }
             if (Time.GameTime - self._stateStart >= 30.0)
             {
                 self.Terminate("failure", "host_timeout");
@@ -367,15 +379,21 @@ addon AICadetsWaveCadet
             self.Terminate("safe_termination", "spawn_path_blocked");
             return;
         }
-        self.Enter("Done", "spawn_latched");
+        # Latch spawn independently of operational state. In the old
+        # implementation an interrupted spawn could permanently strand the
+        # controller in Done, suppressing all future orders.
+        self._spawnLatched = true;
+        self.Enter("Spawning", "spawn_latched");
         self._cadet = Game.SpawnHumanAt(1, "Levi", LoadoutEnum.HumanBlades, spawnPos, 0.0);
         if (self._cadet == null || !self._cadet.IsMine || !self._cadet.IsAlive)
         {
-            self.StopODM();
-            Game.Print("[AI Cadets M2] result_class=failure result_reason=spawn_failed_or_not_owned run_id=" + self._runId);
+            self.Terminate("failure", "spawn_failed_or_not_owned");
             return;
         }
         self._cadet.Name = self._cadetName;
+        PersistentData.SetProperty("AICadetsM2TerminalReason-" + self._cadetName, "none");
+        PersistentData.SetProperty("AICadetsM2TerminalTime-" + self._cadetName, 0.0);
+        PersistentData.SetProperty("AICadetsM2RunId-" + self._cadetName, self._runId);
         self._cadet.SetDisplayName(self._cadetName, true);
         self._cadet.Idle();
         self._direction = Vector3.Normalize(Vector3(host.Forward.X, 0.0, host.Forward.Z));
@@ -950,6 +968,7 @@ addon AICadetsWaveCadet
         PersistentData.SetProperty("AICadetsM2Heartbeat-" + key, Time.GameTime);
         PersistentData.SetProperty("AICadetsM2State-" + key, self._state);
         PersistentData.SetProperty("AICadetsM2Mode-" + key, self._orderMode);
+        PersistentData.SetProperty("AICadetsM2RunId-" + key, self._runId);
     }
 
     function ReadOrders()
@@ -1400,10 +1419,16 @@ addon AICadetsWaveCadet
         {
             self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
         }
+        self._terminationReason = reason;
         self.LogEvent("termination", "result_class=" + resultClass + " reason=" + reason + " kills_observed=" + Convert.ToString(self._killsObserved) + " titan_deaths_observed=" + Convert.ToString(self._titanDeathsObserved) + " damage_events=" + Convert.ToString(self._damageEvents));
         Game.Print("[AI Cadets M2] result_class=" + resultClass + " result_reason=" + reason + " run_id=" + self._runId + " cadet=" + self._cadetName + " target_retry=" + Convert.ToString(self._targetRetryCount) + " target_traverses=" + Convert.ToString(self._targetTraverseCount) + " target_recoveries=" + Convert.ToString(self._targetRecoveries) + " kills_observed=" + Convert.ToString(self._killsObserved) + " titan_deaths_observed=" + Convert.ToString(self._titanDeathsObserved));
         self.SaveReportIfEnabled();
         self.Enter("Done", "terminated");
+        if (self._cadetName != "")
+        {
+            PersistentData.SetProperty("AICadetsM2TerminalReason-" + self._cadetName, reason);
+            PersistentData.SetProperty("AICadetsM2TerminalTime-" + self._cadetName, Time.GameTime);
+        }
         self.PublishOrderStatus();
     }
 }
