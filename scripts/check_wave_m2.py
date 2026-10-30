@@ -29,6 +29,7 @@ def validate(source):
         {
             "self._cadet": "Human",
             "self._cadet.Forward": "Vector3",
+            "self._cadet.Velocity": "Vector3",
             "host": "Human",
             "human": "Human",
             "titan": "Titan",
