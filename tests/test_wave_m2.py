@@ -170,6 +170,48 @@ class WaveM2Tests(unittest.TestCase):
         self.assertIn(w.controller._state, ("AcquireTarget", "Regroup"))
         self.assertTrue(any("confirmed_kill=true" in m for m in w.messages))
 
+    def test_distant_titan_is_targeted_instead_of_discarded(self):
+        # Regression: City Wave spawns can place Titans well outside 220 units.
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(0, 0, 600)
+        w.titan.NapePosition = Vector(0, 8, 602)
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertTrue(any("target_selected" in m and "distance=" in m for m in w.messages))
+
+    def test_distant_target_dispatches_a_hook_approach(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(0, 0, 600)
+        w.titan.NapePosition = Vector(0, 8, 602)
+        w.hit = NS(Point=Vector(4, 20, 48), Distance=46.0)
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        w.tick()
+        self.assertEqual(w.controller._state, "TraverseAttach")
+        self.assertTrue(any(action[0] == "launch" for action in w.cadet.calls))
+
+    def test_empty_roster_is_reported_and_throttled(self):
+        w = World()
+        w.tick()
+        w.titans.items.clear()
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "Regroup")
+        self.assertTrue(any("reason=no_alive_titans listed=0 alive=0" in m for m in w.messages))
+        w.tick(0.4)
+        self.assertEqual(w.controller._state, "Regroup")
+        w.tick(2.2)
+        self.assertEqual(w.controller._state, "AcquireTarget")
+
+    def test_wide_traversal_budget_remains_bounded(self):
+        w = World()
+        self.assertGreaterEqual(w.controller.MaxTraversePerTarget, 20)
+        self.assertLessEqual(w.controller.MaxTraversePerTarget, 40)
+
     def test_retry_bans_target(self):
         w = World()
         w.tick()
