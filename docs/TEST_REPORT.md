@@ -1,0 +1,21 @@
+# First ODM probe test log
+
+- AoTTG2 version/build:
+- OS:
+- Mode (normal/realism):
+- Test mission/map:
+- Single-player or private multiplayer:
+- Who was master client / who hosted:
+- Wall/tree target, approximate distance:
+- Add-on parsed without errors? Yes / No
+- `[BOT] Scout 01` spawned? Yes / No
+- Hook launched? Yes / No
+- Hook attached? Yes / No
+- Gas burst visible? Yes / No
+- Hook released? Yes / No
+- Scout actually moved? Yes / No
+- Game chat messages (copy):
+- Console errors **with line numbers** (copy):
+- Short screen recording (optional, local-only):
+- Reproducibility (# successes / attempts):
+- Notes / observed deviations:
