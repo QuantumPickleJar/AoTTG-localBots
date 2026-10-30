@@ -5,6 +5,9 @@ addon AICadetsCommandPanel
 {
     Description = "F8 tactical orders: scoped M2 Engage / Explore / Hold / Resupply, supply marking and acknowledgements.";
     ToggleKey = "CustomKey/F8";
+    RecoveryKey = "CustomKey/F9";
+    MenuMaxSeconds = 45.0;
+    _openedAt = 0.0;
     _initialized = false;
     _open = false;
     _panel = null;
@@ -27,12 +30,15 @@ addon AICadetsCommandPanel
             return;
         }
         self._initialized = true;
+        # Recover any global key/camera flags left over by the previous
+        # input-disabling F8 panel. Never disable those flags when opening.
+        self.RestoreHumanControls();
         self._seq = PersistentData.GetProperty("AICadetsCmdSequence", 0);
         self._supplyRevision = PersistentData.GetProperty("AICadetsSupplyRevision", 0);
         root = UI.GetRootVisualElement();
         # Top-left, hidden until F8; scrollable to fit 720p and avoid minimap.
         self._panel = UI.VisualElement().Absolute(true).Left(20).Top(72).Width(268).Padding(8).Active(false);
-        self._panel.Add(UI.Label("AI Cadets | F8 to close"));
+        self._panel.Add(UI.Label("AI Cadets | F8 close | F9 recover"));
         self._selectedLabel = UI.Label("Recipient: ALL M2 cadets");
         self._panel.Add(self._selectedLabel);
         self._rosterLabel = UI.Label("M2 status: awaiting live controller");
@@ -54,10 +60,10 @@ addon AICadetsCommandPanel
         self._actions.Add(UI.Button("RESUPPLY now", self.Resupply));
         self._actions.Add(UI.Label("Stand inside a working station trigger:"));
         self._actions.Add(UI.Button("MARK supply here", self.MarkSupply));
-        self._actions.Add(UI.Button("CLOSE [F8]", self.CloseMenu));
+        self._actions.Add(UI.Button("CLOSE & RESTORE [F8/F9]", self.CloseMenu));
         self._panel.Add(self._actions);
         root.Add(self._panel);
-        Game.Print("[AI Cadets Orders] Press F8 to open orders (no pause). M1 demo Scouts are not M2-controlled.");
+        Game.Print("[AI Cadets Orders] F8 opens/closes orders, F9 restores player controls. Cursor-only menu; human movement/ODM inputs are never disabled.");
     }
 
     # Key polling belongs in OnFrame: GetKeyDown is frame-based.
@@ -65,6 +71,12 @@ addon AICadetsCommandPanel
     {
         if (!self._initialized || !Network.IsMasterClient)
         {
+            return;
+        }
+        if (Input.GetKeyDown(self.RecoveryKey))
+        {
+            self.CloseMenu();
+            Game.Print("[AI Cadets Orders] F9 recovered human controls.");
             return;
         }
         if (Input.GetKeyDown(self.ToggleKey))
@@ -76,6 +88,26 @@ addon AICadetsCommandPanel
             self._nextRefresh = Time.GameTime + 0.75;
             self.RefreshStatus();
         }
+    }
+
+    # A watchdog is independent of keyboard/UI click delivery. An abandoned
+    # panel auto-closes without requiring Pause or a working F8 shortcut.
+    function OnTick()
+    {
+        if (self._initialized && self._open && Time.GameTime - self._openedAt >= self.MenuMaxSeconds)
+        {
+            self.CloseMenu();
+            Game.Print("[AI Cadets Orders] Safety timeout: menu closed and human controls restored.");
+        }
+    }
+
+    function RestoreHumanControls()
+    {
+        # These calls are repair-only. OpenMenu NEVER disables Human keybinds
+        # or locks the camera, preventing a stuck menu from seizing control.
+        Input.SetHumanKeysEnabled(true);
+        Camera.SetCameraLocked(false);
+        Camera.SetCursorVisible(false);
     }
 
     function ToggleMenu()
@@ -95,25 +127,28 @@ addon AICadetsCommandPanel
             return;
         }
         self._open = true;
+        self._openedAt = Time.GameTime;
         self._panel.Active(true);
-        Camera.SetCameraLocked(true);
+        # Cursor-only overlay. Do not globally disable Human controls or
+        # lock the camera; F8 input may be swallowed while a UI has focus.
         Camera.SetCursorVisible(true);
-        Input.SetHumanKeysEnabled(false);
         self._nextRefresh = 0.0;
         self.RefreshStatus();
     }
 
     function CloseMenu()
     {
-        if (!self._open)
+        if (!self._initialized)
         {
             return;
         }
         self._open = false;
-        self._panel.Active(false);
-        Input.SetHumanKeysEnabled(true);
-        Camera.SetCameraLocked(false);
-        Camera.SetCursorVisible(false);
+        if (self._panel != null)
+        {
+            self._panel.Active(false);
+        }
+        # Unconditional recovery even if the UI state and cursor diverged.
+        self.RestoreHumanControls();
     }
 
     function SelectAll()
