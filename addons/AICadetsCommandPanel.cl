@@ -255,6 +255,8 @@ addon AICadetsCommandPanel
         count = 0;
         other = 0;
         acked = 0;
+        stopped = 0;
+        unresponsive = 0;
         lines = "";
         for (human in Game.AIHumans)
         {
@@ -275,12 +277,22 @@ addon AICadetsCommandPanel
             name = human.Name;
             lastSeen = PersistentData.GetProperty("AICadetsM2Heartbeat-" + name, -100.0);
             state = PersistentData.GetProperty("AICadetsM2State-" + name, "UNKNOWN");
+            reason = PersistentData.GetProperty("AICadetsM2TerminalReason-" + name, "unknown");
             ack = PersistentData.GetProperty("AICadetsM2AckSeq-" + name, 0);
-            if (Time.GameTime - lastSeen > 4.0)
+            if (state == "Done")
             {
-                state = "NO CONTROLLER HEARTBEAT";
+                stopped = stopped + 1;
+                lines = lines + name + " [TERMINATED: " + reason + "] ack=" + Convert.ToString(ack) + "\n";
             }
-            lines = lines + name + " [" + state + "] ack=" + Convert.ToString(ack) + "\n";
+            else
+            {
+                if (Time.GameTime - lastSeen > 4.0)
+                {
+                    state = "NO CONTROLLER HEARTBEAT";
+                    unresponsive = unresponsive + 1;
+                }
+                lines = lines + name + " [" + state + "] ack=" + Convert.ToString(ack) + "\n";
+            }
             if (self._pendingSeq > 0 && ack == self._pendingSeq && (self._pendingScope == "all" || self._pendingScope == name))
             {
                 acked = acked + 1;
@@ -289,6 +301,14 @@ addon AICadetsCommandPanel
         if (count == 0)
         {
             lines = "No owned M2 cadets. Enable WaveCadet!\n";
+            # Last recorded terminal state is diagnostic only. It may be from
+            # a previous lobby, so don't treat it as an active living cadet.
+            lastState = PersistentData.GetProperty("AICadetsM2State-AICadetsM2-1", "none");
+            if (lastState == "Done")
+            {
+                reason = PersistentData.GetProperty("AICadetsM2TerminalReason-AICadetsM2-1", "unknown");
+                lines = lines + "Previous M2-1 ended: " + reason + "\n";
+            }
         }
         if (other > 0)
         {
@@ -303,7 +323,22 @@ addon AICadetsCommandPanel
             }
             if (acked == 0)
             {
-                self._responseLabel.Text = "PENDING #" + Convert.ToString(self._pendingSeq) + " " + self._pendingMode + " | no M2 ack";
+                if (count == 0)
+                {
+                    self._responseLabel.Text = "NOT APPLIED #" + Convert.ToString(self._pendingSeq) + ": no owned M2 cadet";
+                }
+                else if (stopped == count)
+                {
+                    self._responseLabel.Text = "NOT APPLIED #" + Convert.ToString(self._pendingSeq) + ": controller terminated";
+                }
+                else if (unresponsive == count)
+                {
+                    self._responseLabel.Text = "NOT APPLIED #" + Convert.ToString(self._pendingSeq) + ": no live heartbeat";
+                }
+                else
+                {
+                    self._responseLabel.Text = "PENDING #" + Convert.ToString(self._pendingSeq) + " " + self._pendingMode + " | waiting for M2 ack";
+                }
             }
         }
     }
