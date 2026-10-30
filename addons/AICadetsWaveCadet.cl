@@ -172,7 +172,7 @@ addon AICadetsWaveCadet
                 return;
             }
         }
-        else if (self._cadet.CurrentGas <= self.ResupplyTriggerGas)
+        if (!self.IsSupplyState() && self._cadet.CurrentGas <= self.ResupplyTriggerGas)
         {
             self.BeginResupply("low_gas");
             return;
