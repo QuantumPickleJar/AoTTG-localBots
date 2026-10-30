@@ -1,0 +1,19 @@
+name: Validate experimental AoTTG2 add-on
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  static-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run limited static API checks
+        run: python scripts/check_probe.py
+      - name: Summarize limitations
+        run: echo 'PASS does not establish AoTTG2 parser acceptance or in-game hook movement.'
