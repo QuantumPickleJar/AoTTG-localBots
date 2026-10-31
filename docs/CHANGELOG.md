@@ -1,3 +1,8 @@
+## M2 navdiag-2 (unreleased)
+
+- Prevent rapid target/recovery ping-pong with a six-second stationary observation before retrying. Detect inefficient closed-loop ground pursuit from path length versus net displacement and pause rather than continue circling.
+- Watch3 captured an actual attack attempt but no confirmed damage; its first 3000 decision events saturated after repeated anchor/recovery failures. Live confirmation of the new pause and circle heuristic remains outstanding.
+
 ## M2 navdiag-1 (unreleased)
 
 - Identified installed 97e9e16 files and concurrently enabled M1 demos in the Watch5 investigation. Added visible F8 build/profile reporting and passive owned-cadet roster records to distinguish stale controllers and demo bots.

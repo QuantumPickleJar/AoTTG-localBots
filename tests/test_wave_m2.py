@@ -564,7 +564,9 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
         w.tick()
-        self.assertEqual(w.controller._state, "Explore")
+        self.assertEqual(w.controller._state, "Observe")
+        w.tick(6.1)
+        self.assertIn(w.controller._state, ("AcquireTarget", "Explore"))
 
     def test_target_appearing_during_ground_search_interrupts_patrol(self):
         w = World()
@@ -766,7 +768,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-navdiag-1")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-navdiag-2")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -783,6 +785,40 @@ class WaveM2Tests(unittest.TestCase):
         w.controller.Terminate("safe_termination", "test")
         self.assertEqual(w.cadet.calls[-1], ("idle",))
 
+    def test_circle_path_triggers_stationary_observation_and_hold_interrupts(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        for position in (Vector(14, 0, 0), Vector(14, 0, 10), Vector(4, 0, 10), Vector(4, 0, 0)):
+            w.cadet.Position = position
+            w.tick(1.0)
+        w.tick(1.1)
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(w.cadet.ai_state, "Idle")
+        self.assertTrue(any("circling_detected" in x for x in w.messages))
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        w.tick(7.0)
+        self.assertEqual(w.controller._state, "Hold")
+
+    def test_observation_prevents_immediate_reacquisition_loop(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller._targetRecoveries = w.controller.RecoveryBudget()
+        w.controller.Enter("Recover", "test")
+        w.tick()
+        calls = list(w.cadet.calls)
+        for _ in range(50):
+            w.tick(0.02)
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(w.cadet.calls, calls)
+        w.tick(5.1)
+        self.assertEqual(w.controller._state, "AcquireTarget")
+
     def test_retry_bans_target(self):
         w = World()
         w.tick()
@@ -794,7 +830,7 @@ class WaveM2Tests(unittest.TestCase):
         w.controller._targetRetryCount = w.controller.MaxTargetRetries
         w.controller._trOutcome = "collision_risk"
         w.controller.FinishTraverse()
-        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertEqual(w.controller._state, "Observe")
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
 
 

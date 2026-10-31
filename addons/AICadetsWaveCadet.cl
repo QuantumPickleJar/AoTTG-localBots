@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-navdiag-1";
+    _buildTag = "M2-navdiag-2";
     GroundSteering = "Engine";
     ProfileName = "Steady scout";
     Persistence = 3;
@@ -62,6 +62,9 @@ addon AICadetsWaveCadet
     _groundStalledChecks = 0;
     _groundFallback = false;
     _groundBearing = null;
+    _groundPath = 0.0;
+    _groundLastPosition = null;
+    _observeUntil = 0.0;
     _nextTravelProbe = 0.0;
     _orderSequence = 0;
     _orderMode = "Engage";
@@ -256,6 +259,14 @@ addon AICadetsWaveCadet
         if (self._state == "ExploreGround")
         {
             self.ExploreGroundStep();
+            return;
+        }
+        if (self._state == "Observe")
+        {
+            if (Time.GameTime >= self._observeUntil)
+            {
+                self.Enter("AcquireTarget", "observe_complete");
+            }
             return;
         }
         if (self._state == "RecoverGround")
@@ -814,7 +825,7 @@ addon AICadetsWaveCadet
             self._bannedTargetViewId = self._targetViewId;
             self._banUntil = Time.GameTime + 15.0;
             self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=" + self._lastFailureReason);
-            self.Enter("AcquireTarget", "retry_exhausted");
+            self.BeginObserve("retry_exhausted");
             return;
         }
         self.Enter("Recover", "insufficient_progress");
@@ -894,6 +905,16 @@ addon AICadetsWaveCadet
         self.StartTraverse(retreatPoint, "retreat");
     }
 
+    # Pause all inputs after exhausted plans; prevents rapid target ping-pong.
+    function BeginObserve(reason)
+    {
+        self.StopODM();
+        self._cadet.Idle();
+        self._observeUntil = Time.GameTime + 6.0;
+        self.LogEvent("observe_start", "reason=" + reason + " position=" + Convert.ToString(self._cadet.Position) + " retry_at=" + Convert.ToString(self._observeUntil));
+        self.Enter("Observe", reason);
+    }
+
     function RecoveryBudget()
     {
         budget = 1.0 + (self.Persistence - 1.0) * 0.5;
@@ -927,7 +948,7 @@ addon AICadetsWaveCadet
             self.LogEvent("recover_exhausted", "target=" + Convert.ToString(self._targetViewId) + " reason=" + self._lastFailureReason);
             self._bannedTargetViewId = self._targetViewId;
             self._banUntil = Time.GameTime + 15.0;
-            self.Enter("AcquireTarget", "recover_budget_exhausted");
+            self.BeginObserve("recover_budget_exhausted");
             return;
         }
         if (self._cadet.Grounded && self.RefreshTarget())
@@ -1083,6 +1104,8 @@ addon AICadetsWaveCadet
         self._nextTravelProbe = Time.GameTime + 1.0;
         self._groundMovementStartedAt = Time.GameTime;
         self._groundProgressPosition = self._cadet.Position;
+        self._groundLastPosition = self._cadet.Position;
+        self._groundPath = 0.0;
         self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
         self._groundStalledChecks = 0;
         stopRange = 24.0;
@@ -1118,6 +1141,8 @@ addon AICadetsWaveCadet
             self.Enter("PlanApproach", "ground_approach_close");
             return;
         }
+        self._groundPath = self._groundPath + Vector3.Distance(self._cadet.Position, self._groundLastPosition);
+        self._groundLastPosition = self._cadet.Position;
         if (Time.GameTime >= self._nextTravelProbe)
         {
             self._nextTravelProbe = Time.GameTime + 14.0 - self.AerialPreference * 2.0;
@@ -1155,13 +1180,21 @@ addon AICadetsWaveCadet
         if (Time.GameTime >= self._groundNextCheck)
         {
             progress = Vector3.Distance(self._cadet.Position, self._groundProgressPosition);
+            path = self._groundPath;
+            self._groundPath = 0.0;
             forwardProgress = Vector3.Dot(self._cadet.Position - self._groundProgressPosition, self._groundBearing);
-            self.LogEvent("pursuit_progress", "toward_previous_target=" + Convert.ToString(forwardProgress) + " displacement=" + Convert.ToString(progress) + " distance=" + Convert.ToString(distance));
+            self.LogEvent("pursuit_progress", "toward_previous_target=" + Convert.ToString(forwardProgress) + " displacement=" + Convert.ToString(progress) + " path=" + Convert.ToString(path) + " distance=" + Convert.ToString(distance));
             toTarget = self._target.Position - self._cadet.Position;
             self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
             self.LogEvent("motion_observed", "kind=ground_target moved=" + Convert.ToString(progress) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
             self._groundProgressPosition = self._cadet.Position;
             self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+            if (path >= 30.0 && progress < path * 0.5)
+            {
+                self.LogEvent("circling_detected", "path=" + Convert.ToString(path) + " displacement=" + Convert.ToString(progress) + " forward=" + Convert.ToString(forwardProgress));
+                self.BeginObserve("circling_detected");
+                return;
+            }
             if (progress < 1.0 || forwardProgress < 1.0)
             {
                 self._groundStalledChecks = self._groundStalledChecks + 1;

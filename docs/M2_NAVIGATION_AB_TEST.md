@@ -29,3 +29,12 @@ The profile settings are public fields at the top of AICadetsWaveCadet.cl. F8 di
 Official action contracts: https://github.com/AoTTG-2/CustomLogicDocumentation/blob/main/reference/Entities/Human.md
 
 Hold, death, authority loss, gas diversion, target invalidation and physical attack checks remain authoritative. Termination now also idles an owned cadet while master, stopping residual movement input. Automated controller tests do not validate the installed game's parser, frame ordering, steering or combat. Keep PR #6 unmerged pending live validation.
+
+
+## Watch2/Watch3 follow-up: navdiag-2
+
+Both supplied captures identify navdiag-1 and only Engine driver changes. They do not establish a direct-versus-engine result. Watch3 records an `attack_attempt` at distance 8.73 and an `attack_result confirmed_damage=false`, without evidence of a hit or kill. It also records 456 failed anchor searches and 90 recovery-exhausted events in the captured first 3000 decisions, ending at game time 149.26 while the watcher continued. The single temporary-ban slot and immediate reacquisition let different targets cycle rapidly; transitions were not proof of movement.
+
+Navdiag-2 pauses inputs for six seconds after retry/recovery exhaustion before reacquisition. During target ground pursuit, it measures path length at controller ticks and net displacement over five seconds. At least 30 units of path with net displacement under half that path triggers `circling_detected`, idles and observes for six seconds. This is a heuristic; tight legitimate turns can trigger it, and slow spirals may evade it. Logs include path, displacement and forward progress. Hold and low-gas diversion still preempt the pause. The observer stands in place; higher-ground planning is not implemented.
+
+Engine steering remains the default. F8 should show M2-navdiag-2, and the watcher header v3 navdiag-2. For a direct test compare matched, unobstructed, grounded segments: target-distance change, path versus displacement, obstacle/recovery events and engine/direct labels. Direct mode changes the steering method and target bearing, so differences cannot identify the exact native internal cause. The supplied report shows no direct selection. Five-hertz watcher samples plus target geometry and decision events can diagnose many runs without video, but occlusion, exact collision and attack visuals remain outside their evidence; preserve video when those questions matter. Controller traces stop at 3000 events and watcher files can hit their own cap early.
