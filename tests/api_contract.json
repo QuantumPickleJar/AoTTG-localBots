@@ -66,6 +66,26 @@
           "signature": "function Attack(attackOn: bool)",
           "min_args": 1,
           "max_args": 1
+        },
+        "Move": {
+          "signature": "function Move(direction: Vector3)",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "MoveTo": {
+          "signature": "function MoveTo(position: Vector3, range: float)",
+          "min_args": 2,
+          "max_args": 2
+        },
+        "MoveToTarget": {
+          "signature": "function MoveToTarget(target: Object, range: float)",
+          "min_args": 2,
+          "max_args": 2
+        },
+        "GetAIState": {
+          "signature": "function GetAIState() -> string",
+          "min_args": 0,
+          "max_args": 0
         }
       },
       "properties": [
@@ -74,7 +94,12 @@
         "LeftHookReady",
         "IsHookedLeft",
         "Forward",
-        "ViewID"
+        "ViewID",
+        "AutoRefillGas",
+        "Grounded",
+        "MaxGas",
+        "State",
+        "LeftHookPosition"
       ]
     },
     "Character": {
@@ -97,7 +122,8 @@
         "ViewID",
         "Grounded",
         "Health",
-        "MaxHealth"
+        "MaxHealth",
+        "CurrentAnimation"
       ]
     },
     "Titan": {
@@ -120,6 +146,11 @@
           "signature": "function LineCast(start: Vector3, end: Vector3, collideWith: string) -> LineCastHitResult",
           "min_args": 3,
           "max_args": 3
+        },
+        "SphereCast": {
+          "signature": "function SphereCast(start: Vector3, end: Vector3, radius: float, collideWith: string) -> Object",
+          "min_args": 4,
+          "max_args": 4
         }
       },
       "properties": []
@@ -185,6 +216,11 @@
           "signature": "function SaveToFile(fileName: string, encrypted: bool)",
           "min_args": 2,
           "max_args": 2
+        },
+        "GetProperty": {
+          "signature": "function GetProperty(property: string, defaultValue: Object) -> Object",
+          "min_args": 2,
+          "max_args": 2
         }
       },
       "properties": []
@@ -227,7 +263,8 @@
       "methods": {},
       "properties": [
         "MapObjects",
-        "MapEditor"
+        "MapEditor",
+        "Titans"
       ]
     },
     "Object": {
@@ -235,6 +272,24 @@
       "methods": {},
       "properties": [
         "Type"
+      ]
+    },
+    "Map": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Map.md",
+      "methods": {
+        "FindMapObjectsByComponent": {
+          "signature": "function FindMapObjectsByComponent(className: string) -> List<MapObject>",
+          "min_args": 1,
+          "max_args": 1
+        }
+      },
+      "properties": []
+    },
+    "MapObject": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/MapObject.md",
+      "methods": {},
+      "properties": [
+        "Position"
       ]
     }
   }

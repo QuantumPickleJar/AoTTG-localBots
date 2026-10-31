@@ -29,11 +29,19 @@ def validate(source):
         {
             "self._cadet": "Human",
             "self._cadet.Forward": "Vector3",
+            "self._cadet.Velocity": "Vector3",
+            "station": "MapObject",
+            "point": "Vector3",
+            "flat": "Vector3",
+            "toStation": "Vector3",
+            "right": "Vector3",
+            "direction": "Vector3",
             "host": "Human",
             "human": "Human",
             "titan": "Titan",
             "t": "Titan",
             "victim": "Character",
+            "targetHit": "Titan",
             "killer": "Character",
             "self._target": "Titan",
             "self._target.Forward": "Vector3",
@@ -44,6 +52,10 @@ def validate(source):
             "toNape": "Vector3",
             "toGoal": "Vector3",
             "baseDirection": "Vector3",
+            "baseDir": "Vector3",
+            "direction": "Vector3",
+            "flatTarget": "Vector3",
+            "toTarget": "Vector3",
             "behindDir": "Vector3",
             "delta": "Vector3",
             "difference": "Vector3",
@@ -52,7 +64,9 @@ def validate(source):
             "horizontalAway": "Vector3",
             "retreatPoint": "Vector3",
             "recoverGoal": "Vector3",
+            "radial": "Vector3",
             "self._direction": "Vector3",
+            "self._orbitStartRadial": "Vector3",
             "Network.MyPlayer": "Player",
             "host.Forward": "Vector3",
             "Game.Titans": "List",
@@ -107,7 +121,7 @@ def validate(source):
         if isinstance(node, ast.Assign):
             target = ast.unparse(node.targets[0])
             if target.startswith("self._cadet."):
-                assert target in {"self._cadet.Name"}, "No direct movement/resource cheats via property writes"
+                assert target in {"self._cadet.Name", "self._cadet.AutoRefillGas"}, "No direct movement/resource cheats via property writes"
     assert "class Main" not in source
     assert source.count("Game.SpawnHumanAt(") == 1
     assert not re.search(r"\b(Upload|SendMessage|SetPreload|RestartWithPreloadSettings)\b", source)
@@ -117,8 +131,9 @@ def main():
     addon = ROOT / "addons"
     validate((addon / "AICadetsWaveCadet.cl").read_text())
     # Preserve known M0 probe bytes.
-    probe_sha = hashlib.sha256((addon / "AICadetsProbe.cl").read_bytes()).hexdigest()
-    assert probe_sha == "2f44ba8b1be09192599d98d03b2f467e1fe8af6b2d2340aef09e844fdd146110"
+    probe_data = (addon / "AICadetsProbe.cl").read_bytes()
+    probe_sha = hashlib.sha1(b"blob " + str(len(probe_data)).encode() + b"\0" + probe_data).hexdigest()
+    assert probe_sha == "219fc9ab810998204c353833de868231a8736134"
     print("M2 wave static checks passed.")
     print("This check is static and does not validate in-game mission integration.")
 

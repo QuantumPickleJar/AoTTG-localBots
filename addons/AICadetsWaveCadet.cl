@@ -4,6 +4,18 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
+    _buildTag = "M2-combat-arc-5";
+    GroundSteering = "Engine";
+    # Experimental physical tether arc: Alternate, Left, Right, or Off.
+    PreferredTactic = "NapeStrike";
+    StrikeCommitRange = 5.0;
+    CombatArcStyle = "Alternate";
+    CombatArcSeconds = 1.5;
+    AttackVerifySeconds = 1.0;
+    ProfileName = "Steady scout";
+    Persistence = 3;
+    AerialPreference = 3;
+    RepositionSkill = 3;
     SpawnSide = 4.0;
     MinGasReserve = 10.0;
     MinAttackGas = 14.0;
@@ -16,18 +28,73 @@ addon AICadetsWaveCadet
     ApproachHeight = 6.0;
     RetreatDistance = 24.0;
     TraverseProgressMin = 4.0;
-    MaxTraversePerTarget = 5;
+    MaxTraversePerTarget = 30;
     MaxTargetRetries = 3;
-    MaxRecoveriesPerTarget = 2;
+    MaxRecoveriesPerTarget = 4;
+    ExploreSegmentDistance = 58.0;
+    ExploreScanSeconds = 2.5;
+    ExploreGroundSeconds = 9.0;
+    GroundApproachThreshold = 68.0;
+    GroundProgressWindow = 5.0;
+    ResupplyTriggerGas = 38.0;
+    SupplyArrivalRange = 2.0;
+    SupplySearchTimeout = 100.0;
+    SupplyRefillTimeout = 12.0;
     Diagnostics = true;
     SaveRunReport = false;
+    RecordDecisionTrace = true;
 
     _started = false;
+    _spawnLatched = false;
     _eligible = false;
+    _terminationReason = "none";
+    _lastPublishedState = "Dormant";
     _state = "Dormant";
     _stateStart = 0.0;
     _runStart = 0.0;
     _nextTickReport = 0.0;
+    _tickLast = -1.0;
+    _tickWindowStart = 0.0;
+    _tickCount = 0;
+    _tickMaxGap = 0.0;
+    _noTargetCooldownUntil = 0.0;
+    _exploreNextScan = 0.0;
+    _exploreNextAction = 0.0;
+    _exploreIndex = 0;
+    _exploreDirection = null;
+    _exploreStartPosition = null;
+    _exploreFailures = 0;
+    _groundGoal = null;
+    _groundStartPosition = null;
+    _groundProgressPosition = null;
+    _groundPreviousTargetDistance = 0.0;
+    _groundMovementStartedAt = 0.0;
+    _groundNextCheck = 0.0;
+    _groundStalledChecks = 0;
+    _groundFallback = false;
+    _groundBearing = null;
+    _groundPath = 0.0;
+    _groundLastPosition = null;
+    _observeUntil = 0.0;
+    _nextTravelProbe = 0.0;
+    _orderSequence = 0;
+    _orderMode = "Engage";
+    _nextOrderStatus = 0.0;
+    _lastAppliedOrderSequence = 0;
+    _resumeAfterSupply = "Engage";
+    _supplyPoint = null;
+    _supplySource = "none";
+    _supplySearchStarted = 0.0;
+    _supplyArrivalStarted = 0.0;
+    _supplyScanDue = 0.0;
+    _supplyMoveDue = 0.0;
+    _supplyLastProgressAt = 0.0;
+    _supplyLastPosition = null;
+    _supplyWaypoint = null;
+    _supplyDetour = 0;
+    _supplyGasBefore = 0.0;
+    _supplyAutoRefillBefore = false;
+    _supplyMarkVersion = 0;
     _cadet = null;
     _cadetName = "";
     _runId = "";
@@ -37,8 +104,18 @@ addon AICadetsWaveCadet
     _targetRetryCount = 0;
     _targetTraverseCount = 0;
     _targetRecoveries = 0;
+    _hookWaitTimedOut = false;
     _targetDamaged = false;
+    _targetDamageByCadet = false;
     _targetKilled = false;
+    _targetKillByCadet = false;
+    _combatTactic = "NapeStrike";
+    _orbitInterceptLogged = false;
+    _attackReadyWaitLogged = false;
+    _attackStateObserved = false;
+    _orbitAttempts = 0;
+    _orbitSide = 1.0;
+    _orbitStartRadial = null;
     _bannedTargetViewId = 0;
     _banUntil = 0.0;
     _lastDistanceToNape = 0.0;
@@ -60,6 +137,7 @@ addon AICadetsWaveCadet
     _titanDeathsObserved = 0;
     _damageEvents = 0;
     _logCount = 0;
+    _eventId = 0;
     _trace = "";
     _reportSaved = false;
 
@@ -67,7 +145,9 @@ addon AICadetsWaveCadet
     {
         if (self._started)
         {
-            self.Terminate("safe_termination", "repeated_start");
+            # Game/mode callbacks may be repeated. They must not kill an
+            # already owned and functioning WaveCadet controller.
+            self.LogEvent("duplicate_start_ignored", "state=" + self._state);
             return;
         }
         self._started = true;
@@ -76,7 +156,15 @@ addon AICadetsWaveCadet
         {
             return;
         }
+        if ((self.GroundSteering != "Engine" && self.GroundSteering != "Direct") || (self.CombatArcStyle != "Alternate" && self.CombatArcStyle != "Left" && self.CombatArcStyle != "Right" && self.CombatArcStyle != "Off") || self.StrikeCommitRange < 2.0 || self.StrikeCommitRange > self.AttackRange || self.CombatArcSeconds < 0.3 || self.CombatArcSeconds > 2.0 || self.AttackVerifySeconds < 0.2 || self.AttackVerifySeconds > 3.0 || self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
+        {
+            self.Terminate("failure", "invalid_behavior_profile");
+            return;
+        }
         self._runStart = Time.GameTime;
+        self._terminationReason = "none";
+        self._spawnLatched = false;
+        self._orderSequence = PersistentData.GetProperty("AICadetsCmdSequence", 0);
         self._runId = "m2-" + Convert.ToString(Time.GameTime);
         self.Enter("WaitHost", "startup");
         self.LogEvent("ready", "run_id=" + self._runId + " host_timeout=30");
@@ -95,6 +183,11 @@ addon AICadetsWaveCadet
         }
         if (self._state == "WaitHost")
         {
+            if (self._spawnLatched)
+            {
+                self.Terminate("failure", "spawn_latched_but_waiting");
+                return;
+            }
             if (Time.GameTime - self._stateStart >= 30.0)
             {
                 self.Terminate("failure", "host_timeout");
@@ -123,20 +216,59 @@ addon AICadetsWaveCadet
             self.Terminate("safe_termination", "cadet_dead");
             return;
         }
-        if (self._cadet.CurrentGas <= self.MinGasReserve)
-        {
-            self.Terminate("safe_termination", "insufficient_odm_resources");
-            return;
-        }
         if (Game.IsEnding)
         {
             self.Terminate("safe_termination", "game_ending");
             return;
         }
+        if (self._tickLast < 0.0)
+        {
+            self._tickWindowStart = Time.GameTime;
+        }
+        else
+        {
+            gap = Time.GameTime - self._tickLast;
+            if (gap > self._tickMaxGap)
+            {
+                self._tickMaxGap = gap;
+            }
+        }
+        self._tickLast = Time.GameTime;
+        self._tickCount = self._tickCount + 1;
+        if (Time.GameTime - self._tickWindowStart >= 10.0)
+        {
+            self.LogEvent("tick_health", "count=" + Convert.ToString(self._tickCount) + " game_seconds=" + Convert.ToString(Time.GameTime - self._tickWindowStart) + " max_gap=" + Convert.ToString(self._tickMaxGap));
+            self._tickCount = 0;
+            self._tickWindowStart = Time.GameTime;
+            self._tickMaxGap = 0.0;
+        }
+        self.ReadOrders();
+        if (Time.GameTime >= self._nextOrderStatus)
+        {
+            self._nextOrderStatus = Time.GameTime + 1.0;
+            self.PublishOrderStatus();
+        }
+        if (self._state == "Hold")
+        {
+            return;
+        }
+        if (self.IsSupplyState())
+        {
+            if (self._cadet.CurrentGas > self._supplyGasBefore + 5.0)
+            {
+                self.CompleteResupply("gas_increase_verified");
+                return;
+            }
+        }
+        if (!self.IsSupplyState() && self._cadet.CurrentGas <= self.ResupplyTriggerGas)
+        {
+            self.BeginResupply("low_gas");
+            return;
+        }
         if (Time.GameTime >= self._nextTickReport)
         {
-            self._nextTickReport = Time.GameTime + 1.0;
-            self.LogEvent("mission_snapshot", "titans=" + Convert.ToString(Game.Titans.Count) + " humans=" + Convert.ToString(Game.Humans.Count) + " player_humans=" + Convert.ToString(Game.PlayerHumans.Count));
+            self._nextTickReport = Time.GameTime + 5.0;
+            self.LogEvent("mission_snapshot", "gas=" + Convert.ToString(self._cadet.CurrentGas) + " position=" + Convert.ToString(self._cadet.Position) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState() + " titans=" + Convert.ToString(Game.Titans.Count) + " humans=" + Convert.ToString(Game.Humans.Count) + " player_humans=" + Convert.ToString(Game.PlayerHumans.Count));
         }
         if (self.IsTraverseState() && Time.GameTime >= self._nextRiskCheck)
         {
@@ -149,16 +281,146 @@ addon AICadetsWaveCadet
             }
         }
 
+        if (self._orderMode == "Engage" && (self._state == "OrbitAttach" || self._state == "OrbitSwing"))
+        {
+            if (Time.GameTime >= self._nextRiskCheck)
+            {
+                self._nextRiskCheck = Time.GameTime + 0.1;
+                if (self.CollisionRisk())
+                {
+                    self.EndOrbit("collision_risk");
+                    return;
+                }
+            }
+        }
+        # Check an attack window throughout approach, not only after leg two.
+        if (self._orderMode == "Engage" && ((self.IsTraverseState() && self._traverseMode == "approach") || self._state == "OrbitAttach" || self._state == "OrbitSwing"))
+        {
+            if (!self.RefreshTarget())
+            {
+                self.StopODM();
+                self._cadet.Idle();
+                self.Enter("AcquireTarget", "approach_target_lost");
+                return;
+            }
+            if (self.TryAttackWindow("approach_in_flight"))
+            {
+                return;
+            }
+        }
+
+        if (self._state == "SeekSupply")
+        {
+            self.SeekSupplyStep();
+            return;
+        }
+        if (self._state == "AtSupply")
+        {
+            self.AtSupplyStep();
+            return;
+        }
+        if (self._state == "ExploreSupply")
+        {
+            self.ExploreSupplyStep();
+            return;
+        }
+        if (self._state == "ExploreGround")
+        {
+            self.ExploreGroundStep();
+            return;
+        }
+        if (self._state == "WaitHook")
+        {
+            if (!self.RefreshTarget())
+            {
+                self.Enter("AcquireTarget", "hook_wait_target_lost");
+            }
+            elif (self._cadet.LeftHookReady)
+            {
+                self.LogEvent("hook_wait_end", "reason=ready target=" + Convert.ToString(self._targetViewId));
+                self._hookWaitTimedOut = false;
+                self.Enter("PlanApproach", "hook_ready_retry");
+            }
+            elif (Time.GameTime - self._stateStart >= 2.0)
+            {
+                self.LogEvent("hook_wait_end", "reason=timeout target=" + Convert.ToString(self._targetViewId));
+                self._hookWaitTimedOut = true;
+                self._lastFailureReason = "hook_wait_timeout";
+                self.Enter("Recover", "hook_wait_timeout");
+            }
+            return;
+        }
+        if (self._state == "OrbitAttach")
+        {
+            self.OrbitAttachStep();
+            return;
+        }
+        if (self._state == "OrbitSwing")
+        {
+            self.OrbitSwingStep();
+            return;
+        }
+        if (self._state == "WaitLanding")
+        {
+            if (!self.RefreshTarget())
+            {
+                self.Enter("AcquireTarget", "landing_target_lost");
+            }
+            elif (self._cadet.Grounded)
+            {
+                self.Enter("PlanApproach", "landing_complete");
+            }
+            elif (Time.GameTime - self._stateStart >= 4.0)
+            {
+                self.BeginObserve("landing_timeout");
+            }
+            return;
+        }
+        if (self._state == "Observe")
+        {
+            if (Time.GameTime >= self._observeUntil)
+            {
+                self.Enter("AcquireTarget", "observe_complete");
+            }
+            return;
+        }
+        if (self._state == "RecoverGround")
+        {
+            self.RecoverGroundStep();
+            return;
+        }
+        if (self._state == "ApproachGround")
+        {
+            self.ApproachGroundStep();
+            return;
+        }
+        if (self._state == "Explore")
+        {
+            self.ExploreStep();
+            return;
+        }
         if (self._state == "Regroup")
         {
-            if (Time.GameTime - self._stateStart >= 0.35)
+            if (Time.GameTime - self._stateStart >= 0.35 && Time.GameTime >= self._noTargetCooldownUntil)
             {
-                self.Enter("AcquireTarget", "regroup_complete");
+                if (self._orderMode == "Explore")
+                {
+                    self.Enter("Explore", "regroup_explore");
+                }
+                else
+                {
+                    self.Enter("AcquireTarget", "regroup_complete");
+                }
             }
             return;
         }
         if (self._state == "AcquireTarget")
         {
+            if (self._orderMode == "Explore")
+            {
+                self.Enter("Explore", "manual_patrol");
+                return;
+            }
             self.AcquireTarget();
             return;
         }
@@ -228,6 +490,7 @@ addon AICadetsWaveCadet
             if (killer != null && self._cadet != null && killer.ViewID == self._cadet.ViewID)
             {
                 byCadet = true;
+                self._targetDamageByCadet = true;
             }
             self.LogEvent("target_damaged", "view_id=" + Convert.ToString(victim.ViewID) + " damage=" + Convert.ToString(damage) + " by_cadet=" + Convert.ToString(byCadet));
         }
@@ -255,6 +518,7 @@ addon AICadetsWaveCadet
             if (self._targetViewId != 0 && victim.ViewID == self._targetViewId)
             {
                 self._targetKilled = true;
+                self._targetKillByCadet = byCadet;
             }
             self.LogEvent("titan_die", "victim=" + Convert.ToString(victim.ViewID) + " by_cadet=" + Convert.ToString(byCadet) + " killer_name=" + killerName);
             return;
@@ -267,7 +531,7 @@ addon AICadetsWaveCadet
 
     function SpawnCadet(host)
     {
-        if (self.HookReach < 20.0 || self.HookReach > 70.0 || self.AnchorRise < 4.0 || self.AnchorRise > 25.0 || self.BurstSeconds < 0.1 || self.BurstSeconds > 0.8 || self.MinGasReserve < 4.0 || self.MinAttackGas <= self.MinGasReserve || self.AttackRange < 6.0 || self.AttackRange > 18.0 || self.MaxTraversePerTarget < 1 || self.MaxTraversePerTarget > 8 || self.MaxTargetRetries < 1 || self.MaxTargetRetries > 6 || self.MaxRecoveriesPerTarget < 0 || self.MaxRecoveriesPerTarget > 4)
+        if (self.HookReach < 20.0 || self.HookReach > 70.0 || self.AnchorRise < 4.0 || self.AnchorRise > 25.0 || self.BurstSeconds < 0.1 || self.BurstSeconds > 0.8 || self.MinGasReserve < 4.0 || self.MinAttackGas <= self.MinGasReserve || self.AttackRange < 6.0 || self.AttackRange > 18.0 || self.MaxTraversePerTarget < 1 || self.MaxTraversePerTarget > 40 || self.MaxTargetRetries < 1 || self.MaxTargetRetries > 6 || self.MaxRecoveriesPerTarget < 0 || self.MaxRecoveriesPerTarget > 4 || self.ResupplyTriggerGas <= self.MinAttackGas || self.ResupplyTriggerGas > 100.0 || self.SupplyArrivalRange < 1.0 || self.SupplyArrivalRange > 12.0 || self.SupplySearchTimeout < 20.0 || self.SupplySearchTimeout > 180.0)
         {
             self.Terminate("failure", "invalid_settings");
             return;
@@ -284,20 +548,32 @@ addon AICadetsWaveCadet
             self.Terminate("safe_termination", "spawn_path_blocked");
             return;
         }
-        self.Enter("Done", "spawn_latched");
+        # Latch spawn independently of operational state. In the old
+        # implementation an interrupted spawn could permanently strand the
+        # controller in Done, suppressing all future orders.
+        self._spawnLatched = true;
+        self.Enter("Spawning", "spawn_latched");
         self._cadet = Game.SpawnHumanAt(1, "Levi", LoadoutEnum.HumanBlades, spawnPos, 0.0);
         if (self._cadet == null || !self._cadet.IsMine || !self._cadet.IsAlive)
         {
-            self.StopODM();
-            Game.Print("[AI Cadets M2] result_class=failure result_reason=spawn_failed_or_not_owned run_id=" + self._runId);
+            self.Terminate("failure", "spawn_failed_or_not_owned");
             return;
         }
         self._cadet.Name = self._cadetName;
+        PersistentData.SetProperty("AICadetsM2TerminalReason-" + self._cadetName, "none");
+        PersistentData.SetProperty("AICadetsM2TerminalTime-" + self._cadetName, 0.0);
+        PersistentData.SetProperty("AICadetsM2RunId-" + self._cadetName, self._runId);
         self._cadet.SetDisplayName(self._cadetName, true);
         self._cadet.Idle();
         self._direction = Vector3.Normalize(Vector3(host.Forward.X, 0.0, host.Forward.Z));
+        self.SelectCombatTactic(self.PreferredTactic);
+        self.LogEvent("behavior_profile", "name=" + self.ProfileName + " persistence=" + Convert.ToString(self.Persistence) + " aerial=" + Convert.ToString(self.AerialPreference) + " reposition_skill=" + Convert.ToString(self.RepositionSkill));
+        self.LogEvent("combat_limits", "traverses=" + Convert.ToString(self.MaxTraversePerTarget) + " retries=" + Convert.ToString(self.MaxTargetRetries) + " recoveries=" + Convert.ToString(self.RecoveryBudget()) + " attack_verify=" + Convert.ToString(self.AttackVerifySeconds));
         self.LogEvent("cadet_spawned", "name=" + self._cadetName + " view_id=" + Convert.ToString(self._cadet.ViewID));
         self.Enter("Regroup", "spawned");
+        self.PublishOrderStatus();
+        # Orders sent during WaitHost must not silently disappear.
+        self.ReadOrders();
     }
 
     function FindCadetName()
@@ -321,30 +597,52 @@ addon AICadetsWaveCadet
         return "";
     }
 
+    # Search all existing live Titans, not only those within a fixed combat radius.
+    # A distant valid target is a navigation goal; proximity should affect approach,
+    # not whether the target exists.
     function AcquireTarget()
     {
         self._target = null;
         self._targetViewId = 0;
         self._targetDamaged = false;
+        self._targetDamageByCadet = false;
         self._targetKilled = false;
-        best = -100000.0;
+        self._targetKillByCadet = false;
+        self._orbitStartRadial = null;
+        best = -1000000.0;
+        listed = 0;
+        alive = 0;
+        banned = 0;
+        nearest = -1.0;
         for (titan in Game.Titans)
         {
+            listed = listed + 1;
             if (!titan.IsAlive)
             {
                 continue;
             }
-            if (self._bannedTargetViewId != 0 && titan.ViewID == self._bannedTargetViewId && Time.GameTime < self._banUntil)
-            {
-                continue;
-            }
+            alive = alive + 1;
             toNape = titan.NapePosition - self._cadet.Position;
             distance = toNape.Magnitude;
-            if (distance > 220.0)
+            if (nearest < 0.0 || distance < nearest)
             {
+                nearest = distance;
+            }
+            if (self._bannedTargetViewId != 0 && titan.ViewID == self._bannedTargetViewId && Time.GameTime < self._banUntil)
+            {
+                banned = banned + 1;
                 continue;
             }
             score = 260.0 - distance;
+            # Momentum breaks close choices only at acquisition, never every tick.
+            if (self._cadet.Velocity.Magnitude >= 9.0)
+            {
+                score = score + Vector3.Dot(Vector3.Normalize(self._cadet.Velocity), Vector3.Normalize(toNape)) * 18.0;
+            }
+            if (self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), titan.NapePosition) != null)
+            {
+                score = score - 20.0;
+            }
             if (titan.IsCrawler)
             {
                 score = score - 12.0;
@@ -362,16 +660,74 @@ addon AICadetsWaveCadet
         }
         if (self._target == null)
         {
-            self.LogEvent("target_none", "reason=no_alive_titan");
-            self.Enter("Regroup", "no_target");
+            reason = "no_alive_titans";
+            if (alive > 0 && banned > 0)
+            {
+                reason = "all_candidates_temporarily_banned";
+            }
+            self.LogEvent("target_none", "reason=" + reason + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive) + " banned=" + Convert.ToString(banned) + " nearest=" + Convert.ToString(nearest));
+            # Leave room for wave spawns / temporary target bans without 3 log lines
+            # every 0.35 seconds, which previously exhausted the 260-print budget.
+            self._noTargetCooldownUntil = Time.GameTime + self.ExploreScanSeconds;
+            self._exploreNextScan = self._noTargetCooldownUntil;
+            if (self._orderMode == "Engage")
+            {
+                self.Enter("Explore", "no_target_start_patrol");
+            }
+            else
+            {
+                self.Enter("Explore", "explore_order");
+            }
             return;
         }
+        self._noTargetCooldownUntil = 0.0;
+        self._cadet.Idle();
         self._targetRetryCount = 0;
         self._targetTraverseCount = 0;
         self._targetRecoveries = 0;
+        self._hookWaitTimedOut = false;
+        self._lastFailureReason = "none";
+        self._orbitAttempts = 0;
+        self._orbitSide = 1.0;
         self._lastDistanceToNape = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
-        self.LogEvent("target_selected", "view_id=" + Convert.ToString(self._targetViewId) + " distance=" + Convert.ToString(self._lastDistanceToNape));
+        self.LogEvent("target_selected", "view_id=" + Convert.ToString(self._targetViewId) + " distance=" + Convert.ToString(self._lastDistanceToNape) + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive));
         self.Enter("PlanApproach", "target_selected");
+    }
+
+    # Capability boundary consumed by future personality/skill/style policy.
+    function TacticCapability(tactic)
+    {
+        if (tactic == "NapeStrike")
+        {
+            return "physical_experimental";
+        }
+        if (tactic == "FaceBlind" || tactic == "ArmDisable" || tactic == "AnkleCut")
+        {
+            return "definition_only";
+        }
+        return "unknown";
+    }
+
+    function SelectCombatTactic(tactic)
+    {
+        capability = self.TacticCapability(tactic);
+        if (capability != "physical_experimental")
+        {
+            self.LogEvent("tactic_unavailable", "requested=" + tactic + " capability=" + capability + " retained=" + self._combatTactic);
+            return false;
+        }
+        self._combatTactic = tactic;
+        self.LogEvent("tactic_selected", "tactic=" + tactic);
+        return true;
+    }
+
+    function EffectiveStrikeRange()
+    {
+        if (self.StrikeCommitRange < self.AttackRange)
+        {
+            return self.StrikeCommitRange;
+        }
+        return self.AttackRange;
     }
 
     function PlanApproach()
@@ -384,7 +740,7 @@ addon AICadetsWaveCadet
         nape = self._target.NapePosition;
         delta = nape - self._cadet.Position;
         self._lastDistanceToNape = delta.Magnitude;
-        if (self._lastDistanceToNape <= self.AttackRange && self._cadet.CurrentGas >= self.MinAttackGas)
+        if (self._lastDistanceToNape <= self.EffectiveStrikeRange() && self._cadet.CurrentGas >= self.MinAttackGas)
         {
             self.Enter("AttackSetup", "attack_window");
             return;
@@ -394,19 +750,235 @@ addon AICadetsWaveCadet
             self.Enter("Recover", "traverse_budget_exhausted");
             return;
         }
+        goal = self.CurrentApproachGoal();
+        if (self._lastDistanceToNape > self.GroundApproachThreshold && self._cadet.Grounded)
+        {
+            self.StartGroundApproach(false);
+            return;
+        }
+        # Prefer a real Titan-tether arc near the target when the exact Titan
+        # is exposed. Fall back to normal map-anchor ODM when it is not.
+        if (self._lastDistanceToNape <= 45.0 && self.TryStartTitanOrbit())
+        {
+            return;
+        }
+        self.StartTraverse(goal, "approach");
+    }
+
+    # Called only after refreshing the selected Titan. Recompute between
+    # physical hook legs, without interrupting an in-progress swing.
+    function CurrentApproachGoal()
+    {
+        nape = self._target.NapePosition;
+        delta = nape - self._cadet.Position;
         behindDir = Vector3.Normalize(Vector3(self._target.Forward.X, 0.0, self._target.Forward.Z));
         if (behindDir.Magnitude < 0.1)
         {
             behindDir = Vector3.Normalize(Vector3(delta.X, 0.0, delta.Z)) * -1.0;
         }
-        goal = nape - behindDir * self.ApproachBehindDistance + Vector3(0.0, self.ApproachHeight, 0.0);
-        self.StartTraverse(goal, "approach");
+        return nape - behindDir * self.ApproachBehindDistance + Vector3(0.0, self.ApproachHeight, 0.0);
+    }
+
+    # The target query confirms identity at launch time. The subsequent hook
+    # proximity check is only a geometric observation, not collider identity.
+    function TryStartTitanOrbit()
+    {
+        if (self.CombatArcStyle == "Off" || self._orbitAttempts >= 2 || !self._cadet.LeftHookReady || self._cadet.CurrentGas < self.MinAttackGas)
+        {
+            return false;
+        }
+        start = self._cadet.Position + Vector3(0.0, 2.0, 0.0);
+        nape = self._target.NapePosition;
+        toNape = nape - start;
+        if (toNape.Magnitude < 0.1 || toNape.Magnitude > self.HookReach)
+        {
+            self.LogEvent("orbit_probe", "reason=out_of_range distance=" + Convert.ToString(toNape.Magnitude) + " target=" + Convert.ToString(self._targetViewId));
+            return false;
+        }
+        hit = self.MapHit(start, nape);
+        if (hit != null)
+        {
+            self.LogEvent("orbit_probe", "reason=map_obstruction start=" + Convert.ToString(start) + " nape=" + Convert.ToString(nape) + " hit=" + Convert.ToString(hit.Point) + " hit_distance=" + Convert.ToString(hit.Distance));
+            return false;
+        }
+        targetHit = Physics.SphereCast(start, nape + toNape.Normalized * 2.0, 0.6, CollideWithEnum.Titans);
+        if (targetHit == null || targetHit.Type != "Titan" || targetHit.ViewID != self._targetViewId)
+        {
+            self.LogEvent("orbit_probe", "reason=selected_titan_not_observed target=" + Convert.ToString(self._targetViewId));
+            return false;
+        }
+        if (self.CombatArcStyle == "Left")
+        {
+            self._orbitSide = -1.0;
+        }
+        elif (self.CombatArcStyle == "Right")
+        {
+            self._orbitSide = 1.0;
+        }
+        elif (self._orbitAttempts > 0)
+        {
+            self._orbitSide = self._orbitSide * -1.0;
+        }
+        self._orbitAttempts = self._orbitAttempts + 1;
+        self._targetTraverseCount = self._targetTraverseCount + 1;
+        self._orbitStartRadial = null;
+        self._orbitInterceptLogged = false;
+        self._cadet.Idle();
+        if (self._cadet.Grounded)
+        {
+            self._cadet.Jump();
+        }
+        self._cadet.AimAt(nape);
+        self._cadet.LaunchHookLeft(nape);
+        self.LogEvent("orbit_launch", "target=" + Convert.ToString(self._targetViewId) + " side=" + Convert.ToString(self._orbitSide) + " nape=" + Convert.ToString(nape));
+        self.Enter("OrbitAttach", "titan_tether_launched");
+        return true;
+    }
+
+    function OrbitAttachStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self.StopODM();
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "orbit_target_lost");
+            return;
+        }
+        if (Time.GameTime - self._stateStart >= 2.8)
+        {
+            self.EndOrbit("attachment_timeout");
+            return;
+        }
+        if (self._cadet.IsHookedLeft)
+        {
+            hookPoint = self._cadet.LeftHookPosition;
+            if (hookPoint == null || Vector3.Distance(hookPoint, self._target.NapePosition) > 22.0)
+            {
+                self.EndOrbit("attachment_not_near_nape");
+                return;
+            }
+            radial = self._cadet.Position - self._target.NapePosition;
+            self._orbitStartRadial = Vector3.Normalize(Vector3(radial.X, 0.0, radial.Z));
+            self._cadet.UseGas(true);
+            self.LogEvent("orbit_attach", "target=" + Convert.ToString(self._targetViewId) + " hook=" + Convert.ToString(hookPoint) + " nape_distance=" + Convert.ToString(Vector3.Distance(hookPoint, self._target.NapePosition)));
+            self.Enter("OrbitSwing", "hook_near_nape");
+        }
+    }
+
+    function OrbitSwingStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self.StopODM();
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "orbit_target_lost");
+            return;
+        }
+        if (!self._cadet.IsHookedLeft || self._cadet.CurrentGas < self.MinAttackGas || Time.GameTime - self._stateStart >= self.CombatArcSeconds)
+        {
+            self.EndOrbit("arc_finished_or_hook_lost");
+            return;
+        }
+        hookPoint = self._cadet.LeftHookPosition;
+        if (hookPoint == null || Vector3.Distance(hookPoint, self._target.NapePosition) > 24.0)
+        {
+            self.EndOrbit("attachment_moved_away_from_nape");
+            return;
+        }
+        radial = self._cadet.Position - self._target.NapePosition;
+        flat = Vector3(radial.X, 0.0, radial.Z);
+        if (flat.Magnitude < 0.1)
+        {
+            self.EndOrbit("radial_direction_unavailable");
+            return;
+        }
+        direction = flat.Normalized;
+        tangent = Vector3(0.0 - direction.Z, 0.0, direction.X) * self._orbitSide;
+        self._cadet.AimAt(self._target.NapePosition);
+        inward = 0.2;
+        tangential = 1.0;
+        if (radial.Magnitude <= self.AttackRange)
+        {
+            inward = 0.8;
+            tangential = 0.35;
+            if (!self._orbitInterceptLogged)
+            {
+                self._orbitInterceptLogged = true;
+                self.LogEvent("orbit_intercept", "distance=" + Convert.ToString(radial.Magnitude) + " commit_range=" + Convert.ToString(self.EffectiveStrikeRange()));
+            }
+        }
+        self._cadet.Move(Vector3.Normalize(tangent * tangential - direction * inward));
+    }
+
+    function LogOrbitEnd(reason)
+    {
+        detail = "reason=" + reason + " target=" + Convert.ToString(self._targetViewId);
+        if (self._orbitStartRadial != null && self._target != null && self._target.IsAlive)
+        {
+            radial = self._cadet.Position - self._target.NapePosition;
+            flat = Vector3.Normalize(Vector3(radial.X, 0.0, radial.Z));
+            detail = detail + " radial_dot=" + Convert.ToString(Vector3.Dot(self._orbitStartRadial, flat)) + " radial_cross=" + Convert.ToString(self._orbitStartRadial.X * flat.Z - self._orbitStartRadial.Z * flat.X);
+        }
+        self.LogEvent("orbit_end", detail);
+        self._orbitStartRadial = null;
+    }
+
+    function EndOrbit(reason)
+    {
+        self._lastFailureReason = reason;
+        self.LogOrbitEnd(reason);
+        self.StopODM();
+        self._cadet.Idle();
+        if (self.RefreshTarget())
+        {
+            if (!self._cadet.Grounded && !self._cadet.LeftHookReady)
+            {
+                self.LogEvent("hook_wait_start", "target=" + Convert.ToString(self._targetViewId) + " after=orbit");
+                self.Enter("WaitHook", "orbit_hook_retracting");
+            }
+            else
+            {
+                self.Enter("Recover", "orbit_finished");
+            }
+        }
+        else
+        {
+            self.Enter("AcquireTarget", "orbit_target_lost");
+        }
+    }
+
+    function TryAttackWindow(reason)
+    {
+        if (!self.RefreshTarget() || self._cadet.CurrentGas < self.MinAttackGas)
+        {
+            return false;
+        }
+        nape = self._target.NapePosition;
+        if (Vector3.Distance(self._cadet.Position, nape) > self.EffectiveStrikeRange() || self.MapHit(self._cadet.Position, nape) != null)
+        {
+            return false;
+        }
+        if (self._state == "OrbitSwing" || self._state == "OrbitAttach")
+        {
+            self.LogEvent("orbit_attack_window", "target=" + Convert.ToString(self._targetViewId));
+            self.LogOrbitEnd("attack_window");
+        }
+        self.StopODM();
+        self._cadet.Idle();
+        self.Enter("AttackSetup", reason);
+        return true;
     }
 
     function StartTraverse(goal, mode)
     {
         if (!self._cadet.LeftHookReady)
         {
+            if (mode == "approach" && self.RefreshTarget())
+            {
+                self.LogEvent("hook_wait_start", "target=" + Convert.ToString(self._targetViewId));
+                self.Enter("WaitHook", "hook_retracting");
+                return;
+            }
             self.Enter("Recover", "hook_not_ready");
             return;
         }
@@ -421,25 +993,59 @@ addon AICadetsWaveCadet
             self._trStartDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
         }
         self._trStartPosition = self._cadet.Position;
-        self.LogEvent("traverse_start", "mode=" + mode + " goal=" + Convert.ToString(goal));
+        self._cadet.Idle();
+        self.LogEvent("traverse_start", "mode=" + mode + " goal=" + Convert.ToString(goal) + " target_dist=" + Convert.ToString(self._trStartDistance) + " attempts=" + Convert.ToString(self._targetTraverseCount));
         self.BeginTraverseLeg();
     }
 
     function BeginTraverseLeg()
     {
         self._trLeg = self._trLeg + 1;
+        if (self._trLeg > 1 && self._traverseMode == "approach")
+        {
+            if (!self.RefreshTarget())
+            {
+                self.StopODM();
+                self._cadet.Idle();
+                self.Enter("AcquireTarget", "target_lost_before_next_leg");
+                return;
+            }
+            oldGoal = self._traverseGoal;
+            self._traverseGoal = self.CurrentApproachGoal();
+            self.LogEvent("approach_goal_updated", "previous=" + Convert.ToString(oldGoal) + " goal=" + Convert.ToString(self._traverseGoal) + " nape=" + Convert.ToString(self._target.NapePosition));
+        }
         velocity = self._cadet.Velocity;
         horizontalVelocity = Vector3(velocity.X, 0.0, velocity.Z);
         toGoal = self._traverseGoal - self._cadet.Position;
         baseDirection = Vector3.Normalize(Vector3(toGoal.X, 0.0, toGoal.Z));
+        # Blend existing momentum with goal bearing so the second leg remains
+        # target-directed. Following velocity alone can steer away from a Titan.
+        self._direction = baseDirection;
         if (self._trLeg == 2 && horizontalVelocity.Magnitude >= 2.0)
         {
-            self._direction = horizontalVelocity.Normalized;
+            self._direction = Vector3.Normalize(baseDirection * 0.8 + horizontalVelocity.Normalized * 0.2);
         }
-        else
+        self.FindTraverseAnchor();
+        if (self._anchor == null)
         {
-            self._direction = baseDirection;
+            self.LogEvent("anchor_search_failed", "goal=" + Convert.ToString(self._traverseGoal) + " position=" + Convert.ToString(self._cadet.Position) + " leg=" + Convert.ToString(self._trLeg));
+            self._trOutcome = "no_suitable_anchor";
+            self.FinishTraverse();
+            return;
         }
+        self.Enter("TraverseAttach", "hook_launch");
+        self._cadet.AimAt(self._anchor);
+        if (self._trLeg == 1)
+        {
+            self._cadet.Jump();
+        }
+        self._cadet.LaunchHookLeft(self._anchor);
+        self.LogEvent("hook_launch", "mode=" + self._traverseMode + " leg=" + Convert.ToString(self._trLeg) + " anchor=" + Convert.ToString(self._anchor));
+    }
+
+    # Shared geometric probe. It never cancels navigation or launches a hook.
+    function FindTraverseAnchor()
+    {
         self._anchor = null;
         self._bestScore = -100000.0;
         right = Vector3(self._direction.Z, 0.0, 0.0 - self._direction.X);
@@ -453,20 +1059,30 @@ addon AICadetsWaveCadet
         self.ConsiderAnchor(Vector3.Normalize(self._direction - right * 0.45), rise);
         self.ConsiderAnchor(self._direction, rise * 1.6);
         self.ConsiderAnchor(Vector3.Normalize(self._direction + right * 0.8), rise);
+        # City streets often have no forward-facing hookable wall; search
+        # both lateral building facades before abandoning a long-range goal.
         if (self._anchor == null)
         {
-            self._trOutcome = "no_suitable_anchor";
-            self.FinishTraverse();
-            return;
+            self.ConsiderAnchor(Vector3.Normalize(self._direction - right * 0.8), rise);
+            self.ConsiderAnchor(Vector3.Normalize(self._direction + right * 1.8), rise);
+            self.ConsiderAnchor(Vector3.Normalize(self._direction - right * 1.8), rise);
         }
-        self.Enter("TraverseAttach", "hook_launch");
-        self._cadet.AimAt(self._anchor);
-        if (self._trLeg == 1)
-        {
-            self._cadet.Jump();
-        }
-        self._cadet.LaunchHookLeft(self._anchor);
-        self.LogEvent("hook_launch", "mode=" + self._traverseMode + " leg=" + Convert.ToString(self._trLeg) + " anchor=" + Convert.ToString(self._anchor));
+    }
+
+    function HasTravelAnchor(goal)
+    {
+        oldAnchor = self._anchor;
+        oldDirection = self._direction;
+        oldLeg = self._trLeg;
+        toGoal = goal - self._cadet.Position;
+        self._direction = Vector3.Normalize(Vector3(toGoal.X, 0.0, toGoal.Z));
+        self._trLeg = 1;
+        self.FindTraverseAnchor();
+        found = self._anchor != null;
+        self._anchor = oldAnchor;
+        self._direction = oldDirection;
+        self._trLeg = oldLeg;
+        return found;
     }
 
     function TraverseAttachStep()
@@ -526,8 +1142,44 @@ addon AICadetsWaveCadet
     function FinishTraverse()
     {
         self.StopODM();
-        self._targetTraverseCount = self._targetTraverseCount + 1;
+        if (self._traverseMode == "approach" || self._traverseMode == "recover")
+        {
+            self._targetTraverseCount = self._targetTraverseCount + 1;
+        }
         self.LogEvent("traverse_end", "mode=" + self._traverseMode + " outcome=" + self._trOutcome + " legs=" + Convert.ToString(self._trLeg));
+        if (self._traverseMode == "supply")
+        {
+            self.LogEvent("supply_traverse_end", "outcome=" + self._trOutcome + " position=" + Convert.ToString(self._cadet.Position));
+            self.Enter("SeekSupply", "supply_flight_complete");
+            return;
+        }
+        if ((self._traverseMode == "approach" || self._traverseMode == "recover") && self._trOutcome == "no_suitable_anchor" && !self._cadet.Grounded)
+        {
+            self.LogEvent("landing_wait", "reason=no_anchor target=" + Convert.ToString(self._targetViewId));
+            self.Enter("WaitLanding", "airborne_no_anchor");
+            return;
+        }
+        if (self._traverseMode == "approach" && self._trOutcome == "no_suitable_anchor" && self._cadet.Grounded)
+        {
+            self.StartGroundApproach(true);
+            return;
+        }
+        if (self._traverseMode == "explore")
+        {
+            distance = Vector3.Distance(self._cadet.Position, self._trStartPosition);
+            self.LogEvent("explore_traverse_end", "outcome=" + self._trOutcome + " distance=" + Convert.ToString(distance) + " pattern=" + Convert.ToString(self._exploreIndex));
+            if (distance < self.TraverseProgressMin)
+            {
+                self._exploreFailures = self._exploreFailures + 1;
+            }
+            else
+            {
+                self._exploreFailures = 0;
+            }
+            self._exploreNextAction = Time.GameTime + 0.75;
+            self.Enter("Explore", "patrol_step_finished");
+            return;
+        }
         if (self._traverseMode == "retreat")
         {
             self.Enter("Regroup", "retreat_complete");
@@ -546,7 +1198,7 @@ addon AICadetsWaveCadet
         nowDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
         progress = self._trStartDistance - nowDistance;
         self.LogEvent("progress", "delta=" + Convert.ToString(progress) + " dist=" + Convert.ToString(nowDistance));
-        if (self._trOutcome == "completed" && nowDistance <= self.AttackRange && self._cadet.CurrentGas >= self.MinAttackGas)
+        if (self._trOutcome == "completed" && nowDistance <= self.EffectiveStrikeRange() && self._cadet.CurrentGas >= self.MinAttackGas)
         {
             self.Enter("AttackSetup", "traverse_attack_window");
             return;
@@ -562,9 +1214,9 @@ addon AICadetsWaveCadet
         if (self._targetRetryCount > self.MaxTargetRetries)
         {
             self._bannedTargetViewId = self._targetViewId;
-            self._banUntil = Time.GameTime + 4.0;
+            self._banUntil = Time.GameTime + 15.0;
             self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=" + self._lastFailureReason);
-            self.Enter("AcquireTarget", "retry_exhausted");
+            self.BeginObserve("retry_exhausted");
             return;
         }
         self.Enter("Recover", "insufficient_progress");
@@ -578,21 +1230,56 @@ addon AICadetsWaveCadet
             return;
         }
         distance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
-        if (distance > self.AttackRange + 2.0)
+        if (distance > self.EffectiveStrikeRange() + 1.0)
         {
             self.Enter("PlanApproach", "attack_window_lost");
             return;
         }
+        humanState = self._cadet.State;
+        if (humanState == "Land" || humanState == "Stun" || humanState == "Grab" || humanState == "Reload" || humanState == "Refill" || humanState == "Die" || humanState == "EmoteAction" || humanState == "SpecialAction" || humanState == "SpecialAttack" || humanState == "Attack")
+        {
+            if (!self._attackReadyWaitLogged)
+            {
+                self._attackReadyWaitLogged = true;
+                self.LogEvent("attack_wait_ready", "human_state=" + humanState + " target=" + Convert.ToString(self._targetViewId));
+            }
+            if (Time.GameTime - self._stateStart >= 0.8)
+            {
+                self.LogEvent("attack_not_ready", "human_state=" + humanState + " target=" + Convert.ToString(self._targetViewId));
+                self.Enter("Recover", "attack_state_timeout");
+            }
+            return;
+        }
+        hit = self.MapHit(self._cadet.Position, self._target.NapePosition);
+        if (hit != null)
+        {
+            self.LogEvent("attack_blocked", "reason=map_obstruction target=" + Convert.ToString(self._targetViewId) + " position=" + Convert.ToString(self._cadet.Position) + " nape=" + Convert.ToString(self._target.NapePosition) + " hit=" + Convert.ToString(hit.Point) + " hit_distance=" + Convert.ToString(hit.Distance));
+            self.Enter("Recover", "attack_line_blocked");
+            return;
+        }
+        self._targetDamaged = false;
+        self._targetDamageByCadet = false;
+        self._targetKilled = false;
+        self._targetKillByCadet = false;
+        self._attackStateObserved = false;
         self._cadet.AimAt(self._target.NapePosition);
         self._cadet.Attack(true);
-        self._targetDamaged = false;
-        self._targetKilled = false;
         self.Enter("Strike", "attack_started");
-        self.LogEvent("attack_attempt", "target=" + Convert.ToString(self._targetViewId) + " dist=" + Convert.ToString(distance));
+        self.LogEvent("attack_attempt", "target=" + Convert.ToString(self._targetViewId) + " dist=" + Convert.ToString(distance) + " human_state=" + self._cadet.State + " animation=" + self._cadet.CurrentAnimation + " position=" + Convert.ToString(self._cadet.Position) + " nape=" + Convert.ToString(self._target.NapePosition) + " target_forward=" + Convert.ToString(self._target.Forward) + " cadet_forward=" + Convert.ToString(self._cadet.Forward) + " velocity=" + Convert.ToString(self._cadet.Velocity) + " grounded=" + Convert.ToString(self._cadet.Grounded));
+    }
+
+    function ObserveAttackState()
+    {
+        if (!self._attackStateObserved && self._cadet.State == "Attack")
+        {
+            self._attackStateObserved = true;
+            self.LogEvent("attack_state_observed", "animation=" + self._cadet.CurrentAnimation + " target=" + Convert.ToString(self._targetViewId));
+        }
     }
 
     function StrikeStep()
     {
+        self.ObserveAttackState();
         if (Time.GameTime - self._stateStart >= self.AttackHoldSeconds || self._targetKilled)
         {
             self._cadet.Attack(false);
@@ -602,23 +1289,30 @@ addon AICadetsWaveCadet
 
     function VerifyAttackStep()
     {
-        if (!self.RefreshTarget())
-        {
-            self._targetKilled = true;
-        }
+        self.ObserveAttackState();
         if (self._targetKilled)
         {
-            self.LogEvent("attack_result", "confirmed_kill=true target=" + Convert.ToString(self._targetViewId));
+            self.LogEvent("attack_result", "confirmed_kill=true by_cadet=" + Convert.ToString(self._targetKillByCadet) + " target=" + Convert.ToString(self._targetViewId));
             self.Enter("AcquireTarget", "target_killed");
+            return;
+        }
+        if (!self.RefreshTarget())
+        {
+            self.LogEvent("attack_result", "confirmed_kill=false reason=target_lost target=" + Convert.ToString(self._targetViewId));
+            self.Enter("AcquireTarget", "target_lost_after_attack");
+            return;
+        }
+        if (!self._targetDamageByCadet && Time.GameTime - self._stateStart < self.AttackVerifySeconds)
+        {
             return;
         }
         if (self._targetDamaged)
         {
-            self.LogEvent("attack_result", "confirmed_damage=true target=" + Convert.ToString(self._targetViewId));
+            self.LogEvent("attack_result", "confirmed_damage=true by_cadet=" + Convert.ToString(self._targetDamageByCadet) + " target=" + Convert.ToString(self._targetViewId));
         }
         else
         {
-            self.LogEvent("attack_result", "confirmed_damage=false target=" + Convert.ToString(self._targetViewId));
+            self.LogEvent("attack_result", "confirmed_damage=false observation_seconds=" + Convert.ToString(Time.GameTime - self._stateStart) + " attack_state_observed=" + Convert.ToString(self._attackStateObserved) + " target=" + Convert.ToString(self._targetViewId));
         }
         self.Enter("Retreat", "post_attack");
     }
@@ -640,19 +1334,146 @@ addon AICadetsWaveCadet
         self.StartTraverse(retreatPoint, "retreat");
     }
 
+    # Pause all inputs after exhausted plans; prevents rapid target ping-pong.
+    function BeginObserve(reason)
+    {
+        self.StopODM();
+        self._cadet.Idle();
+        self._observeUntil = Time.GameTime + 6.0;
+        self.LogEvent("observe_start", "reason=" + reason + " position=" + Convert.ToString(self._cadet.Position) + " retry_at=" + Convert.ToString(self._observeUntil));
+        self.Enter("Observe", reason);
+    }
+
+    function RecoveryBudget()
+    {
+        budget = 1.0 + (self.Persistence - 1.0) * 0.5;
+        if (budget > self.MaxRecoveriesPerTarget)
+        {
+            budget = self.MaxRecoveriesPerTarget;
+        }
+        return budget;
+    }
+
+    function EscapeRouteClear(goal)
+    {
+        return self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), goal + Vector3(0.0, 1.0, 0.0)) == null && self.MapHit(self._cadet.Position + Vector3(0.0, 0.3, 0.0), goal + Vector3(0.0, 0.3, 0.0)) == null;
+    }
+
+    function ChooseWallEscape(direction, right)
+    {
+        for (candidate in Range(0, 5, 1))
+        {
+            goal = self._cadet.Position + direction * 8.0 + right * (8.0 + self.RepositionSkill * 3.0);
+            if (candidate == 1)
+            {
+                goal = self._cadet.Position + direction * 8.0 - right * (8.0 + self.RepositionSkill * 3.0);
+            }
+            elif (candidate == 2)
+            {
+                goal = self._cadet.Position + right * 12.0;
+            }
+            elif (candidate == 3)
+            {
+                goal = self._cadet.Position - right * 12.0;
+            }
+            elif (candidate == 4)
+            {
+                goal = self._cadet.Position - direction * 12.0;
+            }
+            if (self.EscapeRouteClear(goal))
+            {
+                self._groundGoal = goal;
+                self.LogEvent("escape_route", "candidate=" + Convert.ToString(candidate) + " goal=" + Convert.ToString(goal));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function RecoverGroundStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "reposition_target_lost");
+            return;
+        }
+        if (Vector3.Distance(self._cadet.Position, self._groundGoal) <= 4.0 || Time.GameTime - self._stateStart >= 6.0)
+        {
+            self._cadet.Idle();
+            moved = Vector3.Distance(self._cadet.Position, self._groundStartPosition);
+            self.LogEvent("reposition_end", "moved=" + Convert.ToString(moved));
+            if (moved < 2.0)
+            {
+                self._bannedTargetViewId = self._targetViewId;
+                self._banUntil = Time.GameTime + 15.0;
+                self.BeginObserve("escape_no_displacement");
+                return;
+            }
+            # A physically different route gets a fresh approach budget, but
+            # never refunds the finite recovery attempts used to reach it.
+            if (self._targetTraverseCount >= self.MaxTraversePerTarget)
+            {
+                self._targetTraverseCount = 0;
+                self.LogEvent("approach_budget_refreshed", "reason=physical_reposition moved=" + Convert.ToString(moved) + " recoveries=" + Convert.ToString(self._targetRecoveries));
+            }
+            self._orbitAttempts = 0;
+            self._hookWaitTimedOut = false;
+            self.Enter("PlanApproach", "reposition_retry_same_target");
+        }
+    }
+
     function RecoverStep()
     {
-        if (self._targetRecoveries >= self.MaxRecoveriesPerTarget)
+        if (self._targetRecoveries >= self.RecoveryBudget())
         {
             self.LogEvent("recover_exhausted", "target=" + Convert.ToString(self._targetViewId) + " reason=" + self._lastFailureReason);
             self._bannedTargetViewId = self._targetViewId;
-            self._banUntil = Time.GameTime + 4.0;
-            self.Enter("AcquireTarget", "recover_budget_exhausted");
+            self._banUntil = Time.GameTime + 15.0;
+            self.BeginObserve("recover_budget_exhausted");
+            return;
+        }
+        if (self._cadet.Grounded && self.RefreshTarget())
+        {
+            self._targetRecoveries = self._targetRecoveries + 1;
+            toTarget = self._target.Position - self._cadet.Position;
+            direction = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+            right = Vector3(direction.Z, 0.0, 0.0 - direction.X);
+            if (self._targetRecoveries == 2)
+            {
+                right = right * -1.0;
+            }
+            if (!self.ChooseWallEscape(direction, right))
+            {
+                self._bannedTargetViewId = self._targetViewId;
+                self._banUntil = Time.GameTime + 15.0;
+                self.LogEvent("reposition_blocked", "reason=all_escape_corridors_blocked target=" + Convert.ToString(self._targetViewId));
+                self.BeginObserve("reposition_corridors_blocked");
+                return;
+            }
+            self.StopODM();
+            self._groundStartPosition = self._cadet.Position;
+            self._cadet.MoveTo(self._groundGoal, 3.0);
+            self.LogEvent("reposition_start", "goal=" + Convert.ToString(self._groundGoal) + " attempt=" + Convert.ToString(self._targetRecoveries));
+            self.Enter("RecoverGround", "retain_target_change_route");
+            return;
+        }
+        if (!self._cadet.LeftHookReady && self._cadet.CurrentGas >= self.MinAttackGas && !self._hookWaitTimedOut && self.RefreshTarget())
+        {
+            self.LogEvent("hook_wait_start", "target=" + Convert.ToString(self._targetViewId) + " after=recovery");
+            self.Enter("WaitHook", "recovery_hook_retracting");
             return;
         }
         if (!self._cadet.LeftHookReady || self._cadet.CurrentGas < self.MinAttackGas)
         {
-            self.Terminate("safe_termination", "recovery_unavailable_resources");
+            self._bannedTargetViewId = self._targetViewId;
+            self._banUntil = Time.GameTime + 15.0;
+            self._target = null;
+            self._targetViewId = 0;
+            self._exploreFailures = 3;
+            self._exploreNextAction = 0.0;
+            self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
+            self.Enter("Explore", "recovery_unavailable_patrol");
             return;
         }
         self._targetRecoveries = self._targetRecoveries + 1;
@@ -666,8 +1487,672 @@ addon AICadetsWaveCadet
         {
             self._direction = Vector3.Normalize(Vector3(self._cadet.Forward.X, 0.0, self._cadet.Forward.Z));
         }
-        recoverGoal = self._cadet.Position + self._direction * 22.0 + Vector3(0.0, 10.0, 0.0);
+        # After a blocked/empty forward corridor, try a different lateral
+        # approach on each bounded recovery attempt instead of repeating the
+        # same heading and getting the same no-anchor result.
+        if (self._target != null && self._target.IsAlive)
+        {
+            toTarget = self._target.NapePosition - self._cadet.Position;
+            flatTarget = Vector3(toTarget.X, 0.0, toTarget.Z);
+            if (flatTarget.Magnitude >= 1.0)
+            {
+                self._direction = flatTarget.Normalized;
+            }
+        }
+        right = Vector3(self._direction.Z, 0.0, 0.0 - self._direction.X);
+        if (self._targetRecoveries == 1)
+        {
+            self._direction = Vector3.Normalize(self._direction + right * 0.8);
+        }
+        else
+        {
+            self._direction = Vector3.Normalize(self._direction - right * 0.8);
+        }
+        recoverGoal = self._cadet.Position + self._direction * 30.0 + Vector3(0.0, 10.0, 0.0);
         self.StartTraverse(recoverGoal, "recover");
+    }
+
+    # Lightweight maneuver-policy dispatcher: currently four bounded patterns.
+    # Routes are actual heading/rise choices, not cosmetic animations. Each
+    # pattern can later be moved into its own named skill implementation.
+    function ChooseExploreHeading()
+    {
+        baseDir = Vector3(self._cadet.Forward.X, 0.0, self._cadet.Forward.Z);
+        if (baseDir.Magnitude < 0.1)
+        {
+            baseDir = Vector3(0.0, 0.0, 1.0);
+        }
+        baseDir = baseDir.Normalized;
+        right = Vector3(baseDir.Z, 0.0, 0.0 - baseDir.X);
+        pattern = self._exploreIndex;
+        if (pattern == 0)
+        {
+            return Vector3.Normalize(baseDir + right * 0.4);
+        }
+        if (pattern == 1)
+        {
+            return Vector3.Normalize(baseDir - right * 0.7);
+        }
+        if (pattern == 2)
+        {
+            return Vector3.Normalize(baseDir + right * 0.85);
+        }
+        return Vector3.Normalize(baseDir - right * 0.35);
+    }
+
+    function ExploreStep()
+    {
+        if (self._orderMode == "Engage" && Time.GameTime >= self._exploreNextScan)
+        {
+            self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
+            self.AcquireTarget();
+            if (self._target != null)
+            {
+                return;
+            }
+        }
+        if (Time.GameTime < self._exploreNextAction)
+        {
+            return;
+        }
+        if (self._cadet.Velocity.Magnitude > 9.0 && !self._cadet.Grounded)
+        {
+            # Avoid overriding a coasting maneuver with a new initial jump.
+            self._exploreNextAction = Time.GameTime + 0.5;
+            return;
+        }
+        self._exploreIndex = self._exploreIndex + 1;
+        if (self._exploreIndex >= 4)
+        {
+            self._exploreIndex = 0;
+        }
+        self._exploreDirection = self.ChooseExploreHeading();
+        self._exploreStartPosition = self._cadet.Position;
+        exploreGoal = self._cadet.Position + self._exploreDirection * self.ExploreSegmentDistance + Vector3(0.0, self.AnchorRise, 0.0);
+        self.LogEvent("explore_step", "pattern=" + Convert.ToString(self._exploreIndex) + " goal=" + Convert.ToString(exploreGoal) + " failures=" + Convert.ToString(self._exploreFailures));
+        if (self._cadet.LeftHookReady && self._cadet.CurrentGas > self.MinAttackGas && self._exploreFailures < 3)
+        {
+            self.StartTraverse(exploreGoal, "explore");
+            return;
+        }
+        self.ExploreGroundMove();
+    }
+
+    # Human.Move is a documented ordinary controller action; use it only when
+    # grounded and a short forward map probe does not report a wall.
+    # Ground navigation uses engine's persistent AI MoveTo state. Do not
+    # invoke Idle or a new hook search until the route completes or times out.
+    function StartGroundApproach(fallback)
+    {
+        if (!self.RefreshTarget())
+        {
+            self.Enter("AcquireTarget", "ground_target_lost");
+            return;
+        }
+        self._groundFallback = fallback;
+        toTarget = self._target.Position - self._cadet.Position;
+        self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+        self._nextTravelProbe = Time.GameTime + 1.0;
+        self._groundMovementStartedAt = Time.GameTime;
+        self._groundProgressPosition = self._cadet.Position;
+        self._groundPreviousTargetDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
+        self._groundLastPosition = self._cadet.Position;
+        self._groundPath = 0.0;
+        self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+        self._groundStalledChecks = 0;
+        stopRange = 24.0;
+        if (fallback)
+        {
+            stopRange = 4.0;
+        }
+        if (self.GroundSteering == "Direct")
+        {
+            self._cadet.Idle();
+        }
+        else
+        {
+            self._cadet.MoveToTarget(self._target, stopRange);
+        }
+        self.Enter("ApproachGround", "navigate_to_titan");
+        self.LogEvent("motion_command", "kind=ground_target driver=" + self.GroundSteering + " fallback=" + Convert.ToString(fallback) + " range=" + Convert.ToString(stopRange) + " view_id=" + Convert.ToString(self._targetViewId) + " ai_state=" + self._cadet.GetAIState());
+    }
+
+    function ApproachGroundStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "ground_target_invalid");
+            return;
+        }
+        distance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
+        if ((!self._groundFallback && distance <= self.GroundApproachThreshold) || (self._groundFallback && (distance <= self.EffectiveStrikeRange() || Time.GameTime - self._groundMovementStartedAt >= self.GroundProgressWindow * 3.0)))
+        {
+            self._cadet.Idle();
+            self.LogEvent("motion_segment_done", "kind=ground_target fallback=" + Convert.ToString(self._groundFallback) + " distance=" + Convert.ToString(distance));
+            self.Enter("PlanApproach", "ground_approach_close");
+            return;
+        }
+        self._groundPath = self._groundPath + Vector3.Distance(self._cadet.Position, self._groundLastPosition);
+        self._groundLastPosition = self._cadet.Position;
+        if (Time.GameTime >= self._nextTravelProbe)
+        {
+            self._nextTravelProbe = Time.GameTime + 14.0 - self.AerialPreference * 2.0;
+            if (self._cadet.LeftHookReady && self._cadet.CurrentGas > self.MinAttackGas && self._targetTraverseCount < self.MaxTraversePerTarget)
+            {
+                viable = self.HasTravelAnchor(self._target.NapePosition);
+                self.LogEvent("travel_probe", "viable=" + Convert.ToString(viable) + " distance=" + Convert.ToString(distance));
+                if (viable)
+                {
+                    self.StartTraverse(self._target.NapePosition, "approach");
+                    return;
+                }
+            }
+        }
+        if (self.GroundSteering == "Direct")
+        {
+            if (!self._cadet.Grounded)
+            {
+                self._cadet.Idle();
+                return;
+            }
+            toTarget = self._target.Position - self._cadet.Position;
+            direction = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+            start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
+            # A bounded diagnostic alternate, not a replacement navmesh planner.
+            if (Vector3.Distance(self._cadet.Position, self._target.Position) <= 4.0 || self.MapHit(start, start + direction * 6.0) != null)
+            {
+                self._cadet.Idle();
+                self._lastFailureReason = "direct_route_blocked_or_near";
+                self.Enter("Recover", "direct_route_blocked_or_near");
+                return;
+            }
+            self._cadet.Move(direction);
+        }
+        if (Time.GameTime >= self._groundNextCheck)
+        {
+            progress = Vector3.Distance(self._cadet.Position, self._groundProgressPosition);
+            path = self._groundPath;
+            self._groundPath = 0.0;
+            forwardProgress = Vector3.Dot(self._cadet.Position - self._groundProgressPosition, self._groundBearing);
+            targetGain = self._groundPreviousTargetDistance - distance;
+            self._groundPreviousTargetDistance = distance;
+            self.LogEvent("pursuit_progress", "toward_previous_target=" + Convert.ToString(forwardProgress) + " displacement=" + Convert.ToString(progress) + " path=" + Convert.ToString(path) + " distance=" + Convert.ToString(distance) + " target_gain=" + Convert.ToString(targetGain));
+            toTarget = self._target.Position - self._cadet.Position;
+            self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+            self.LogEvent("motion_observed", "kind=ground_target moved=" + Convert.ToString(progress) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
+            self._groundProgressPosition = self._cadet.Position;
+            self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+            if (path >= 30.0 && progress < path * 0.5 && forwardProgress < path * 0.15 && targetGain < 4.0)
+            {
+                self.LogEvent("circling_detected", "path=" + Convert.ToString(path) + " displacement=" + Convert.ToString(progress) + " forward=" + Convert.ToString(forwardProgress) + " target_gain=" + Convert.ToString(targetGain));
+                self._bannedTargetViewId = self._targetViewId;
+                self._banUntil = Time.GameTime + 20.0;
+                self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=circling");
+                self.BeginObserve("circling_detected");
+                return;
+            }
+            if ((progress < 1.0 || forwardProgress < 1.0) && targetGain < 4.0)
+            {
+                self._groundStalledChecks = self._groundStalledChecks + 1;
+            }
+            else
+            {
+                self._groundStalledChecks = 0;
+            }
+            if (self._groundStalledChecks >= 2)
+            {
+                self.LogEvent("motion_stalled", "kind=ground_target dist=" + Convert.ToString(distance));
+                self._cadet.Idle();
+                if (self._targetRecoveries < self.RecoveryBudget())
+                {
+                    self._lastFailureReason = "ground_not_advancing";
+                    self.Enter("Recover", "ground_not_advancing");
+                    return;
+                }
+                self._bannedTargetViewId = self._targetViewId;
+                self._banUntil = Time.GameTime + 15.0;
+                self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=ground_stalled");
+                self._target = null;
+                self._targetViewId = 0;
+                self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
+                self._exploreNextAction = 0.0;
+                self._exploreFailures = 3;
+                self.Enter("Explore", "ground_approach_stalled");
+            }
+        }
+    }
+
+    function ExploreGroundMove()
+    {
+        direction = self._exploreDirection;
+        start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
+        ahead = start + direction * 4.0;
+        if (self.MapHit(start, ahead) != null)
+        {
+            self._exploreIndex = self._exploreIndex + 1;
+            if (self._exploreIndex >= 4)
+            {
+                self._exploreIndex = 0;
+            }
+            direction = self.ChooseExploreHeading();
+        }
+        self._groundGoal = self._cadet.Position + direction * self.ExploreSegmentDistance;
+        self._groundStartPosition = self._cadet.Position;
+        self._groundProgressPosition = self._cadet.Position;
+        self._groundMovementStartedAt = Time.GameTime;
+        self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+        self._groundStalledChecks = 0;
+        self._cadet.MoveTo(self._groundGoal, 4.0);
+        self.Enter("ExploreGround", "persistent_ground_patrol");
+        self.LogEvent("motion_command", "kind=ground_explore goal=" + Convert.ToString(self._groundGoal) + " ai_state=" + self._cadet.GetAIState());
+    }
+
+    function ExploreGroundStep()
+    {
+        if (self._orderMode == "Engage" && Time.GameTime >= self._exploreNextScan)
+        {
+            self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
+            self.AcquireTarget();
+            if (self._target != null)
+            {
+                return;
+            }
+            self.Enter("ExploreGround", "patrol_while_scanning");
+        }
+        if (Vector3.Distance(self._cadet.Position, self._groundGoal) <= 5.0 || Time.GameTime - self._groundMovementStartedAt >= self.ExploreGroundSeconds)
+        {
+            moved = Vector3.Distance(self._cadet.Position, self._groundStartPosition);
+            self.LogEvent("motion_segment_done", "kind=ground_explore moved=" + Convert.ToString(moved));
+            self._cadet.Idle();
+            self._exploreFailures = 0;
+            self._exploreNextAction = Time.GameTime + 0.1;
+            self.Enter("Explore", "ground_patrol_finished");
+            return;
+        }
+        if (Time.GameTime >= self._groundNextCheck)
+        {
+            moved = Vector3.Distance(self._cadet.Position, self._groundProgressPosition);
+            self.LogEvent("motion_observed", "kind=ground_explore moved=" + Convert.ToString(moved) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
+            self._groundProgressPosition = self._cadet.Position;
+            self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
+            if (moved < 1.0)
+            {
+                self._groundStalledChecks = self._groundStalledChecks + 1;
+                self.LogEvent("motion_stalled", "kind=ground_explore check=" + Convert.ToString(self._groundStalledChecks));
+            }
+        }
+    }
+
+    # Shared master-owned, local-only command channel. The UI addon increments
+    # the sequence when the user presses Engage / Explore / Hold for All or one
+    # named bot. The command is never persisted to disk by this feature.
+    # The command panel writes a request. Only this owned movement controller
+    # can acknowledge it as accepted, AFTER changing its own operational state.
+    # No ack means no active M2 controller received the message.
+    function AcknowledgeOrder(sequence, order)
+    {
+        key = self._cadetName;
+        self._lastAppliedOrderSequence = sequence;
+        PersistentData.SetProperty("AICadetsM2AckSeq-" + key, sequence);
+        PersistentData.SetProperty("AICadetsM2AckState-" + key, self._state);
+        PersistentData.SetProperty("AICadetsM2AckMode-" + key, order);
+        self.LogEvent("order_applied", "seq=" + Convert.ToString(sequence) + " mode=" + order + " state=" + self._state);
+        self.PublishOrderStatus();
+    }
+
+    function PublishOrderStatus()
+    {
+        if (self._cadet == null || !self._cadet.IsMine || self._cadetName == "")
+        {
+            return;
+        }
+        key = self._cadetName;
+        PersistentData.SetProperty("AICadetsM2Build-" + key, self._buildTag);
+        PersistentData.SetProperty("AICadetsM2Profile-" + key, self.ProfileName + " P=" + Convert.ToString(self.Persistence) + " A=" + Convert.ToString(self.AerialPreference) + " R=" + Convert.ToString(self.RepositionSkill) + " ground=" + self.GroundSteering + " arc=" + self.CombatArcStyle + " tactic=" + self._combatTactic);
+        PersistentData.SetProperty("AICadetsM2Heartbeat-" + key, Time.GameTime);
+        PersistentData.SetProperty("AICadetsM2State-" + key, self._state);
+        PersistentData.SetProperty("AICadetsM2Mode-" + key, self._orderMode);
+        PersistentData.SetProperty("AICadetsM2RunId-" + key, self._runId);
+        PersistentData.SetProperty("AICadetsM2StatusTime-" + key, Time.GameTime);
+        PersistentData.SetProperty("AICadetsM2TargetId-" + key, self._targetViewId);
+        targetInfo = "none";
+        if (self._target != null && self._target.IsAlive)
+        {
+            targetInfo = "pos=" + Convert.ToString(self._target.Position) + " nape=" + Convert.ToString(self._target.NapePosition) + " distance=" + Convert.ToString(Vector3.Distance(self._cadet.Position, self._target.NapePosition));
+        }
+        PersistentData.SetProperty("AICadetsM2TargetInfo-" + key, targetInfo);
+        groundGoal = "none";
+        traverseGoal = "none";
+        if (self._groundGoal != null)
+        {
+            groundGoal = Convert.ToString(self._groundGoal);
+        }
+        if (self._traverseGoal != null)
+        {
+            traverseGoal = Convert.ToString(self._traverseGoal);
+        }
+        PersistentData.SetProperty("AICadetsM2Navigation-" + key, "ground_goal=" + groundGoal + " fallback=" + Convert.ToString(self._groundFallback) + " traverse=" + self._traverseMode + " traverse_goal=" + traverseGoal + " order_seq=" + Convert.ToString(self._lastAppliedOrderSequence));
+    }
+
+    function ReadOrders()
+    {
+        sequence = PersistentData.GetProperty("AICadetsCmdSequence", 0);
+        if (sequence == self._orderSequence)
+        {
+            return;
+        }
+        self._orderSequence = sequence;
+        scope = PersistentData.GetProperty("AICadetsCmdScope", "all");
+        if (scope != "all" && scope != self._cadetName)
+        {
+            self.LogEvent("order_ignored", "seq=" + Convert.ToString(sequence) + " scope=" + scope);
+            return;
+        }
+        order = PersistentData.GetProperty("AICadetsCmdMode", "Engage");
+        if (order != "Engage" && order != "Explore" && order != "Hold" && order != "Resupply" && order != "GroundEngine" && order != "GroundDirect")
+        {
+            self.LogEvent("order_rejected", "seq=" + Convert.ToString(sequence) + " mode=" + order);
+            return;
+        }
+        if (order == "GroundEngine" || order == "GroundDirect")
+        {
+            self.GroundSteering = "Engine";
+            if (order == "GroundDirect")
+            {
+                self.GroundSteering = "Direct";
+            }
+            if (self._state == "ApproachGround")
+            {
+                self.StartGroundApproach(self._groundFallback);
+            }
+            self.LogEvent("ground_driver_changed", "driver=" + self.GroundSteering);
+            self.AcknowledgeOrder(sequence, order);
+            return;
+        }
+        previousMode = self._orderMode;
+        self.StopODM();
+        self._cadet.Idle();
+        self.LogEvent("order_received", "seq=" + Convert.ToString(sequence) + " mode=" + order + " scope=" + scope);
+
+        if (order == "Resupply")
+        {
+            if (self.IsSupplyState())
+            {
+                self._orderMode = "Resupply";
+                self.LogEvent("resupply_already_in_progress", "gas=" + Convert.ToString(self._cadet.CurrentGas));
+                self.AcknowledgeOrder(sequence, order);
+                return;
+            }
+            if (previousMode == "Explore")
+            {
+                self._resumeAfterSupply = "Explore";
+            }
+            else
+            {
+                self._resumeAfterSupply = "Engage";
+            }
+            self._orderMode = "Resupply";
+            self.BeginResupply("manual_order");
+            self.AcknowledgeOrder(sequence, order);
+            return;
+        }
+
+        if (self.IsSupplyState())
+        {
+            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+        }
+        self._orderMode = order;
+        if (order == "Hold")
+        {
+            self.Enter("Hold", "user_hold");
+            self.AcknowledgeOrder(sequence, order);
+            return;
+        }
+        if (order == "Explore")
+        {
+            self._target = null;
+            self._targetViewId = 0;
+            self._exploreNextAction = 0.0;
+            self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
+            self.Enter("Explore", "user_explore");
+            self.AcknowledgeOrder(sequence, order);
+            return;
+        }
+        self.Enter("AcquireTarget", "user_engage");
+        self.AcknowledgeOrder(sequence, order);
+    }
+
+    function IsSupplyState()
+    {
+        return self._state == "SeekSupply" || self._state == "AtSupply" || self._state == "ExploreSupply" || (self.IsTraverseState() && self._traverseMode == "supply");
+    }
+
+    # Only actual station interactions can grant gas. Never write CurrentGas
+    # or call RefillImmediate. Set AutoRefillGas while seeking: the documented
+    # SupplyStation collider determines when an owned human can replenish.
+    function BeginResupply(reason)
+    {
+        if (self.IsSupplyState())
+        {
+            return;
+        }
+        if (self._orderMode != "Resupply")
+        {
+            self._resumeAfterSupply = self._orderMode;
+        }
+        self.StopODM();
+        self._cadet.Idle();
+        self._supplyGasBefore = self._cadet.CurrentGas;
+        self._supplySearchStarted = Time.GameTime;
+        self._supplyArrivalStarted = 0.0;
+        self._supplyScanDue = 0.0;
+        self._supplyMoveDue = 0.0;
+        self._supplyLastProgressAt = Time.GameTime;
+        self._supplyLastPosition = self._cadet.Position;
+        self._supplyWaypoint = null;
+        self._supplyDetour = 0;
+        self._supplyPoint = null;
+        self._supplySource = "none";
+        self._supplyAutoRefillBefore = self._cadet.AutoRefillGas;
+        self._cadet.AutoRefillGas = true;
+        self.LogEvent("resupply_requested", "reason=" + reason + " gas=" + Convert.ToString(self._supplyGasBefore));
+        self.Enter("SeekSupply", reason);
+    }
+
+    function FindNearestSupply()
+    {
+        best = 10000000.0;
+        self._supplyPoint = null;
+        self._supplySource = "none";
+        # Official components can be enumerated in Custom Logic maps. Built-in
+        # City scene supply objects may not be MapObjects; use host-mark fallback.
+        for (station in Map.FindMapObjectsByComponent("SupplyStation"))
+        {
+            if (station != null)
+            {
+                distance = Vector3.Distance(self._cadet.Position, station.Position);
+                if (distance < best)
+                {
+                    best = distance;
+                    self._supplyPoint = station.Position;
+                    self._supplySource = "map_component";
+                }
+            }
+        }
+        version = PersistentData.GetProperty("AICadetsSupplyRevision", 0);
+        if (version > 0)
+        {
+            point = Vector3(PersistentData.GetProperty("AICadetsSupplyX", 0.0), PersistentData.GetProperty("AICadetsSupplyY", 0.0), PersistentData.GetProperty("AICadetsSupplyZ", 0.0));
+            distance = Vector3.Distance(self._cadet.Position, point);
+            if (distance < best)
+            {
+                best = distance;
+                self._supplyPoint = point;
+                self._supplySource = "host_marked_unverified";
+            }
+        }
+        if (self._supplyPoint != null)
+        {
+            self.LogEvent("supply_selected", "source=" + self._supplySource + " distance=" + Convert.ToString(best) + " point=" + Convert.ToString(self._supplyPoint));
+        }
+        else
+        {
+            self.LogEvent("supply_not_visible", "source=no_map_component_or_host_marker");
+        }
+    }
+
+    # Progress-checked navigation: prefer documented AI ground MoveTo, use
+    # nearby linecasts to select a finite lateral detour when stuck, and
+    # preserve ODM as an airborne fallback if adequate gas remains.
+    function SeekSupplyStep()
+    {
+        if (Time.GameTime - self._supplySearchStarted > self.SupplySearchTimeout)
+        {
+            self.LogEvent("resupply_failed", "reason=search_timeout gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+            self.StopODM();
+            self._cadet.Idle();
+            self.Enter("Hold", "supply_search_timeout");
+            return;
+        }
+        if (self._supplyPoint == null)
+        {
+            self.FindNearestSupply();
+            if (self._supplyPoint == null)
+            {
+                self._exploreNextAction = 0.0;
+                self.Enter("ExploreSupply", "no_registered_station");
+                return;
+            }
+        }
+        distance = Vector3.Distance(self._cadet.Position, self._supplyPoint);
+        if (distance <= self.SupplyArrivalRange)
+        {
+            self.StopODM();
+            self._cadet.Idle();
+            self._supplyArrivalStarted = Time.GameTime;
+            self.LogEvent("supply_arrived", "source=" + self._supplySource + " gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self.Enter("AtSupply", "within_supply_radius");
+            return;
+        }
+        if (Vector3.Distance(self._cadet.Position, self._supplyLastPosition) >= 3.0)
+        {
+            self._supplyLastPosition = self._cadet.Position;
+            self._supplyLastProgressAt = Time.GameTime;
+            self._supplyWaypoint = null;
+        }
+        if (Time.GameTime - self._supplyLastProgressAt >= 8.0)
+        {
+            self._supplyLastProgressAt = Time.GameTime;
+            self._supplyDetour = self._supplyDetour + 1;
+            toStation = self._supplyPoint - self._cadet.Position;
+            flat = Vector3(toStation.X, 0.0, toStation.Z);
+            if (flat.Magnitude >= 1.0)
+            {
+                direction = flat.Normalized;
+                right = Vector3(direction.Z, 0.0, 0.0 - direction.X);
+                if (self._supplyDetour == 1)
+                {
+                    self._supplyWaypoint = self._cadet.Position + direction * 12.0 + right * 18.0;
+                }
+                else
+                {
+                    self._supplyWaypoint = self._cadet.Position + direction * 12.0 - right * 18.0;
+                    self._supplyDetour = 0;
+                }
+                self.LogEvent("supply_detour", "waypoint=" + Convert.ToString(self._supplyWaypoint));
+            }
+        }
+        if (Time.GameTime >= self._supplyMoveDue)
+        {
+            self._supplyMoveDue = Time.GameTime + 0.8;
+            waypoint = self._supplyPoint;
+            if (self._supplyWaypoint != null)
+            {
+                waypoint = self._supplyWaypoint;
+                if (Vector3.Distance(self._cadet.Position, waypoint) <= 5.0)
+                {
+                    self._supplyWaypoint = null;
+                    waypoint = self._supplyPoint;
+                }
+            }
+            if (self._cadet.Grounded)
+            {
+                self._cadet.MoveTo(waypoint, self.SupplyArrivalRange);
+                self.LogEvent("supply_ground_route", "remaining=" + Convert.ToString(distance) + " waypoint=" + Convert.ToString(waypoint));
+            }
+            if (!self._cadet.Grounded && self._cadet.CurrentGas > self.MinAttackGas + 4.0 && self._cadet.LeftHookReady)
+            {
+                self.StartTraverse(waypoint + Vector3(0.0, 6.0, 0.0), "supply");
+            }
+        }
+    }
+
+    function AtSupplyStep()
+    {
+        # Collision-based AutoRefillGas is active, but do not claim success
+        # unless CurrentGas rises. This also detects a wrong host marker.
+        if (Time.GameTime - self._supplyArrivalStarted >= self.SupplyRefillTimeout)
+        {
+            self.LogEvent("supply_not_refilling", "source=" + self._supplySource + " gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self._supplyPoint = null;
+            self._exploreNextAction = 0.0;
+            self.Enter("ExploreSupply", "station_inactive_or_unverified");
+        }
+    }
+
+    function ExploreSupplyStep()
+    {
+        if (Time.GameTime - self._supplySearchStarted > self.SupplySearchTimeout)
+        {
+            self.LogEvent("resupply_failed", "reason=station_not_found gas=" + Convert.ToString(self._cadet.CurrentGas));
+            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+            self._cadet.Idle();
+            self.Enter("Hold", "no_supply_available");
+            return;
+        }
+        if (Time.GameTime >= self._supplyScanDue)
+        {
+            self._supplyScanDue = Time.GameTime + 6.0;
+            self.FindNearestSupply();
+            if (self._supplyPoint != null)
+            {
+                self.Enter("SeekSupply", "station_discovered");
+                return;
+            }
+        }
+        if (Time.GameTime >= self._exploreNextAction && self._cadet.Grounded)
+        {
+            self._exploreIndex = self._exploreIndex + 1;
+            if (self._exploreIndex >= 4)
+            {
+                self._exploreIndex = 0;
+            }
+            self._exploreDirection = self.ChooseExploreHeading();
+            waypoint = self._cadet.Position + self._exploreDirection * 35.0;
+            self._cadet.MoveTo(waypoint, 4.0);
+            self._exploreNextAction = Time.GameTime + 7.0;
+            self.LogEvent("supply_search_patrol", "waypoint=" + Convert.ToString(waypoint) + " gas=" + Convert.ToString(self._cadet.CurrentGas));
+        }
+    }
+
+    function CompleteResupply(reason)
+    {
+        self.LogEvent("resupply_verified", "reason=" + reason + " gas_before=" + Convert.ToString(self._supplyGasBefore) + " gas_after=" + Convert.ToString(self._cadet.CurrentGas));
+        self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+        self._supplyPoint = null;
+        self._cadet.Idle();
+        if (self._resumeAfterSupply == "Explore")
+        {
+            self._orderMode = "Explore";
+            self.Enter("Explore", "resupplied_resume_patrol");
+        }
+        else
+        {
+            self._orderMode = "Engage";
+            self.Enter("AcquireTarget", "resupplied_resume_combat");
+        }
     }
 
     function RefreshTarget()
@@ -716,7 +2201,9 @@ addon AICadetsWaveCadet
             return;
         }
         alignment = Vector3.Dot(horizontal.Normalized, self._direction);
-        if (alignment < 0.3)
+        # Lateral anchors are permissible when they still move the cadet
+        # at least slightly toward the current travel bearing.
+        if (alignment < 0.05)
         {
             return;
         }
@@ -752,7 +2239,13 @@ addon AICadetsWaveCadet
         }
         start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
         end = start + velocity * 0.2 + velocity.Normalized * 2.0;
-        return self.MapHit(start, end) != null;
+        hit = self.MapHit(start, end);
+        if (hit != null)
+        {
+            self.LogEvent("collision_probe", "position=" + Convert.ToString(self._cadet.Position) + " velocity=" + Convert.ToString(velocity) + " probe_end=" + Convert.ToString(end) + " hit=" + Convert.ToString(hit.Point) + " hit_distance=" + Convert.ToString(hit.Distance));
+            return true;
+        }
+        return false;
     }
 
     function IsTraverseState()
@@ -762,6 +2255,10 @@ addon AICadetsWaveCadet
 
     function Enter(state, reason)
     {
+        if (state == "AttackSetup")
+        {
+            self._attackReadyWaitLogged = false;
+        }
         oldState = self._state;
         self._state = state;
         self._stateStart = Time.GameTime;
@@ -781,8 +2278,16 @@ addon AICadetsWaveCadet
 
     function LogEvent(event, details)
     {
-        line = "t=" + Convert.ToString(Time.GameTime) + " run=" + self._runId + " cadet=" + self._cadetName + " state=" + self._state + " target=" + Convert.ToString(self._targetViewId) + " event=" + event + " " + details;
-        self._trace = self._trace + line + "\n";
+        self._eventId = self._eventId + 1;
+        line = "build=" + self._buildTag + " driver=" + self.GroundSteering + " id=" + Convert.ToString(self._eventId) + " mode=" + self._orderMode + " t=" + Convert.ToString(Time.GameTime) + " run=" + self._runId + " cadet=" + self._cadetName + " state=" + self._state + " target=" + Convert.ToString(self._targetViewId) + " event=" + event + " " + details;
+        if (self._eventId <= 3000)
+        {
+            self._trace = self._trace + line + "\n";
+            if (self.RecordDecisionTrace || self.SaveRunReport)
+            {
+                PersistentData.SetProperty("AICadetsM2Report-" + self._cadetName, self._trace);
+            }
+        }
         if (!self.Diagnostics || self._logCount >= 260)
         {
             return;
@@ -798,20 +2303,35 @@ addon AICadetsWaveCadet
             return;
         }
         self._reportSaved = true;
-        PersistentData.SetProperty("AICadetsM2Report", self._trace);
+        PersistentData.SetProperty("AICadetsM2Report-" + self._cadetName, self._trace);
         PersistentData.SaveToFile("AICadetsM2Report_" + self._runId, false);
     }
 
     function Terminate(resultClass, reason)
     {
         self.StopODM();
+        if (Network.IsMasterClient && self._cadet != null && self._cadet.IsMine)
+        {
+            self._cadet.Idle();
+        }
         if (self._state == "Done")
         {
             return;
         }
+        if (self.IsSupplyState() && self._cadet != null && self._cadet.IsMine)
+        {
+            self._cadet.AutoRefillGas = self._supplyAutoRefillBefore;
+        }
+        self._terminationReason = reason;
         self.LogEvent("termination", "result_class=" + resultClass + " reason=" + reason + " kills_observed=" + Convert.ToString(self._killsObserved) + " titan_deaths_observed=" + Convert.ToString(self._titanDeathsObserved) + " damage_events=" + Convert.ToString(self._damageEvents));
         Game.Print("[AI Cadets M2] result_class=" + resultClass + " result_reason=" + reason + " run_id=" + self._runId + " cadet=" + self._cadetName + " target_retry=" + Convert.ToString(self._targetRetryCount) + " target_traverses=" + Convert.ToString(self._targetTraverseCount) + " target_recoveries=" + Convert.ToString(self._targetRecoveries) + " kills_observed=" + Convert.ToString(self._killsObserved) + " titan_deaths_observed=" + Convert.ToString(self._titanDeathsObserved));
         self.SaveReportIfEnabled();
         self.Enter("Done", "terminated");
+        if (self._cadetName != "")
+        {
+            PersistentData.SetProperty("AICadetsM2TerminalReason-" + self._cadetName, reason);
+            PersistentData.SetProperty("AICadetsM2TerminalTime-" + self._cadetName, Time.GameTime);
+        }
+        self.PublishOrderStatus();
     }
 }
