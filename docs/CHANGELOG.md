@@ -1,3 +1,9 @@
+## M2 combat-arc-4 (unreleased)
+
+- Watch17 shows a Titan being banned by the circle detector despite substantial forward displacement. Require poor forward progress and poor closing distance as well as an inefficient path; keep the existing pause and temporary ban for genuine loops.
+- Refresh the live Titan's behind-nape approach goal between ODM hook legs and stop safely if the target disappears. Ground pursuit continues to use the engine's target-following state.
+- Record predicted collision hits and distinguish blocked orbit probes from range failures. Do not weaken collision checks without evidence. Watch17 observed three attack animations, but no confirmed damage or kill from those attempts; the new changes require live testing.
+
 ## M2 combat-arc-3 (unreleased)
 
 - Watch16 recorded an attack input during Land with no observed Attack state, and repeated circling/pauses/reacquisition of the same Titan. Add bounded attack-state readiness waiting and a temporary target ban after detected circling. Live effect remains unverified.

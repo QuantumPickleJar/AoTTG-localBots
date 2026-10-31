@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-combat-arc-3";
+    _buildTag = "M2-combat-arc-4";
     GroundSteering = "Engine";
     # Experimental physical tether arc: Alternate, Left, Right, or Off.
     PreferredTactic = "NapeStrike";
@@ -67,6 +67,7 @@ addon AICadetsWaveCadet
     _groundGoal = null;
     _groundStartPosition = null;
     _groundProgressPosition = null;
+    _groundPreviousTargetDistance = 0.0;
     _groundMovementStartedAt = 0.0;
     _groundNextCheck = 0.0;
     _groundStalledChecks = 0;
@@ -742,12 +743,7 @@ addon AICadetsWaveCadet
             self.Enter("Recover", "traverse_budget_exhausted");
             return;
         }
-        behindDir = Vector3.Normalize(Vector3(self._target.Forward.X, 0.0, self._target.Forward.Z));
-        if (behindDir.Magnitude < 0.1)
-        {
-            behindDir = Vector3.Normalize(Vector3(delta.X, 0.0, delta.Z)) * -1.0;
-        }
-        goal = nape - behindDir * self.ApproachBehindDistance + Vector3(0.0, self.ApproachHeight, 0.0);
+        goal = self.CurrentApproachGoal();
         if (self._lastDistanceToNape > self.GroundApproachThreshold && self._cadet.Grounded)
         {
             self.StartGroundApproach(false);
@@ -762,6 +758,20 @@ addon AICadetsWaveCadet
         self.StartTraverse(goal, "approach");
     }
 
+    # Called only after refreshing the selected Titan. Recompute between
+    # physical hook legs, without interrupting an in-progress swing.
+    function CurrentApproachGoal()
+    {
+        nape = self._target.NapePosition;
+        delta = nape - self._cadet.Position;
+        behindDir = Vector3.Normalize(Vector3(self._target.Forward.X, 0.0, self._target.Forward.Z));
+        if (behindDir.Magnitude < 0.1)
+        {
+            behindDir = Vector3.Normalize(Vector3(delta.X, 0.0, delta.Z)) * -1.0;
+        }
+        return nape - behindDir * self.ApproachBehindDistance + Vector3(0.0, self.ApproachHeight, 0.0);
+    }
+
     # The target query confirms identity at launch time. The subsequent hook
     # proximity check is only a geometric observation, not collider identity.
     function TryStartTitanOrbit()
@@ -773,9 +783,15 @@ addon AICadetsWaveCadet
         start = self._cadet.Position + Vector3(0.0, 2.0, 0.0);
         nape = self._target.NapePosition;
         toNape = nape - start;
-        if (toNape.Magnitude < 0.1 || toNape.Magnitude > self.HookReach || self.MapHit(start, nape) != null)
+        if (toNape.Magnitude < 0.1 || toNape.Magnitude > self.HookReach)
         {
-            self.LogEvent("orbit_probe", "reason=out_of_range_or_blocked target=" + Convert.ToString(self._targetViewId));
+            self.LogEvent("orbit_probe", "reason=out_of_range distance=" + Convert.ToString(toNape.Magnitude) + " target=" + Convert.ToString(self._targetViewId));
+            return false;
+        }
+        hit = self.MapHit(start, nape);
+        if (hit != null)
+        {
+            self.LogEvent("orbit_probe", "reason=map_obstruction start=" + Convert.ToString(start) + " nape=" + Convert.ToString(nape) + " hit=" + Convert.ToString(hit.Point) + " hit_distance=" + Convert.ToString(hit.Distance));
             return false;
         }
         targetHit = Physics.SphereCast(start, nape + toNape.Normalized * 2.0, 0.6, CollideWithEnum.Titans);
@@ -978,6 +994,19 @@ addon AICadetsWaveCadet
     function BeginTraverseLeg()
     {
         self._trLeg = self._trLeg + 1;
+        if (self._trLeg > 1 && self._traverseMode == "approach")
+        {
+            if (!self.RefreshTarget())
+            {
+                self.StopODM();
+                self._cadet.Idle();
+                self.Enter("AcquireTarget", "target_lost_before_next_leg");
+                return;
+            }
+            oldGoal = self._traverseGoal;
+            self._traverseGoal = self.CurrentApproachGoal();
+            self.LogEvent("approach_goal_updated", "previous=" + Convert.ToString(oldGoal) + " goal=" + Convert.ToString(self._traverseGoal) + " nape=" + Convert.ToString(self._target.NapePosition));
+        }
         velocity = self._cadet.Velocity;
         horizontalVelocity = Vector3(velocity.X, 0.0, velocity.Z);
         toGoal = self._traverseGoal - self._cadet.Position;
@@ -1211,9 +1240,10 @@ addon AICadetsWaveCadet
             }
             return;
         }
-        if (self.MapHit(self._cadet.Position, self._target.NapePosition) != null)
+        hit = self.MapHit(self._cadet.Position, self._target.NapePosition);
+        if (hit != null)
         {
-            self.LogEvent("attack_blocked", "reason=map_obstruction target=" + Convert.ToString(self._targetViewId));
+            self.LogEvent("attack_blocked", "reason=map_obstruction target=" + Convert.ToString(self._targetViewId) + " position=" + Convert.ToString(self._cadet.Position) + " nape=" + Convert.ToString(self._target.NapePosition) + " hit=" + Convert.ToString(hit.Point) + " hit_distance=" + Convert.ToString(hit.Distance));
             self.Enter("Recover", "attack_line_blocked");
             return;
         }
@@ -1540,6 +1570,7 @@ addon AICadetsWaveCadet
         self._nextTravelProbe = Time.GameTime + 1.0;
         self._groundMovementStartedAt = Time.GameTime;
         self._groundProgressPosition = self._cadet.Position;
+        self._groundPreviousTargetDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
         self._groundLastPosition = self._cadet.Position;
         self._groundPath = 0.0;
         self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
@@ -1619,22 +1650,24 @@ addon AICadetsWaveCadet
             path = self._groundPath;
             self._groundPath = 0.0;
             forwardProgress = Vector3.Dot(self._cadet.Position - self._groundProgressPosition, self._groundBearing);
-            self.LogEvent("pursuit_progress", "toward_previous_target=" + Convert.ToString(forwardProgress) + " displacement=" + Convert.ToString(progress) + " path=" + Convert.ToString(path) + " distance=" + Convert.ToString(distance));
+            targetGain = self._groundPreviousTargetDistance - distance;
+            self._groundPreviousTargetDistance = distance;
+            self.LogEvent("pursuit_progress", "toward_previous_target=" + Convert.ToString(forwardProgress) + " displacement=" + Convert.ToString(progress) + " path=" + Convert.ToString(path) + " distance=" + Convert.ToString(distance) + " target_gain=" + Convert.ToString(targetGain));
             toTarget = self._target.Position - self._cadet.Position;
             self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
             self.LogEvent("motion_observed", "kind=ground_target moved=" + Convert.ToString(progress) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
             self._groundProgressPosition = self._cadet.Position;
             self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
-            if (path >= 30.0 && progress < path * 0.5)
+            if (path >= 30.0 && progress < path * 0.5 && forwardProgress < path * 0.15 && targetGain < 4.0)
             {
-                self.LogEvent("circling_detected", "path=" + Convert.ToString(path) + " displacement=" + Convert.ToString(progress) + " forward=" + Convert.ToString(forwardProgress));
+                self.LogEvent("circling_detected", "path=" + Convert.ToString(path) + " displacement=" + Convert.ToString(progress) + " forward=" + Convert.ToString(forwardProgress) + " target_gain=" + Convert.ToString(targetGain));
                 self._bannedTargetViewId = self._targetViewId;
                 self._banUntil = Time.GameTime + 20.0;
                 self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=circling");
                 self.BeginObserve("circling_detected");
                 return;
             }
-            if (progress < 1.0 || forwardProgress < 1.0)
+            if ((progress < 1.0 || forwardProgress < 1.0) && targetGain < 4.0)
             {
                 self._groundStalledChecks = self._groundStalledChecks + 1;
             }
@@ -2181,7 +2214,13 @@ addon AICadetsWaveCadet
         }
         start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
         end = start + velocity * 0.2 + velocity.Normalized * 2.0;
-        return self.MapHit(start, end) != null;
+        hit = self.MapHit(start, end);
+        if (hit != null)
+        {
+            self.LogEvent("collision_probe", "position=" + Convert.ToString(self._cadet.Position) + " velocity=" + Convert.ToString(velocity) + " probe_end=" + Convert.ToString(end) + " hit=" + Convert.ToString(hit.Point) + " hit_distance=" + Convert.ToString(hit.Distance));
+            return true;
+        }
+        return false;
     }
 
     function IsTraverseState()

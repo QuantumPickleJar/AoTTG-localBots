@@ -773,7 +773,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-3")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-4")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -808,6 +808,64 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         w.tick(7.0)
         self.assertEqual(w.controller._state, "Hold")
+
+    def test_inefficient_path_with_forward_motion_does_not_ban_moving_target(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        for position in (Vector(14, 0, 0), Vector(14, 0, 20), Vector(4, 0, 20), Vector(4, 0, 16)):
+            w.cadet.Position = position
+            w.tick(1.0)
+        w.titan.Position = Vector(4, 0, 616)
+        w.titan.NapePosition = Vector(4, 8, 618)
+        w.tick(1.1)
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertNotEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+        self.assertTrue(any("target_gain=" in m for m in w.messages if "pursuit_progress" in m))
+        self.assertFalse(any("circling_detected" in m for m in w.messages))
+
+    def test_second_approach_leg_recalculates_goal_for_moving_titan(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller._traverseMode = "approach"
+        w.controller._trLeg = 1
+        w.controller._traverseGoal = Vector(0, 14, 59)
+        w.titan.NapePosition = Vector(30, 9, 80)
+        w.titan.Forward = Vector(1, 0, 0)
+        w.controller.BeginTraverseLeg()
+        goal = w.controller._traverseGoal
+        self.assertEqual((goal.X, goal.Y, goal.Z), (13, 15, 80))
+        self.assertTrue(any("approach_goal_updated" in m for m in w.messages))
+
+    def test_closing_titan_does_not_trigger_stationary_stall(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        for z in (590, 580):
+            w.titan.Position = Vector(4, 0, z)
+            w.titan.NapePosition = Vector(4, 8, z + 2)
+            w.tick(5.1)
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertEqual(w.controller._groundStalledChecks, 0)
+
+    def test_lost_titan_stops_before_second_approach_hook(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller._traverseMode = "approach"
+        w.controller._trLeg = 1
+        w.controller._traverseGoal = Vector(0, 14, 59)
+        w.titan.IsAlive = False
+        w.controller.BeginTraverseLeg()
+        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertFalse(any(call[0] == "launch" for call in w.cadet.calls))
 
     def test_observation_prevents_immediate_reacquisition_loop(self):
         w = World()
@@ -1166,6 +1224,7 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._state, "WaitHook")
         self.assertNotIn(("attack", True), w.cadet.calls)
+        self.assertTrue(any("collision_probe" in m and "hit_distance=" in m for m in w.messages))
 
     def test_other_actor_damage_does_not_end_window_before_cadet_callback(self):
         w = World()
