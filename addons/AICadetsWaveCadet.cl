@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-navdiag-2";
+    _buildTag = "M2-navdiag-3";
     GroundSteering = "Engine";
     ProfileName = "Steady scout";
     Persistence = 3;
@@ -47,6 +47,10 @@ addon AICadetsWaveCadet
     _stateStart = 0.0;
     _runStart = 0.0;
     _nextTickReport = 0.0;
+    _tickLast = -1.0;
+    _tickWindowStart = 0.0;
+    _tickCount = 0;
+    _tickMaxGap = 0.0;
     _noTargetCooldownUntil = 0.0;
     _exploreNextScan = 0.0;
     _exploreNextAction = 0.0;
@@ -202,6 +206,27 @@ addon AICadetsWaveCadet
             self.Terminate("safe_termination", "game_ending");
             return;
         }
+        if (self._tickLast < 0.0)
+        {
+            self._tickWindowStart = Time.GameTime;
+        }
+        else
+        {
+            gap = Time.GameTime - self._tickLast;
+            if (gap > self._tickMaxGap)
+            {
+                self._tickMaxGap = gap;
+            }
+        }
+        self._tickLast = Time.GameTime;
+        self._tickCount = self._tickCount + 1;
+        if (Time.GameTime - self._tickWindowStart >= 10.0)
+        {
+            self.LogEvent("tick_health", "count=" + Convert.ToString(self._tickCount) + " game_seconds=" + Convert.ToString(Time.GameTime - self._tickWindowStart) + " max_gap=" + Convert.ToString(self._tickMaxGap));
+            self._tickCount = 0;
+            self._tickWindowStart = Time.GameTime;
+            self._tickMaxGap = 0.0;
+        }
         self.ReadOrders();
         if (Time.GameTime >= self._nextOrderStatus)
         {
@@ -259,6 +284,22 @@ addon AICadetsWaveCadet
         if (self._state == "ExploreGround")
         {
             self.ExploreGroundStep();
+            return;
+        }
+        if (self._state == "WaitLanding")
+        {
+            if (!self.RefreshTarget())
+            {
+                self.Enter("AcquireTarget", "landing_target_lost");
+            }
+            elif (self._cadet.Grounded)
+            {
+                self.Enter("PlanApproach", "landing_complete");
+            }
+            elif (Time.GameTime - self._stateStart >= 4.0)
+            {
+                self.BeginObserve("landing_timeout");
+            }
             return;
         }
         if (self._state == "Observe")
@@ -768,6 +809,12 @@ addon AICadetsWaveCadet
             self.Enter("SeekSupply", "supply_flight_complete");
             return;
         }
+        if ((self._traverseMode == "approach" || self._traverseMode == "recover") && self._trOutcome == "no_suitable_anchor" && !self._cadet.Grounded)
+        {
+            self.LogEvent("landing_wait", "reason=no_anchor target=" + Convert.ToString(self._targetViewId));
+            self.Enter("WaitLanding", "airborne_no_anchor");
+            return;
+        }
         if (self._traverseMode == "approach" && self._trOutcome == "no_suitable_anchor" && self._cadet.Grounded)
         {
             self.StartGroundApproach(true);
@@ -965,6 +1012,14 @@ addon AICadetsWaveCadet
             if (self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), self._groundGoal + Vector3(0.0, 1.0, 0.0)) != null)
             {
                 self._groundGoal = self._cadet.Position + direction * 8.0 - right * (8.0 + self.RepositionSkill * 3.0);
+            }
+            if (self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), self._groundGoal + Vector3(0.0, 1.0, 0.0)) != null)
+            {
+                self._bannedTargetViewId = self._targetViewId;
+                self._banUntil = Time.GameTime + 15.0;
+                self.LogEvent("reposition_blocked", "reason=both_corridors_blocked target=" + Convert.ToString(self._targetViewId));
+                self.BeginObserve("reposition_corridors_blocked");
+                return;
             }
             self.StopODM();
             self._groundStartPosition = self._cadet.Position;

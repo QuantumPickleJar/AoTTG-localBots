@@ -768,7 +768,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-navdiag-2")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-navdiag-3")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -818,6 +818,58 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.cadet.calls, calls)
         w.tick(5.1)
         self.assertEqual(w.controller._state, "AcquireTarget")
+
+    def test_airborne_anchor_failure_waits_for_landing_without_burning_retries(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.cadet.Grounded = False
+        w.controller._traverseMode = "approach"
+        w.controller._trOutcome = "no_suitable_anchor"
+        w.controller.FinishTraverse()
+        self.assertEqual(w.controller._state, "WaitLanding")
+        attempts = w.controller._targetTraverseCount
+        for _ in range(50):
+            w.tick(0.02)
+        self.assertEqual(w.controller._targetTraverseCount, attempts)
+        self.assertEqual(w.controller._state, "WaitLanding")
+        w.cadet.Grounded = True
+        w.tick()
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_airborne_wait_honors_hold_and_timeout(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.cadet.Grounded = False
+        w.controller._traverseMode = "recover"
+        w.controller._trOutcome = "no_suitable_anchor"
+        w.controller.FinishTraverse()
+        w.tick(4.1)
+        self.assertEqual(w.controller._state, "Observe")
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+
+    def test_both_reposition_corridors_blocked_does_not_dispatch_move(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.hit = NS(Point=Vector(4, 1, 3), Distance=3.0)
+        w.controller.Enter("Recover", "test")
+        calls = len(w.cadet.calls)
+        w.tick()
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertFalse(any(c[0] == "move_to" for c in w.cadet.calls[calls:]))
+        self.assertTrue(any("reposition_blocked" in m for m in w.messages))
+
+    def test_tick_health_reports_game_time_and_largest_gap(self):
+        w = World()
+        w.tick()
+        for _ in range(12):
+            w.tick(1.0)
+        self.assertTrue(any("event=tick_health" in m and "max_gap=" in m and "count=" in m for m in w.messages))
 
     def test_retry_bans_target(self):
         w = World()

@@ -1,3 +1,9 @@
+## M2 navdiag-3 (unreleased)
+
+- Defer airborne no-anchor replanning until landing or a bounded timeout; preserve the target and avoid burning recovery attempts before physics can advance.
+- Probe both recovery corridors before dispatching a ground waypoint; pause if both are blocked. Add game-time fixed-tick health telemetry without altering personality settings or the documented baseline callback frequency.
+- Watch5 also identifies an M1R demo without an M2 controller. Narrow-alley movement and attacks still need in-game validation.
+
 ## M2 navdiag-2 (unreleased)
 
 - Prevent rapid target/recovery ping-pong with a six-second stationary observation before retrying. Detect inefficient closed-loop ground pursuit from path length versus net displacement and pause rather than continue circling.

@@ -51,7 +51,7 @@ addon AICadetsM2Watcher
             return;
         }
         self._start = Time.GameTime;
-        self._trace = "AICadetsM2Watcher v3 navdiag-2; times=GameTime; moving=0.2s; idle=2s; max_records=2000; max=300s after discovery\n";
+        self._trace = "AICadetsM2Watcher v3 navdiag-3; times=GameTime; moving=0.2s; idle=2s; max_records=2000; max=300s after discovery\n";
         self.Record("watch_started");
         self.Flush();
         Game.Print("[AI Cadets M2 Watch] Recording to PersistentData/" + self._file);
