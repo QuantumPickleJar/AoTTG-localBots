@@ -20,6 +20,7 @@ addon AICadetsM2Watcher
     _previousTime = 0.0;
     _dirty = false;
     _records = 0;
+    _nextRoster = 0.0;
 
     function OnGameStart()
     {
@@ -50,7 +51,7 @@ addon AICadetsM2Watcher
             return;
         }
         self._start = Time.GameTime;
-        self._trace = "AICadetsM2Watcher v1 (based on validated M1 v3); times=GameTime; moving=0.5s; idle=2s; max_records=2000; max=300s after discovery\n";
+        self._trace = "AICadetsM2Watcher v3 navdiag-1; times=GameTime; moving=0.2s; idle=2s; max_records=2000; max=300s after discovery\n";
         self.Record("watch_started");
         self.Flush();
         Game.Print("[AI Cadets M2 Watch] Recording to PersistentData/" + self._file);
@@ -106,11 +107,22 @@ addon AICadetsM2Watcher
             self._finished = true;
             return;
         }
+        if (Time.GameTime >= self._nextRoster)
+        {
+            self._nextRoster = Time.GameTime + 10.0;
+            for (human in Game.AIHumans)
+            {
+                if (human.IsMine && (human.Name == "AICadetsM1" || human.Name == "AICadetsM1R" || human.Name == "AICadetsM2-1" || human.Name == "AICadetsM2-2" || human.Name == "AICadetsM2-3" || human.Name == "AICadetsM2-4"))
+                {
+                    self.Record("owned_cadet name=" + human.Name + " view_id=" + Convert.ToString(human.ViewID) + " alive=" + Convert.ToString(human.IsAlive) + " controller_state=" + PersistentData.GetProperty("AICadetsM2State-" + human.Name, "no_M2_controller") + " build=" + PersistentData.GetProperty("AICadetsM2Build-" + human.Name, "unknown") + " profile=" + PersistentData.GetProperty("AICadetsM2Profile-" + human.Name, "unknown"));
+                }
+            }
+        }
         self.CheckImpact();
         if (self._scout.IsHookedLeft != self._lastHook || self._scout.IsHookingLeft != self._lastHooking || self._scout.Grounded != self._lastGrounded)
         {
             self.Snapshot("change");
-            self._nextSample = Time.GameTime + 0.5;
+            self._nextSample = Time.GameTime + 0.2;
             self._lastHook = self._scout.IsHookedLeft;
             self._lastHooking = self._scout.IsHookingLeft;
             self._lastGrounded = self._scout.Grounded;
@@ -169,7 +181,7 @@ addon AICadetsM2Watcher
         {
             return 2.0;
         }
-        return 0.5;
+        return 0.2;
     }
 
     function MotionEvent(wasHooked, hooked, wasGrounded, grounded, mapHit)

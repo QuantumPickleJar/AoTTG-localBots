@@ -1,3 +1,9 @@
+## M2 navdiag-1 (unreleased)
+
+- Identified installed 97e9e16 files and concurrently enabled M1 demos in the Watch5 investigation. Added visible F8 build/profile reporting and passive owned-cadet roster records to distinguish stale controllers and demo bots.
+- Added scoped Engine/Direct ground-pursuit comparison buttons. Direct is an opt-in, obstacle-checked diagnostic using ordinary Move input; Engine remains default and Explore remains unchanged.
+- Restored 5 Hz moving observations within the bounded longer recorder. Added tests for driver scope, Hold, blocked routes, controller shutdown and visible configuration. Root cause of native spiralling remains unconfirmed; use M2_NAVIGATION_AB_TEST.md.
+
 ## M2 tactical pursuit and profile foundation (unreleased)
 
 - Probe existing ODM anchor geometry during distant ground pursuit without cancelling ground navigation on an empty probe.

@@ -735,6 +735,54 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._targetViewId, 0)
         self.assertFalse(any(x == ("attack", True) for x in w.cadet.calls))
 
+    def test_direct_ground_driver_uses_move_and_stops_on_blocked_corridor(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.GroundSteering = "Direct"
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        before = len(w.cadet.calls)
+        w.tick(0.1)
+        self.assertEqual(w.cadet.calls[-1][0], "move")
+        self.assertFalse(any(x[0] == "move_to_target" for x in w.cadet.calls[before:]))
+        w.hit = NS(Point=Vector(4, 1, 3), Distance=3.0)
+        w.tick(0.1)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertEqual(w.cadet.calls[-1], ("idle",))
+
+    def test_driver_order_is_scoped_and_does_not_release_hold(self):
+        w = World()
+        w.tick()
+        w.controller._orderMode = "Hold"
+        w.controller.Enter("Hold", "test")
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "GroundDirect", "AICadetsCmdScope": "AICadetsM2-2"})
+        w.tick()
+        self.assertEqual(w.controller.GroundSteering, "Engine")
+        w.persistent.update({"AICadetsCmdSequence": 2, "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller.GroundSteering, "Direct")
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertEqual(w.controller._orderMode, "Hold")
+        self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-navdiag-1")
+
+    def test_driver_switch_restarts_only_current_pursuit(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "GroundDirect", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertEqual(w.cadet.calls[-1][0], "move")
+        self.assertEqual(w.controller._orderMode, "Engage")
+        w.controller.Terminate("safe_termination", "test")
+        self.assertEqual(w.cadet.calls[-1], ("idle",))
+
     def test_retry_bans_target(self):
         w = World()
         w.tick()

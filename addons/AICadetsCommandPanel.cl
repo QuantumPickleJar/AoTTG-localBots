@@ -61,6 +61,9 @@ addon AICadetsCommandPanel
         self._actions.Add(UI.Button("RESUPPLY now", self.Resupply));
         self._actions.Add(UI.Label("Stand inside a working station trigger:"));
         self._actions.Add(UI.Button("MARK supply here", self.MarkSupply));
+        self._actions.Add(UI.Label("Ground pursuit comparison (diagnostic):"));
+        self._actions.Add(UI.Button("GROUND: engine navigation", self.GroundEngine));
+        self._actions.Add(UI.Button("GROUND: direct steering test", self.GroundDirect));
         self._actions.Add(UI.Button("CLOSE & RESTORE [F8/F9]", self.CloseMenu));
         self._panel.Add(self._actions);
         root.Add(self._panel);
@@ -206,6 +209,16 @@ addon AICadetsCommandPanel
         self.SendOrder("Resupply");
     }
 
+    function GroundEngine()
+    {
+        self.SendOrder("GroundEngine");
+    }
+
+    function GroundDirect()
+    {
+        self.SendOrder("GroundDirect");
+    }
+
     function MarkSupply()
     {
         if (!Network.IsMasterClient)
@@ -294,6 +307,9 @@ addon AICadetsCommandPanel
                 }
                 lines = lines + name + " [" + state + "] ack=" + Convert.ToString(ack) + "\n";
             }
+            build = PersistentData.GetProperty("AICadetsM2Build-" + name, "OLD/UNKNOWN - update controller");
+            profile = PersistentData.GetProperty("AICadetsM2Profile-" + name, "profile unavailable");
+            lines = lines + build + "\n" + profile + "\n";
             if (self._pendingSeq > 0 && ack == self._pendingSeq && (self._pendingScope == "all" || self._pendingScope == name))
             {
                 acked = acked + 1;
@@ -313,7 +329,7 @@ addon AICadetsCommandPanel
         }
         if (other > 0)
         {
-            lines = lines + "M1 demo bots: " + Convert.ToString(other) + " (not controllable)\n";
+            lines = lines + "M1 demo bots: " + Convert.ToString(other) + " (not controllable; disable M1 addons for M2 test)\n";
         }
         self._rosterLabel.Text = lines;
         if (self._pendingSeq > 0)

@@ -4,6 +4,8 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
+    _buildTag = "M2-navdiag-1";
+    GroundSteering = "Engine";
     ProfileName = "Steady scout";
     Persistence = 3;
     AerialPreference = 3;
@@ -132,7 +134,7 @@ addon AICadetsWaveCadet
         {
             return;
         }
-        if (self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
+        if ((self.GroundSteering != "Engine" && self.GroundSteering != "Direct") || self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
         {
             self.Terminate("failure", "invalid_behavior_profile");
             return;
@@ -1088,9 +1090,16 @@ addon AICadetsWaveCadet
         {
             stopRange = 4.0;
         }
-        self._cadet.MoveToTarget(self._target, stopRange);
+        if (self.GroundSteering == "Direct")
+        {
+            self._cadet.Idle();
+        }
+        else
+        {
+            self._cadet.MoveToTarget(self._target, stopRange);
+        }
         self.Enter("ApproachGround", "navigate_to_titan");
-        self.LogEvent("motion_command", "kind=ground_target fallback=" + Convert.ToString(fallback) + " range=" + Convert.ToString(stopRange) + " view_id=" + Convert.ToString(self._targetViewId) + " ai_state=" + self._cadet.GetAIState());
+        self.LogEvent("motion_command", "kind=ground_target driver=" + self.GroundSteering + " fallback=" + Convert.ToString(fallback) + " range=" + Convert.ToString(stopRange) + " view_id=" + Convert.ToString(self._targetViewId) + " ai_state=" + self._cadet.GetAIState());
     }
 
     function ApproachGroundStep()
@@ -1122,6 +1131,26 @@ addon AICadetsWaveCadet
                     return;
                 }
             }
+        }
+        if (self.GroundSteering == "Direct")
+        {
+            if (!self._cadet.Grounded)
+            {
+                self._cadet.Idle();
+                return;
+            }
+            toTarget = self._target.Position - self._cadet.Position;
+            direction = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+            start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
+            # A bounded diagnostic alternate, not a replacement navmesh planner.
+            if (Vector3.Distance(self._cadet.Position, self._target.Position) <= 4.0 || self.MapHit(start, start + direction * 6.0) != null)
+            {
+                self._cadet.Idle();
+                self._lastFailureReason = "direct_route_blocked_or_near";
+                self.Enter("Recover", "direct_route_blocked_or_near");
+                return;
+            }
+            self._cadet.Move(direction);
         }
         if (Time.GameTime >= self._groundNextCheck)
         {
@@ -1249,6 +1278,8 @@ addon AICadetsWaveCadet
             return;
         }
         key = self._cadetName;
+        PersistentData.SetProperty("AICadetsM2Build-" + key, self._buildTag);
+        PersistentData.SetProperty("AICadetsM2Profile-" + key, self.ProfileName + " P=" + Convert.ToString(self.Persistence) + " A=" + Convert.ToString(self.AerialPreference) + " R=" + Convert.ToString(self.RepositionSkill) + " ground=" + self.GroundSteering);
         PersistentData.SetProperty("AICadetsM2Heartbeat-" + key, Time.GameTime);
         PersistentData.SetProperty("AICadetsM2State-" + key, self._state);
         PersistentData.SetProperty("AICadetsM2Mode-" + key, self._orderMode);
@@ -1289,9 +1320,24 @@ addon AICadetsWaveCadet
             return;
         }
         order = PersistentData.GetProperty("AICadetsCmdMode", "Engage");
-        if (order != "Engage" && order != "Explore" && order != "Hold" && order != "Resupply")
+        if (order != "Engage" && order != "Explore" && order != "Hold" && order != "Resupply" && order != "GroundEngine" && order != "GroundDirect")
         {
             self.LogEvent("order_rejected", "seq=" + Convert.ToString(sequence) + " mode=" + order);
+            return;
+        }
+        if (order == "GroundEngine" || order == "GroundDirect")
+        {
+            self.GroundSteering = "Engine";
+            if (order == "GroundDirect")
+            {
+                self.GroundSteering = "Direct";
+            }
+            if (self._state == "ApproachGround")
+            {
+                self.StartGroundApproach(self._groundFallback);
+            }
+            self.LogEvent("ground_driver_changed", "driver=" + self.GroundSteering);
+            self.AcknowledgeOrder(sequence, order);
             return;
         }
         previousMode = self._orderMode;
@@ -1693,7 +1739,7 @@ addon AICadetsWaveCadet
     function LogEvent(event, details)
     {
         self._eventId = self._eventId + 1;
-        line = "id=" + Convert.ToString(self._eventId) + " mode=" + self._orderMode + " t=" + Convert.ToString(Time.GameTime) + " run=" + self._runId + " cadet=" + self._cadetName + " state=" + self._state + " target=" + Convert.ToString(self._targetViewId) + " event=" + event + " " + details;
+        line = "build=" + self._buildTag + " driver=" + self.GroundSteering + " id=" + Convert.ToString(self._eventId) + " mode=" + self._orderMode + " t=" + Convert.ToString(Time.GameTime) + " run=" + self._runId + " cadet=" + self._cadetName + " state=" + self._state + " target=" + Convert.ToString(self._targetViewId) + " event=" + event + " " + details;
         if (self._eventId <= 3000)
         {
             self._trace = self._trace + line + "\n";
@@ -1724,6 +1770,10 @@ addon AICadetsWaveCadet
     function Terminate(resultClass, reason)
     {
         self.StopODM();
+        if (Network.IsMasterClient && self._cadet != null && self._cadet.IsMine)
+        {
+            self._cadet.Idle();
+        }
         if (self._state == "Done")
         {
             return;

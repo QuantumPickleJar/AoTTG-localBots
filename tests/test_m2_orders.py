@@ -149,7 +149,7 @@ class OrdersTest(unittest.TestCase):
         panel.OnGameStart()
         panel.OpenMenu()
         buttons = [e for e in panel._actions.children if hasattr(e, "callback")]
-        self.assertEqual(len(buttons), 11)
+        self.assertEqual(len(buttons), 13)
         panel.SelectTwo()
         panel.Explore()
         self.assertEqual(data["AICadetsCmdScope"], "AICadetsM2-2")
@@ -234,6 +234,19 @@ class OrdersTest(unittest.TestCase):
         self.assertEqual(camera[-1], ("cursor", False))
         self.assertEqual(inputs[-1], True)
         self.assertIn(("lock", False), camera)
+
+    def test_version_profile_and_diagnostic_driver_request_are_visible(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        humans.append(NS(Name="AICadetsM2-1", IsAlive=True, IsMine=True))
+        data.update({"AICadetsM2Build-AICadetsM2-1": "M2-navdiag-1", "AICadetsM2Profile-AICadetsM2-1": "Steady scout P=3 A=3 R=3 ground=Engine"})
+        panel.OnGameStart()
+        panel.OpenMenu()
+        self.assertIn("M2-navdiag-1", panel._rosterLabel.Text)
+        self.assertIn("P=3", panel._rosterLabel.Text)
+        panel.GroundDirect()
+        self.assertEqual(data["AICadetsCmdMode"], "GroundDirect")
+        panel.GroundEngine()
+        self.assertEqual(data["AICadetsCmdMode"], "GroundEngine")
 
     def test_nonmaster_cannot_create_menu_or_issue_orders(self):
         panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller(master=False)
