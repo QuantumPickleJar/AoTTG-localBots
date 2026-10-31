@@ -50,7 +50,7 @@ addon AICadetsM2Watcher
             return;
         }
         self._start = Time.GameTime;
-        self._trace = "AICadetsM2Watcher v1 (based on validated M1 v3); times=GameTime; moving=0.2s; idle=2s; max_records=500; max=90s after discovery\n";
+        self._trace = "AICadetsM2Watcher v1 (based on validated M1 v3); times=GameTime; moving=0.5s; idle=2s; max_records=2000; max=300s after discovery\n";
         self.Record("watch_started");
         self.Flush();
         Game.Print("[AI Cadets M2 Watch] Recording to PersistentData/" + self._file);
@@ -69,7 +69,7 @@ addon AICadetsM2Watcher
             self._finished = true;
             return;
         }
-        if ((self._scout == null && Time.GameTime - self._start >= 45.0) || (self._scout != null && Time.GameTime - self._foundAt >= 90.0))
+        if ((self._scout == null && Time.GameTime - self._start >= 45.0) || (self._scout != null && Time.GameTime - self._foundAt >= 300.0))
         {
             self.Record("watch_timeout");
             self.Flush();
@@ -110,7 +110,7 @@ addon AICadetsM2Watcher
         if (self._scout.IsHookedLeft != self._lastHook || self._scout.IsHookingLeft != self._lastHooking || self._scout.Grounded != self._lastGrounded)
         {
             self.Snapshot("change");
-            self._nextSample = Time.GameTime + 0.2;
+            self._nextSample = Time.GameTime + 0.5;
             self._lastHook = self._scout.IsHookedLeft;
             self._lastHooking = self._scout.IsHookingLeft;
             self._lastGrounded = self._scout.Grounded;
@@ -155,7 +155,7 @@ addon AICadetsM2Watcher
                 }
                 kind = self.MotionEvent(self._lastHook, self._scout.IsHookedLeft, self._lastGrounded, self._scout.Grounded, hit != null);
                 self.Record(kind + " dt=" + Convert.ToString(Time.GameTime - self._previousTime) + " pre_pos=" + Convert.ToString(self._previousPosition) + " pos=" + Convert.ToString(position) + " pre_vel=" + Convert.ToString(self._previousVelocity) + " post_vel=" + Convert.ToString(velocity) + " delta_v=" + Convert.ToString(change) + " " + detail);
-                self._nextImpact = Time.GameTime + 0.2;
+                self._nextImpact = Time.GameTime + 1.0;
             }
         }
         self._previousVelocity = velocity;
@@ -169,7 +169,7 @@ addon AICadetsM2Watcher
         {
             return 2.0;
         }
-        return 0.2;
+        return 0.5;
     }
 
     function MotionEvent(wasHooked, hooked, wasGrounded, grounded, mapHit)
@@ -195,13 +195,13 @@ addon AICadetsM2Watcher
 
     function Record(event)
     {
-        if (self._records >= 500)
+        if (self._records >= 2000)
         {
             return;
         }
         self._records = self._records + 1;
         self._dirty = true;
-        if (self._records == 500)
+        if (self._records == 2000)
         {
             event = "record_limit_reached";
             self._finished = true;
@@ -220,7 +220,7 @@ addon AICadetsM2Watcher
         {
             hookpos = Convert.ToString(self._scout.LeftHookPosition);
         }
-        self.Record(kind + " cadet=" + self._scout.Name + " mode=" + PersistentData.GetProperty("AICadetsM2Mode-" + self._scout.Name, "unknown") + " state=" + PersistentData.GetProperty("AICadetsM2State-" + self._scout.Name, "unknown") + " ai_state=" + self._scout.GetAIState() + " pos=" + Convert.ToString(self._scout.Position) + " vel=" + Convert.ToString(self._scout.Velocity) + " gas=" + Convert.ToString(self._scout.CurrentGas) + " hooked=" + Convert.ToString(self._scout.IsHookedLeft) + " hooking=" + Convert.ToString(self._scout.IsHookingLeft) + " ready=" + Convert.ToString(self._scout.LeftHookReady) + " grounded=" + Convert.ToString(self._scout.Grounded) + " hookpos=" + hookpos);
+        self.Record(kind + " cadet=" + self._scout.Name + " status_time=" + Convert.ToString(PersistentData.GetProperty("AICadetsM2StatusTime-" + self._scout.Name, 0.0)) + " target=" + Convert.ToString(PersistentData.GetProperty("AICadetsM2TargetId-" + self._scout.Name, 0)) + " target_info=[" + PersistentData.GetProperty("AICadetsM2TargetInfo-" + self._scout.Name, "none") + "] nav=[" + PersistentData.GetProperty("AICadetsM2Navigation-" + self._scout.Name, "none") + "] mode=" + PersistentData.GetProperty("AICadetsM2Mode-" + self._scout.Name, "unknown") + " state=" + PersistentData.GetProperty("AICadetsM2State-" + self._scout.Name, "unknown") + " ai_state=" + self._scout.GetAIState() + " pos=" + Convert.ToString(self._scout.Position) + " vel=" + Convert.ToString(self._scout.Velocity) + " gas=" + Convert.ToString(self._scout.CurrentGas) + " hooked=" + Convert.ToString(self._scout.IsHookedLeft) + " hooking=" + Convert.ToString(self._scout.IsHookingLeft) + " ready=" + Convert.ToString(self._scout.LeftHookReady) + " grounded=" + Convert.ToString(self._scout.Grounded) + " hookpos=" + hookpos);
     }
 
     function Flush()

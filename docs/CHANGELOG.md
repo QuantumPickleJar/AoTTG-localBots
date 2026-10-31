@@ -1,3 +1,8 @@
+## M2 Watch1 follow-up (unreleased)
+
+- Documented observed Engage movement and Explore stall without inferring target-directed progress from position alone. One spawned cadet is current design; multi-cadet cooperation is not yet implemented.
+- Extended the optional watcher to five minutes / 2000 records and added per-cadet, timestamped target and navigation status. Publish a bounded per-cadet controller decision trace by default for the optional local watcher. The collector still needs live interpreter and performance validation.
+
 ## M2 Search & Destroy follow-up (unreleased)
 
 - Fixed a source-level pursuit loop that immediately cancelled ground fallback after an unsuccessful anchor search within the 68-unit ODM threshold. Added timed pursuit, stall-to-patrol recovery, and target ban. The actual cause of the reported live Engage failure remains unconfirmed.
@@ -6,7 +11,7 @@
 
 # Changelog
 
-## M2 Wave-mode combat prototype — unreleased, pending gameplay validation
+## M2 Wave-mode combat prototype â€” unreleased, pending gameplay validation
 
 - Add `addons/AICadetsWaveCadet.cl` as an isolated M2 prototype:
   - autonomous target acquisition from `Game.Titans`
@@ -21,7 +26,7 @@
   - `scripts/check_wave_m2.py`
   - `tests/test_wave_m2.py`
 
-## M1 reliability candidate + recovery preflight — unreleased, pending gameplay validation
+## M1 reliability candidate + recovery preflight â€” unreleased, pending gameplay validation
 
 - Preserve recovered baseline files unchanged:
   - `addons/AICadetsTraversal.cl` blob `4c1d23c628d18f98500d2c3f20f5d954c1ea17fd`
@@ -39,7 +44,7 @@
 - Add `tools/analyze_m1_run.py` and tests to correlate controller event logs with watcher traces.
 - Extend docs for A/B gameplay validation matrix, installation, rollback, and evidence classification.
 
-## M1 two-anchor experiment — unreleased, awaiting gameplay validation
+## M1 two-anchor experiment â€” unreleased, awaiting gameplay validation
 
 - Add separate `AICadetsTraversal.cl`; preserve the confirmed v0.1.1 probe byte-for-byte.
 - Two sequential left-hook cycles with a velocity-directed second search, finite deadlines, resource/ownership checks, collision abort and explicit cleanup.
@@ -47,13 +52,13 @@
 - Add pinned API-name/arity checks and source-driven mocked control-flow tests to CI; these do not establish in-game compatibility.
 - Add [manual acceptance and rollback instructions](M1_TESTING.md).
 
-## v0.1.1 — Costume lookup fix (2026-10-29)
+## v0.1.1 â€” Costume lookup fix (2026-10-29)
 
 - Fix the first in-game report (`AICadetsProbe.addon:57`): replace blank custom costume lookup `(0, "")` with bundled preset `(1, "Levi")`.
 - Add a static CI regression assertion against blank character presets.
 - Document that the engine wrapper may dereference null after failed costume resolution.
 - **Verified in-game (2026-10-29):** one Scout spawned, hook launched and attached, short gas burst, release, displacement 43.68573, gas used 0.4518585. Repeatability and multiplayer untested; movement, gas and hook logic unchanged from v0.1.0.
 
-## v0.1.0 — Initial probe
+## v0.1.0 â€” Initial probe
 
 - First experimental add-on that spawns a Scout, finds a surface, launches one ODM hook and logs results.

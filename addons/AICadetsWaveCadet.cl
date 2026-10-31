@@ -30,6 +30,7 @@ addon AICadetsWaveCadet
     SupplyRefillTimeout = 12.0;
     Diagnostics = true;
     SaveRunReport = false;
+    RecordDecisionTrace = true;
 
     _started = false;
     _spawnLatched = false;
@@ -1129,6 +1130,25 @@ addon AICadetsWaveCadet
         PersistentData.SetProperty("AICadetsM2State-" + key, self._state);
         PersistentData.SetProperty("AICadetsM2Mode-" + key, self._orderMode);
         PersistentData.SetProperty("AICadetsM2RunId-" + key, self._runId);
+        PersistentData.SetProperty("AICadetsM2StatusTime-" + key, Time.GameTime);
+        PersistentData.SetProperty("AICadetsM2TargetId-" + key, self._targetViewId);
+        targetInfo = "none";
+        if (self._target != null && self._target.IsAlive)
+        {
+            targetInfo = "pos=" + Convert.ToString(self._target.Position) + " nape=" + Convert.ToString(self._target.NapePosition) + " distance=" + Convert.ToString(Vector3.Distance(self._cadet.Position, self._target.NapePosition));
+        }
+        PersistentData.SetProperty("AICadetsM2TargetInfo-" + key, targetInfo);
+        groundGoal = "none";
+        traverseGoal = "none";
+        if (self._groundGoal != null)
+        {
+            groundGoal = Convert.ToString(self._groundGoal);
+        }
+        if (self._traverseGoal != null)
+        {
+            traverseGoal = Convert.ToString(self._traverseGoal);
+        }
+        PersistentData.SetProperty("AICadetsM2Navigation-" + key, "ground_goal=" + groundGoal + " fallback=" + Convert.ToString(self._groundFallback) + " traverse=" + self._traverseMode + " traverse_goal=" + traverseGoal + " order_seq=" + Convert.ToString(self._lastAppliedOrderSequence));
     }
 
     function ReadOrders()
@@ -1551,12 +1571,12 @@ addon AICadetsWaveCadet
     {
         self._eventId = self._eventId + 1;
         line = "id=" + Convert.ToString(self._eventId) + " mode=" + self._orderMode + " t=" + Convert.ToString(Time.GameTime) + " run=" + self._runId + " cadet=" + self._cadetName + " state=" + self._state + " target=" + Convert.ToString(self._targetViewId) + " event=" + event + " " + details;
-        if (self._eventId <= 1000)
+        if (self._eventId <= 3000)
         {
             self._trace = self._trace + line + "\n";
-            if (self.SaveRunReport)
+            if (self.RecordDecisionTrace || self.SaveRunReport)
             {
-                PersistentData.SetProperty("AICadetsM2Report", self._trace);
+                PersistentData.SetProperty("AICadetsM2Report-" + self._cadetName, self._trace);
             }
         }
         if (!self.Diagnostics || self._logCount >= 260)
@@ -1574,7 +1594,7 @@ addon AICadetsWaveCadet
             return;
         }
         self._reportSaved = true;
-        PersistentData.SetProperty("AICadetsM2Report", self._trace);
+        PersistentData.SetProperty("AICadetsM2Report-" + self._cadetName, self._trace);
         PersistentData.SaveToFile("AICadetsM2Report_" + self._runId, false);
     }
 

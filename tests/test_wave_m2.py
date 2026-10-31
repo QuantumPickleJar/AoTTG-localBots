@@ -615,14 +615,26 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.cadet.ai_state, "Idle")
         self.assertEqual(w.cadet.CurrentGas, 20.0)
 
+    def test_published_watcher_status_has_target_geometry_and_order(self):
+        w = World()
+        w.tick()
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        w.controller.PublishOrderStatus()
+        key = "AICadetsM2-1"
+        self.assertEqual(w.persistent["AICadetsM2TargetId-" + key], w.titan.ViewID)
+        self.assertIn("distance=", w.persistent["AICadetsM2TargetInfo-" + key])
+        self.assertIn("order_seq=", w.persistent["AICadetsM2Navigation-" + key])
+        self.assertEqual(w.persistent["AICadetsM2StatusTime-" + key], w.time.GameTime)
+
     def test_optional_report_is_bounded_and_available_to_passive_watcher(self):
         w = World()
         w.controller.SaveRunReport = True
         w.tick()
-        for i in range(1100):
+        for i in range(3100):
             w.controller.LogEvent("sample", "n=" + str(i))
-        self.assertEqual(w.controller._trace.count("\n"), 1000)
-        self.assertEqual(w.persistent["AICadetsM2Report"], w.controller._trace)
+        self.assertEqual(w.controller._trace.count("\n"), 3000)
+        self.assertEqual(w.persistent["AICadetsM2Report-AICadetsM2-1"], w.controller._trace)
 
     def test_retry_bans_target(self):
         w = World()
