@@ -4,9 +4,11 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-combat-arc-1";
+    _buildTag = "M2-combat-arc-2";
     GroundSteering = "Engine";
     # Experimental physical tether arc: Alternate, Left, Right, or Off.
+    PreferredTactic = "NapeStrike";
+    StrikeCommitRange = 5.0;
     CombatArcStyle = "Alternate";
     CombatArcSeconds = 1.5;
     AttackVerifySeconds = 1.0;
@@ -105,6 +107,8 @@ addon AICadetsWaveCadet
     _targetDamageByCadet = false;
     _targetKilled = false;
     _targetKillByCadet = false;
+    _combatTactic = "NapeStrike";
+    _orbitInterceptLogged = false;
     _attackStateObserved = false;
     _orbitAttempts = 0;
     _orbitSide = 1.0;
@@ -149,7 +153,7 @@ addon AICadetsWaveCadet
         {
             return;
         }
-        if ((self.GroundSteering != "Engine" && self.GroundSteering != "Direct") || (self.CombatArcStyle != "Alternate" && self.CombatArcStyle != "Left" && self.CombatArcStyle != "Right" && self.CombatArcStyle != "Off") || self.CombatArcSeconds < 0.3 || self.CombatArcSeconds > 2.0 || self.AttackVerifySeconds < 0.2 || self.AttackVerifySeconds > 3.0 || self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
+        if ((self.GroundSteering != "Engine" && self.GroundSteering != "Direct") || (self.CombatArcStyle != "Alternate" && self.CombatArcStyle != "Left" && self.CombatArcStyle != "Right" && self.CombatArcStyle != "Off") || self.StrikeCommitRange < 2.0 || self.StrikeCommitRange > self.AttackRange || self.CombatArcSeconds < 0.3 || self.CombatArcSeconds > 2.0 || self.AttackVerifySeconds < 0.2 || self.AttackVerifySeconds > 3.0 || self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
         {
             self.Terminate("failure", "invalid_behavior_profile");
             return;
@@ -556,6 +560,7 @@ addon AICadetsWaveCadet
         self._cadet.SetDisplayName(self._cadetName, true);
         self._cadet.Idle();
         self._direction = Vector3.Normalize(Vector3(host.Forward.X, 0.0, host.Forward.Z));
+        self.SelectCombatTactic(self.PreferredTactic);
         self.LogEvent("behavior_profile", "name=" + self.ProfileName + " persistence=" + Convert.ToString(self.Persistence) + " aerial=" + Convert.ToString(self.AerialPreference) + " reposition_skill=" + Convert.ToString(self.RepositionSkill));
         self.LogEvent("cadet_spawned", "name=" + self._cadetName + " view_id=" + Convert.ToString(self._cadet.ViewID));
         self.Enter("Regroup", "spawned");
@@ -680,6 +685,42 @@ addon AICadetsWaveCadet
         self.Enter("PlanApproach", "target_selected");
     }
 
+    # Capability boundary consumed by future personality/skill/style policy.
+    function TacticCapability(tactic)
+    {
+        if (tactic == "NapeStrike")
+        {
+            return "physical_experimental";
+        }
+        if (tactic == "FaceBlind" || tactic == "ArmDisable" || tactic == "AnkleCut")
+        {
+            return "definition_only";
+        }
+        return "unknown";
+    }
+
+    function SelectCombatTactic(tactic)
+    {
+        capability = self.TacticCapability(tactic);
+        if (capability != "physical_experimental")
+        {
+            self.LogEvent("tactic_unavailable", "requested=" + tactic + " capability=" + capability + " retained=" + self._combatTactic);
+            return false;
+        }
+        self._combatTactic = tactic;
+        self.LogEvent("tactic_selected", "tactic=" + tactic);
+        return true;
+    }
+
+    function EffectiveStrikeRange()
+    {
+        if (self.StrikeCommitRange < self.AttackRange)
+        {
+            return self.StrikeCommitRange;
+        }
+        return self.AttackRange;
+    }
+
     function PlanApproach()
     {
         if (!self.RefreshTarget())
@@ -690,7 +731,7 @@ addon AICadetsWaveCadet
         nape = self._target.NapePosition;
         delta = nape - self._cadet.Position;
         self._lastDistanceToNape = delta.Magnitude;
-        if (self._lastDistanceToNape <= self.AttackRange && self._cadet.CurrentGas >= self.MinAttackGas)
+        if (self._lastDistanceToNape <= self.EffectiveStrikeRange() && self._cadet.CurrentGas >= self.MinAttackGas)
         {
             self.Enter("AttackSetup", "attack_window");
             return;
@@ -757,6 +798,7 @@ addon AICadetsWaveCadet
         self._orbitAttempts = self._orbitAttempts + 1;
         self._targetTraverseCount = self._targetTraverseCount + 1;
         self._orbitStartRadial = null;
+        self._orbitInterceptLogged = false;
         self._cadet.Idle();
         if (self._cadet.Grounded)
         {
@@ -829,7 +871,19 @@ addon AICadetsWaveCadet
         direction = flat.Normalized;
         tangent = Vector3(0.0 - direction.Z, 0.0, direction.X) * self._orbitSide;
         self._cadet.AimAt(self._target.NapePosition);
-        self._cadet.Move(Vector3.Normalize(tangent - direction * 0.2));
+        inward = 0.2;
+        tangential = 1.0;
+        if (radial.Magnitude <= self.AttackRange)
+        {
+            inward = 0.8;
+            tangential = 0.35;
+            if (!self._orbitInterceptLogged)
+            {
+                self._orbitInterceptLogged = true;
+                self.LogEvent("orbit_intercept", "distance=" + Convert.ToString(radial.Magnitude) + " commit_range=" + Convert.ToString(self.EffectiveStrikeRange()));
+            }
+        }
+        self._cadet.Move(Vector3.Normalize(tangent * tangential - direction * inward));
     }
 
     function LogOrbitEnd(reason)
@@ -876,7 +930,7 @@ addon AICadetsWaveCadet
             return false;
         }
         nape = self._target.NapePosition;
-        if (Vector3.Distance(self._cadet.Position, nape) > self.AttackRange || self.MapHit(self._cadet.Position, nape) != null)
+        if (Vector3.Distance(self._cadet.Position, nape) > self.EffectiveStrikeRange() || self.MapHit(self._cadet.Position, nape) != null)
         {
             return false;
         }
@@ -1104,7 +1158,7 @@ addon AICadetsWaveCadet
         nowDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
         progress = self._trStartDistance - nowDistance;
         self.LogEvent("progress", "delta=" + Convert.ToString(progress) + " dist=" + Convert.ToString(nowDistance));
-        if (self._trOutcome == "completed" && nowDistance <= self.AttackRange && self._cadet.CurrentGas >= self.MinAttackGas)
+        if (self._trOutcome == "completed" && nowDistance <= self.EffectiveStrikeRange() && self._cadet.CurrentGas >= self.MinAttackGas)
         {
             self.Enter("AttackSetup", "traverse_attack_window");
             return;
@@ -1136,7 +1190,7 @@ addon AICadetsWaveCadet
             return;
         }
         distance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
-        if (distance > self.AttackRange + 2.0)
+        if (distance > self.EffectiveStrikeRange() + 1.0)
         {
             self.Enter("PlanApproach", "attack_window_lost");
             return;
@@ -1244,6 +1298,42 @@ addon AICadetsWaveCadet
         return budget;
     }
 
+    function EscapeRouteClear(goal)
+    {
+        return self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), goal + Vector3(0.0, 1.0, 0.0)) == null && self.MapHit(self._cadet.Position + Vector3(0.0, 0.3, 0.0), goal + Vector3(0.0, 0.3, 0.0)) == null;
+    }
+
+    function ChooseWallEscape(direction, right)
+    {
+        for (candidate in Range(0, 5, 1))
+        {
+            goal = self._cadet.Position + direction * 8.0 + right * (8.0 + self.RepositionSkill * 3.0);
+            if (candidate == 1)
+            {
+                goal = self._cadet.Position + direction * 8.0 - right * (8.0 + self.RepositionSkill * 3.0);
+            }
+            elif (candidate == 2)
+            {
+                goal = self._cadet.Position + right * 12.0;
+            }
+            elif (candidate == 3)
+            {
+                goal = self._cadet.Position - right * 12.0;
+            }
+            elif (candidate == 4)
+            {
+                goal = self._cadet.Position - direction * 12.0;
+            }
+            if (self.EscapeRouteClear(goal))
+            {
+                self._groundGoal = goal;
+                self.LogEvent("escape_route", "candidate=" + Convert.ToString(candidate) + " goal=" + Convert.ToString(goal));
+                return true;
+            }
+        }
+        return false;
+    }
+
     function RecoverGroundStep()
     {
         if (!self.RefreshTarget())
@@ -1255,7 +1345,15 @@ addon AICadetsWaveCadet
         if (Vector3.Distance(self._cadet.Position, self._groundGoal) <= 4.0 || Time.GameTime - self._stateStart >= 6.0)
         {
             self._cadet.Idle();
-            self.LogEvent("reposition_end", "moved=" + Convert.ToString(Vector3.Distance(self._cadet.Position, self._groundStartPosition)));
+            moved = Vector3.Distance(self._cadet.Position, self._groundStartPosition);
+            self.LogEvent("reposition_end", "moved=" + Convert.ToString(moved));
+            if (moved < 2.0)
+            {
+                self._bannedTargetViewId = self._targetViewId;
+                self._banUntil = Time.GameTime + 15.0;
+                self.BeginObserve("escape_no_displacement");
+                return;
+            }
             self.Enter("PlanApproach", "reposition_retry_same_target");
         }
     }
@@ -1280,16 +1378,11 @@ addon AICadetsWaveCadet
             {
                 right = right * -1.0;
             }
-            self._groundGoal = self._cadet.Position + direction * 8.0 + right * (8.0 + self.RepositionSkill * 3.0);
-            if (self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), self._groundGoal + Vector3(0.0, 1.0, 0.0)) != null)
-            {
-                self._groundGoal = self._cadet.Position + direction * 8.0 - right * (8.0 + self.RepositionSkill * 3.0);
-            }
-            if (self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), self._groundGoal + Vector3(0.0, 1.0, 0.0)) != null)
+            if (!self.ChooseWallEscape(direction, right))
             {
                 self._bannedTargetViewId = self._targetViewId;
                 self._banUntil = Time.GameTime + 15.0;
-                self.LogEvent("reposition_blocked", "reason=both_corridors_blocked target=" + Convert.ToString(self._targetViewId));
+                self.LogEvent("reposition_blocked", "reason=all_escape_corridors_blocked target=" + Convert.ToString(self._targetViewId));
                 self.BeginObserve("reposition_corridors_blocked");
                 return;
             }
@@ -1461,7 +1554,7 @@ addon AICadetsWaveCadet
             return;
         }
         distance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
-        if ((!self._groundFallback && distance <= self.GroundApproachThreshold) || (self._groundFallback && (distance <= self.AttackRange || Time.GameTime - self._groundMovementStartedAt >= self.GroundProgressWindow * 3.0)))
+        if ((!self._groundFallback && distance <= self.GroundApproachThreshold) || (self._groundFallback && (distance <= self.EffectiveStrikeRange() || Time.GameTime - self._groundMovementStartedAt >= self.GroundProgressWindow * 3.0)))
         {
             self._cadet.Idle();
             self.LogEvent("motion_segment_done", "kind=ground_target fallback=" + Convert.ToString(self._groundFallback) + " distance=" + Convert.ToString(distance));
@@ -1639,7 +1732,7 @@ addon AICadetsWaveCadet
         }
         key = self._cadetName;
         PersistentData.SetProperty("AICadetsM2Build-" + key, self._buildTag);
-        PersistentData.SetProperty("AICadetsM2Profile-" + key, self.ProfileName + " P=" + Convert.ToString(self.Persistence) + " A=" + Convert.ToString(self.AerialPreference) + " R=" + Convert.ToString(self.RepositionSkill) + " ground=" + self.GroundSteering + " arc=" + self.CombatArcStyle);
+        PersistentData.SetProperty("AICadetsM2Profile-" + key, self.ProfileName + " P=" + Convert.ToString(self.Persistence) + " A=" + Convert.ToString(self.AerialPreference) + " R=" + Convert.ToString(self.RepositionSkill) + " ground=" + self.GroundSteering + " arc=" + self.CombatArcStyle + " tactic=" + self._combatTactic);
         PersistentData.SetProperty("AICadetsM2Heartbeat-" + key, Time.GameTime);
         PersistentData.SetProperty("AICadetsM2State-" + key, self._state);
         PersistentData.SetProperty("AICadetsM2Mode-" + key, self._orderMode);

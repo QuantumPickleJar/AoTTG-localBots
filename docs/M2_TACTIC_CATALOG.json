@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "tactics": [
+    {"id": "NapeStrike", "capability": "physical_experimental", "intent": "finish", "target_geometry": "Titan.NapePosition", "approaches": ["map_odm", "left_tether_arc", "right_tether_arc", "close_intercept"], "requirements": ["exact_living_target", "clear_map_route", "gas_reserve", "close_strike_window"], "evidence": ["attack_state_observed", "target_damaged_by_cadet", "titan_die_by_cadet"], "live_status": "attack_state_observed_without_damage"},
+    {"id": "FaceBlind", "capability": "definition_only", "intent": "disrupt_vision", "target_geometry": null, "geometry_notes": "HeadMount is documented; a mount origin is not a verified face hurtbox", "approaches": ["front_oblique_pass"], "requirements": ["verified_face_hurtbox", "verified_physical_blade_effect"], "evidence": ["independent_blind_state_observation"], "live_status": "unimplemented"},
+    {"id": "ArmDisable", "capability": "definition_only", "intent": "reduce_reach", "target_geometry": null, "approaches": ["outer_flank_pass"], "requirements": ["verified_arm_hurtbox", "verified_game_support_for_limb_disable"], "evidence": ["independent_limb_state_observation"], "live_status": "unimplemented"},
+    {"id": "AnkleCut", "capability": "definition_only", "intent": "reduce_mobility", "target_geometry": null, "approaches": ["low_rear_pass"], "requirements": ["verified_ankle_hurtbox", "verified_physical_blade_effect"], "evidence": ["independent_cripple_state_observation"], "live_status": "unimplemented"}
+  ]
+}

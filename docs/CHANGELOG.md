@@ -1,3 +1,9 @@
+## M2 combat-arc-2 (unreleased)
+
+- Watch13/14 show four observed attack states/animations and no observed damage. Add a closer, tethered inward intercept before strike input; the range is experimental and needs live calibration.
+- Extend checked ground escapes to sideways/backward routes and pause after a no-displacement escape.
+- Define NapeStrike, FaceBlind, ArmDisable and AnkleCut capabilities with a runtime selection gate and catalog. Only nape strike is physically implemented; no blind/cripple/limb outcome is manufactured. Character-module wiring is documented in M2_CHARACTER_POLICY.md.
+
 ## M2 combat-arc-1 (unreleased)
 
 - Watch6 records a real attack input request but no observed damage by the immediate check; the later Titan death was attributed to the human player. Hook retraction was causing premature target abandonment after forward progress.

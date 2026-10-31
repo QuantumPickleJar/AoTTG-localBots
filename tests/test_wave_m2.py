@@ -561,6 +561,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "RecoverGround")
         self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
         self.assertEqual(w.cadet.ai_state, "MoveTo")
+        w.cadet.Position = w.controller._groundGoal
         w.tick(6.1)
         self.assertEqual(w.controller._state, "PlanApproach")
         w.controller._targetRecoveries = w.controller.RecoveryBudget()
@@ -772,7 +773,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-1")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-2")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1095,7 +1096,7 @@ class WaveM2Tests(unittest.TestCase):
         w.cadet.IsHookedLeft = True
         w.cadet.LeftHookPosition = w.titan.NapePosition
         w.tick()
-        w.cadet.Position = Vector(0, 8, 35)
+        w.cadet.Position = Vector(0, 8, 38)
         w.tick()
         self.assertEqual(w.controller._state, "AttackSetup")
         self.assertTrue(any("orbit_end" in x and "reason=attack_window" in x and "radial_cross=" in x for x in w.messages))
@@ -1193,6 +1194,61 @@ class WaveM2Tests(unittest.TestCase):
         w.tick(1.1)
         self.assertTrue(any("confirmed_damage=true" in x and "by_cadet=False" in x for x in w.messages))
         self.assertEqual(w.controller._state, "Retreat")
+
+    def test_close_intercept_keeps_tether_until_strike_commit_range(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.tick()
+        w.cadet.Position = Vector(0, 8, 34)
+        w.tick()
+        self.assertEqual(w.controller._state, "OrbitSwing")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+        movement = [x[1] for x in w.cadet.calls if x[0] == "move"][-1]
+        self.assertGreater(movement.Z, 0.8)
+        self.assertTrue(any("orbit_intercept" in x for x in w.messages))
+        w.cadet.Position = Vector(0, 8, 38)
+        w.tick()
+        self.assertEqual(w.controller._state, "AttackSetup")
+
+    def test_wall_escape_can_back_away_when_forward_and_sides_are_blocked(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 100)
+        w.titan.NapePosition = Vector(4, 8, 100)
+        w.controller.AcquireTarget()
+        w.hit = lambda start, end, layer: NS(Point=end, Distance=2) if end.Z >= start.Z else None
+        w.controller.Enter("Recover", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertLess(w.controller._groundGoal.Z, w.cadet.Position.Z)
+        self.assertTrue(any("escape_route candidate=4" in x for x in w.messages))
+        self.assertTrue(any(x[0] == "move_to" for x in w.cadet.calls))
+
+    def test_failed_escape_pauses_instead_of_repeating_same_route(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test")
+        w.tick()
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+        self.assertTrue(any("escape_no_displacement" in x for x in w.messages))
+
+    def test_tactic_catalog_matches_runtime_capabilities_and_fails_closed(self):
+        import json
+        catalog = json.loads((Path(__file__).resolve().parents[1] / "docs/M2_TACTIC_CATALOG.json").read_text())
+        w = World()
+        w.tick()
+        for tactic in catalog["tactics"]:
+            self.assertEqual(w.controller.TacticCapability(tactic["id"]), tactic["capability"])
+            accepted = w.controller.SelectCombatTactic(tactic["id"])
+            self.assertEqual(accepted, tactic["capability"] == "physical_experimental")
+        self.assertEqual(w.controller._combatTactic, "NapeStrike")
+        self.assertFalse(w.controller.SelectCombatTactic("UnverifiedTactic"))
+        self.assertEqual(w.controller._combatTactic, "NapeStrike")
 
     def test_retry_bans_target(self):
         w = World()
