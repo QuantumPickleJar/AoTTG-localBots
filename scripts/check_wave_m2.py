@@ -28,6 +28,7 @@ def validate(source):
     receivers.update(
         {
             "self._cadet": "Human",
+            "self._cadet.Position": "Vector3",
             "self._cadet.Forward": "Vector3",
             "self._cadet.Velocity": "Vector3",
             "station": "MapObject",
@@ -44,6 +45,7 @@ def validate(source):
             "targetHit": "Titan",
             "killer": "Character",
             "self._target": "Titan",
+            "self._target.Position": "Vector3",
             "self._target.Forward": "Vector3",
             "hit": "LineCastHitResult",
             "editorHit": "LineCastHitResult",
@@ -55,6 +57,7 @@ def validate(source):
             "baseDir": "Vector3",
             "direction": "Vector3",
             "flatTarget": "Vector3",
+            "Vector3(delta.X, 0.0, delta.Z)": "Vector3",
             "toTarget": "Vector3",
             "behindDir": "Vector3",
             "delta": "Vector3",
@@ -131,7 +134,9 @@ def main():
     addon = ROOT / "addons"
     validate((addon / "AICadetsWaveCadet.cl").read_text())
     # Preserve known M0 probe bytes.
-    probe_data = (addon / "AICadetsProbe.cl").read_bytes()
+    # Git may check this file out with CRLF on Windows; compare the stable
+    # repository bytes so line-ending conversion does not look like an M0 edit.
+    probe_data = (addon / "AICadetsProbe.cl").read_bytes().replace(b"\r\n", b"\n")
     probe_sha = hashlib.sha1(b"blob " + str(len(probe_data)).encode() + b"\0" + probe_data).hexdigest()
     assert probe_sha == "219fc9ab810998204c353833de868231a8736134"
     print("M2 wave static checks passed.")

@@ -79,7 +79,7 @@ def validate(source):
 
 
 def main():
-    baseline = (ROOT / "addons/AICadetsProbe.cl").read_bytes()
+    baseline = (ROOT / "addons/AICadetsProbe.cl").read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha1(b"blob " + str(len(baseline)).encode() + b"\0" + baseline).hexdigest() == BASELINE_GIT_BLOB, "Known-good v0.1.1 probe changed"
     validate((ROOT / "addons/AICadetsTraversal.cl").read_text())
     print("Pinned API names/arity, structure, bounded candidate count and baseline hash passed.")

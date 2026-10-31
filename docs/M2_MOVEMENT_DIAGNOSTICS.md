@@ -1,5 +1,7 @@
 # M2 movement dispatch verification: City 1 / Training / Waves
 
+> Current Pass 1 findings supersede the older driver/arrival descriptions in this file. See [M2_LOCOMOTION_STABILIZATION.md](M2_LOCOMOTION_STABILIZATION.md) for Watch20 evidence, reachable ground objectives, command ownership, and the current in-game checklist.
+
 ## Field-test update and remaining evidence
 
 The user reports that Explore physically moved in-game, and that F8 orders and control restoration work. This is gameplay evidence for Explore, but the available M2 controller trace and matching video were not located, so the specific successful call (ODM versus `MoveTo`) has not been isolated. The installed controller matches the branch baseline. Existing local Watch0â€“7 files identify M1, not M2. Do not treat them as evidence of M2 movement. The current Player log was empty and the previous log contained no M2 events.

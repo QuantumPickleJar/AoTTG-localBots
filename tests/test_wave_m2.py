@@ -257,8 +257,9 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         w.tick()
         self.assertEqual(w.controller._state, "ApproachGround")
-        self.assertTrue(any(action[0] == "move_to_target" for action in w.cadet.calls))
-        # Mock physical progress from the engine's continuing MoveToTarget state.
+        self.assertTrue(any(action[0] == "move" for action in w.cadet.calls))
+        self.assertFalse(any(action[0] == "move_to_target" for action in w.cadet.calls))
+        # Mock physical progress from the continuing planar steering request.
         w.cadet.Position = Vector(0, 0, 570)
         w.tick()
         self.assertEqual(w.controller._state, "PlanApproach")
@@ -266,6 +267,7 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._state, "TraverseAttach")
         self.assertTrue(any(action[0] == "launch" for action in w.cadet.calls))
+        self.assertTrue(any("motion_cancelled" in m and "reason=state_exit_PlanApproach" in m for m in w.messages))
 
     def test_empty_roster_is_reported_and_throttled(self):
         w = World()
@@ -344,8 +346,9 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         w.tick()
         self.assertEqual(w.controller._state, "ApproachGround")
-        self.assertEqual(w.cadet.ai_state, "MoveTo")
-        self.assertTrue(any(call[0] == "move_to_target" for call in w.cadet.calls))
+        self.assertEqual(w.cadet.ai_state, "Idle")
+        self.assertTrue(any(call[0] == "move" for call in w.cadet.calls))
+        self.assertFalse(any(call[0] == "move_to_target" for call in w.cadet.calls))
         self.assertTrue(any("motion_command" in m and "kind=ground_target" in m for m in w.messages))
         w.tick(5.1)
         self.assertEqual(w.controller._state, "ApproachGround")
@@ -365,6 +368,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "PlanApproach")
         self.assertEqual(w.cadet.ai_state, "Idle")
         self.assertTrue(any("motion_segment_done" in m for m in w.messages))
+        self.assertTrue(any("motion_cancelled" in m and "reason=state_exit_PlanApproach" in m for m in w.messages))
 
     def test_specific_order_does_not_control_unselected_cadet(self):
         w = World()
@@ -550,10 +554,11 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         w.tick()  # no map hit, ground fallback inside hook radius
         self.assertEqual(w.controller._state, "ApproachGround")
-        self.assertEqual(w.cadet.calls[-1][0], "move_to_target")
+        self.assertEqual(w.cadet.calls[-1][0], "move")
+        self.assertFalse(any(call[0] == "move_to_target" for call in w.cadet.calls))
         w.tick(1.0)
         self.assertEqual(w.controller._state, "ApproachGround")
-        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        self.assertEqual(w.cadet.ai_state, "Idle")
         w.tick(4.1)
         w.tick(5.1)
         self.assertEqual(w.controller._state, "Recover")
@@ -664,15 +669,18 @@ class WaveM2Tests(unittest.TestCase):
         self.assertTrue(any(x[0] == "launch" for x in w.cadet.calls))
         self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
 
-    def test_empty_travel_probe_does_not_cancel_ground_movement(self):
+    def test_empty_travel_probe_keeps_reissuing_direct_ground_movement(self):
         w = World()
         w.tick()
         w.controller.AcquireTarget()
         w.controller.StartGroundApproach(True)
-        before = list(w.cadet.calls)
+        before_moves = len([call for call in w.cadet.calls if call[0] == "move"])
         w.tick(1.1)
-        self.assertEqual(w.cadet.calls, before)
-        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        after_moves = len([call for call in w.cadet.calls if call[0] == "move"])
+        self.assertEqual(after_moves, before_moves + 1)
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertEqual(w.cadet.ai_state, "Idle")
+        self.assertFalse(any(call[0] == "move_to_target" for call in w.cadet.calls))
 
     def test_sideways_displacement_is_not_target_progress(self):
         w = World()
@@ -766,14 +774,14 @@ class WaveM2Tests(unittest.TestCase):
         w.controller.Enter("Hold", "test")
         w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "GroundDirect", "AICadetsCmdScope": "AICadetsM2-2"})
         w.tick()
-        self.assertEqual(w.controller.GroundSteering, "Engine")
+        self.assertEqual(w.controller.GroundSteering, "Direct")
         w.persistent.update({"AICadetsCmdSequence": 2, "AICadetsCmdScope": "all"})
         w.tick()
         self.assertEqual(w.controller.GroundSteering, "Direct")
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-5")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -790,7 +798,20 @@ class WaveM2Tests(unittest.TestCase):
         w.controller.Terminate("safe_termination", "test")
         self.assertEqual(w.cadet.calls[-1], ("idle",))
 
-    def test_circle_path_triggers_stationary_observation_and_hold_interrupts(self):
+    def test_hold_cancels_owned_ground_motion_on_state_exit(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertEqual(w.cadet.ai_state, "Idle")
+        self.assertTrue(any("motion_cancelled" in m and "reason=state_exit_Hold" in m and "request=Human.Idle" in m and "ai_state_after=Idle" in m for m in w.messages))
+
+    def test_circle_path_uses_bounded_recovery_before_any_target_ban_and_hold_interrupts(self):
         w = World()
         w.tick()
         w.titan.Position = Vector(4, 0, 600)
@@ -801,9 +822,12 @@ class WaveM2Tests(unittest.TestCase):
             w.cadet.Position = position
             w.tick(1.0)
         w.tick(1.1)
-        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(w.controller._state, "Recover")
         self.assertEqual(w.cadet.ai_state, "Idle")
-        self.assertTrue(any("circling_detected" in x for x in w.messages))
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertEqual(w.controller._bannedTargetViewId, 0)
+        self.assertTrue(any("circling_detected" in x and "action=bounded_recovery" in x for x in w.messages))
+        self.assertTrue(any("motion_cancelled" in x and "reason=state_exit_Recover" in x and "request=Human.Idle" in x for x in w.messages))
         w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
         w.tick()
         w.tick(7.0)
@@ -1410,7 +1434,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertNotIn(("attack", True), w.cadet.calls)
 
-    def test_circle_temporarily_bans_target_to_avoid_immediate_repeat(self):
+    def test_circle_does_not_ban_target_before_bounded_recovery(self):
         w = World()
         w.tick()
         w.titan.Position = Vector(4, 0, 600)
@@ -1421,12 +1445,102 @@ class WaveM2Tests(unittest.TestCase):
             w.cadet.Position = position
             w.tick(1.0)
         w.tick(1.1)
-        self.assertEqual(w.controller._state, "Observe")
-        self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
-        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertEqual(w.controller._bannedTargetViewId, 0)
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_ground_fallback_uses_projected_goal_and_planar_arrival_despite_nape_height(self):
+        w = World()
         w.tick()
-        self.assertEqual(w.controller._state, "Explore")
-        self.assertIsNone(w.controller._target)
+        w.cadet.Position = Vector(4, 10, 0)
+        w.titan.Position = Vector(4, 10, 100)
+        w.titan.NapePosition = Vector(4, 22.5, 100)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(True)
+        self.assertEqual(w.controller._groundGoal, Vector(4, 10, 100))
+        self.assertFalse(any(call[0] == "move_to_target" for call in w.cadet.calls))
+        self.assertTrue(any("arrival_radius=18.0" in m and "request=Human.Move" in m and "acceptance=not_exposed" in m for m in w.messages))
+
+        # The ground arrival is reachable in XZ even though the nape remains
+        # more than the 5-unit strike range above the cadet.
+        w.cadet.Position = Vector(4, 10, 83)
+        nape_distance = Vector.Distance(w.cadet.Position, w.titan.NapePosition)
+        self.assertGreater(nape_distance, w.controller.EffectiveStrikeRange())
+        w.tick(0.02)
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertTrue(any("motion_segment_done" in m and "planar_distance=17" in m and "arrival_radius=18" in m for m in w.messages))
+
+    def test_engine_comparison_also_uses_a_reachable_ground_goal(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = Vector(4, 10, 0)
+        w.titan.Position = Vector(4, 10, 100)
+        w.titan.NapePosition = Vector(4, 22.5, 100)
+        w.controller.GroundSteering = "Engine"
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(True)
+        call = [c for c in w.cadet.calls if c[0] == "move_to"][-1]
+        self.assertEqual(call[1], Vector(4, 10, 100))
+        self.assertEqual(call[2], 18.0)
+        self.assertFalse(any(c[0] == "move_to_target" for c in w.cadet.calls))
+        self.assertTrue(any("request=Human.MoveTo" in m and "api_return=void" in m and "ai_state_after=MoveTo" in m for m in w.messages))
+
+    def test_engine_ground_goal_refreshes_when_titan_moves(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = Vector(4, 10, 0)
+        w.titan.Position = Vector(4, 10, 100)
+        w.titan.NapePosition = Vector(4, 22.5, 100)
+        w.controller.GroundSteering = "Engine"
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        before = len([c for c in w.cadet.calls if c[0] == "move_to"])
+
+        w.titan.Position = Vector(4, 10, 110)
+        w.titan.NapePosition = Vector(4, 22.5, 110)
+        w.tick(0.02)
+
+        moves = [c for c in w.cadet.calls if c[0] == "move_to"]
+        self.assertEqual(len(moves), before + 1)
+        self.assertEqual(moves[-1][1], Vector(4, 10, 110))
+
+    def test_direct_ground_steering_is_repeatable_for_stationary_titan_and_closes_planarly(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 10, 100)
+        w.titan.NapePosition = Vector(4, 22.5, 100)
+        w.cadet.Position = Vector(4, 10, 0)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        first = [c[1] for c in w.cadet.calls if c[0] == "move"][-1]
+        for _ in range(3):
+            w.tick(0.02)
+        repeated = [c[1] for c in w.cadet.calls if c[0] == "move"][-3:]
+        self.assertTrue(all(direction == first for direction in repeated))
+
+        w.cadet.Position = Vector(4, 10, 10)
+        w.tick(5.0)
+        progress = [m for m in w.messages if "event=pursuit_progress" in m][-1]
+        self.assertIn("distance=90", progress)
+        self.assertIn("target_gain=10", progress)
+        self.assertEqual(w.controller._groundStalledChecks, 0)
+
+    def test_moving_titan_distance_is_measured_relative_to_its_ground_position(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 10, 100)
+        w.titan.NapePosition = Vector(4, 22.5, 100)
+        w.cadet.Position = Vector(4, 10, 0)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        w.cadet.Position = Vector(4, 10, 10)
+        w.titan.Position = Vector(4, 10, 110)
+        w.titan.NapePosition = Vector(4, 22.5, 110)
+        w.tick(5.0)
+        progress = [m for m in w.messages if "event=pursuit_progress" in m][-1]
+        self.assertIn("distance=100", progress)
+        self.assertIn("target_gain=0", progress)
+        self.assertEqual(w.controller._groundStalledChecks, 0)
 
     def test_retry_bans_target(self):
         w = World()

@@ -4,8 +4,10 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-combat-arc-5";
-    GroundSteering = "Engine";
+    _buildTag = "M2-locomotion-1";
+    # Ground Titan pursuit uses explicit planar steering. The native MoveTo
+    # angle offsets are retained only as an opt-in comparison driver.
+    GroundSteering = "Direct";
     # Experimental physical tether arc: Alternate, Left, Right, or Off.
     PreferredTactic = "NapeStrike";
     StrikeCommitRange = 5.0;
@@ -35,6 +37,8 @@ addon AICadetsWaveCadet
     ExploreScanSeconds = 2.5;
     ExploreGroundSeconds = 9.0;
     GroundApproachThreshold = 68.0;
+    GroundFallbackArrivalRadius = 18.0;
+    GroundGoalRefreshSeconds = 1.0;
     GroundProgressWindow = 5.0;
     ResupplyTriggerGas = 38.0;
     SupplyArrivalRange = 2.0;
@@ -65,6 +69,10 @@ addon AICadetsWaveCadet
     _exploreStartPosition = null;
     _exploreFailures = 0;
     _groundGoal = null;
+    _groundCommandGoal = null;
+    _groundCommandDriver = "";
+    _groundControlActive = false;
+    _groundNextCommandAt = 0.0;
     _groundStartPosition = null;
     _groundProgressPosition = null;
     _groundPreviousTargetDistance = 0.0;
@@ -751,7 +759,7 @@ addon AICadetsWaveCadet
             return;
         }
         goal = self.CurrentApproachGoal();
-        if (self._lastDistanceToNape > self.GroundApproachThreshold && self._cadet.Grounded)
+        if (self._cadet.Grounded && self.GroundDistanceToTarget() > self.GroundApproachThreshold)
         {
             self.StartGroundApproach(false);
             return;
@@ -1578,10 +1586,112 @@ addon AICadetsWaveCadet
         self.ExploreGroundMove();
     }
 
-    # Human.Move is a documented ordinary controller action; use it only when
-    # grounded and a short forward map probe does not report a wall.
-    # Ground navigation uses engine's persistent AI MoveTo state. Do not
-    # invoke Idle or a new hook search until the route completes or times out.
+    # Ground combat navigation owns its input until arrival, obstruction,
+    # interruption, or measured lack of progress.
+    function GroundGoalPosition()
+    {
+        # Ground navigation uses the Titan base on the cadet's current floor.
+        # A nape is an ODM/strike point, not a reachable grounded waypoint.
+        return Vector3(self._target.Position.X, self._cadet.Position.Y, self._target.Position.Z);
+    }
+
+    function GroundDistanceToTarget()
+    {
+        delta = self._target.Position - self._cadet.Position;
+        return Vector3(delta.X, 0.0, delta.Z).Magnitude;
+    }
+
+    function GroundBearingToTarget()
+    {
+        delta = self._target.Position - self._cadet.Position;
+        return Vector3.Normalize(Vector3(delta.X, 0.0, delta.Z));
+    }
+
+    function GroundArrivalRange()
+    {
+        if (self._groundFallback)
+        {
+            return self.GroundFallbackArrivalRadius;
+        }
+        return self.GroundApproachThreshold;
+    }
+
+    function CancelGroundControl(reason)
+    {
+        if (!self._groundControlActive)
+        {
+            return;
+        }
+        aiState = "not_owned";
+        position = "unavailable";
+        request = "not_dispatched";
+        apiReturn = "not_called";
+        if (self._cadet != null)
+        {
+            position = Convert.ToString(self._cadet.Position);
+        }
+        if (Network.IsMasterClient && self._cadet != null && self._cadet.IsMine)
+        {
+            self._cadet.Idle();
+            aiState = self._cadet.GetAIState();
+            request = "Human.Idle";
+            apiReturn = "void";
+        }
+        self.LogEvent("motion_cancelled", "kind=ground_target driver=" + self._groundCommandDriver + " reason=" + reason + " request=" + request + " api_return=" + apiReturn + " position=" + position + " ai_state_after=" + aiState);
+        self._groundControlActive = false;
+        self._groundCommandGoal = null;
+        self._groundCommandDriver = "";
+    }
+
+    function IssueGroundCommand()
+    {
+        self._groundGoal = self.GroundGoalPosition();
+        direction = self.GroundBearingToTarget();
+        distance = self.GroundDistanceToTarget();
+        arrivalRange = self.GroundArrivalRange();
+        if (self.GroundSteering == "Direct")
+        {
+            if (!self._cadet.Grounded)
+            {
+                self.CancelGroundControl("cadet_airborne");
+                return;
+            }
+            start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
+            hit = self.MapHit(start, start + direction * 6.0);
+            if (hit != null)
+            {
+                self.LogEvent("ground_route_blocked", "goal=" + Convert.ToString(self._groundGoal) + " direction=" + Convert.ToString(direction) + " hit=" + Convert.ToString(hit.Point) + " hit_distance=" + Convert.ToString(hit.Distance));
+                self._lastFailureReason = "ground_route_blocked";
+                self.Enter("Recover", "ground_route_blocked");
+                return;
+            }
+            self._cadet.Move(direction);
+            if (!self._groundControlActive || self._groundCommandDriver != "Direct")
+            {
+                self._groundControlActive = true;
+                self._groundCommandDriver = "Direct";
+                self.LogEvent("motion_command", "kind=ground_target driver=Direct request=Human.Move api_return=void acceptance=not_exposed direction=" + Convert.ToString(direction) + " goal=" + Convert.ToString(self._groundGoal) + " planar_distance=" + Convert.ToString(distance) + " arrival_radius=" + Convert.ToString(arrivalRange) + " ai_state_after=" + self._cadet.GetAIState());
+            }
+            return;
+        }
+
+        reissue = !self._groundControlActive || self._groundCommandDriver != "Engine" || Time.GameTime >= self._groundNextCommandAt;
+        if (!reissue && self._groundCommandGoal != null && Vector3.Distance(self._groundGoal, self._groundCommandGoal) >= 4.0)
+        {
+            reissue = true;
+        }
+        if (reissue)
+        {
+            self._cadet.MoveTo(self._groundGoal, arrivalRange);
+            self._groundControlActive = true;
+            self._groundCommandDriver = "Engine";
+            self._groundCommandGoal = self._groundGoal;
+            self._groundNextCommandAt = Time.GameTime + self.GroundGoalRefreshSeconds;
+            aiStateAfter = self._cadet.GetAIState();
+            self.LogEvent("motion_command", "kind=ground_target driver=Engine request=Human.MoveTo api_return=void goal=" + Convert.ToString(self._groundGoal) + " planar_distance=" + Convert.ToString(distance) + " arrival_radius=" + Convert.ToString(arrivalRange) + " ai_state_after=" + aiStateAfter);
+        }
+    }
+
     function StartGroundApproach(fallback)
     {
         if (!self.RefreshTarget())
@@ -1590,31 +1700,52 @@ addon AICadetsWaveCadet
             return;
         }
         self._groundFallback = fallback;
-        toTarget = self._target.Position - self._cadet.Position;
-        self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+        distance = self.GroundDistanceToTarget();
+        self._groundGoal = self.GroundGoalPosition();
+        self._groundBearing = self.GroundBearingToTarget();
+        arrivalRange = self.GroundArrivalRange();
+        if (distance <= arrivalRange)
+        {
+            self.CancelGroundControl("already_within_ground_arrival");
+            if (!self._groundControlActive)
+            {
+                self._cadet.Idle();
+            }
+            self.LogEvent("motion_segment_done", "kind=ground_target driver=" + self.GroundSteering + " fallback=" + Convert.ToString(fallback) + " planar_distance=" + Convert.ToString(distance) + " arrival_radius=" + Convert.ToString(arrivalRange) + " nape_distance=" + Convert.ToString(Vector3.Distance(self._cadet.Position, self._target.NapePosition)) + " result=already_in_range");
+            if (fallback)
+            {
+                self._lastFailureReason = "no_anchor_at_ground_arrival";
+                self.Enter("Recover", "no_anchor_at_ground_arrival");
+            }
+            else
+            {
+                self.Enter("PlanApproach", "ground_approach_already_arrived");
+            }
+            return;
+        }
+        if (self._groundControlActive)
+        {
+            self.CancelGroundControl("ground_approach_restart");
+        }
+        else
+        {
+            # Clear any native MoveTo command left by the state being replaced.
+            self._cadet.Idle();
+        }
         self._nextTravelProbe = Time.GameTime + 1.0;
         self._groundMovementStartedAt = Time.GameTime;
         self._groundProgressPosition = self._cadet.Position;
-        self._groundPreviousTargetDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
+        self._groundPreviousTargetDistance = distance;
         self._groundLastPosition = self._cadet.Position;
         self._groundPath = 0.0;
         self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
         self._groundStalledChecks = 0;
-        stopRange = 24.0;
-        if (fallback)
-        {
-            stopRange = 4.0;
-        }
-        if (self.GroundSteering == "Direct")
-        {
-            self._cadet.Idle();
-        }
-        else
-        {
-            self._cadet.MoveToTarget(self._target, stopRange);
-        }
+        self._groundCommandGoal = null;
+        self._groundCommandDriver = "";
+        self._groundControlActive = false;
+        self._groundNextCommandAt = 0.0;
         self.Enter("ApproachGround", "navigate_to_titan");
-        self.LogEvent("motion_command", "kind=ground_target driver=" + self.GroundSteering + " fallback=" + Convert.ToString(fallback) + " range=" + Convert.ToString(stopRange) + " view_id=" + Convert.ToString(self._targetViewId) + " ai_state=" + self._cadet.GetAIState());
+        self.IssueGroundCommand();
     }
 
     function ApproachGroundStep()
@@ -1625,14 +1756,16 @@ addon AICadetsWaveCadet
             self.Enter("AcquireTarget", "ground_target_invalid");
             return;
         }
-        distance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
-        if ((!self._groundFallback && distance <= self.GroundApproachThreshold) || (self._groundFallback && (distance <= self.EffectiveStrikeRange() || Time.GameTime - self._groundMovementStartedAt >= self.GroundProgressWindow * 3.0)))
+        distance = self.GroundDistanceToTarget();
+        napeDistance = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
+        arrivalRange = self.GroundArrivalRange();
+        if (distance <= arrivalRange)
         {
-            self._cadet.Idle();
-            self.LogEvent("motion_segment_done", "kind=ground_target fallback=" + Convert.ToString(self._groundFallback) + " distance=" + Convert.ToString(distance));
+            self.LogEvent("motion_segment_done", "kind=ground_target driver=" + self.GroundSteering + " fallback=" + Convert.ToString(self._groundFallback) + " planar_distance=" + Convert.ToString(distance) + " arrival_radius=" + Convert.ToString(arrivalRange) + " nape_distance=" + Convert.ToString(napeDistance) + " goal=" + Convert.ToString(self._groundGoal));
             self.Enter("PlanApproach", "ground_approach_close");
             return;
         }
+        self._groundGoal = self.GroundGoalPosition();
         self._groundPath = self._groundPath + Vector3.Distance(self._cadet.Position, self._groundLastPosition);
         self._groundLastPosition = self._cadet.Position;
         if (Time.GameTime >= self._nextTravelProbe)
@@ -1649,25 +1782,10 @@ addon AICadetsWaveCadet
                 }
             }
         }
-        if (self.GroundSteering == "Direct")
+        self.IssueGroundCommand();
+        if (self._state != "ApproachGround")
         {
-            if (!self._cadet.Grounded)
-            {
-                self._cadet.Idle();
-                return;
-            }
-            toTarget = self._target.Position - self._cadet.Position;
-            direction = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
-            start = self._cadet.Position + Vector3(0.0, 1.0, 0.0);
-            # A bounded diagnostic alternate, not a replacement navmesh planner.
-            if (Vector3.Distance(self._cadet.Position, self._target.Position) <= 4.0 || self.MapHit(start, start + direction * 6.0) != null)
-            {
-                self._cadet.Idle();
-                self._lastFailureReason = "direct_route_blocked_or_near";
-                self.Enter("Recover", "direct_route_blocked_or_near");
-                return;
-            }
-            self._cadet.Move(direction);
+            return;
         }
         if (Time.GameTime >= self._groundNextCheck)
         {
@@ -1678,18 +1796,15 @@ addon AICadetsWaveCadet
             targetGain = self._groundPreviousTargetDistance - distance;
             self._groundPreviousTargetDistance = distance;
             self.LogEvent("pursuit_progress", "toward_previous_target=" + Convert.ToString(forwardProgress) + " displacement=" + Convert.ToString(progress) + " path=" + Convert.ToString(path) + " distance=" + Convert.ToString(distance) + " target_gain=" + Convert.ToString(targetGain));
-            toTarget = self._target.Position - self._cadet.Position;
-            self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
-            self.LogEvent("motion_observed", "kind=ground_target moved=" + Convert.ToString(progress) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
+            self._groundBearing = self.GroundBearingToTarget();
+            self.LogEvent("motion_observed", "kind=ground_target driver=" + self.GroundSteering + " moved=" + Convert.ToString(progress) + " path=" + Convert.ToString(path) + " planar_distance=" + Convert.ToString(distance) + " nape_distance=" + Convert.ToString(napeDistance) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
             self._groundProgressPosition = self._cadet.Position;
             self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
             if (path >= 30.0 && progress < path * 0.5 && forwardProgress < path * 0.15 && targetGain < 4.0)
             {
-                self.LogEvent("circling_detected", "path=" + Convert.ToString(path) + " displacement=" + Convert.ToString(progress) + " forward=" + Convert.ToString(forwardProgress) + " target_gain=" + Convert.ToString(targetGain));
-                self._bannedTargetViewId = self._targetViewId;
-                self._banUntil = Time.GameTime + 20.0;
-                self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=circling");
-                self.BeginObserve("circling_detected");
+                self.LogEvent("circling_detected", "path=" + Convert.ToString(path) + " displacement=" + Convert.ToString(progress) + " forward=" + Convert.ToString(forwardProgress) + " planar_distance=" + Convert.ToString(distance) + " target_gain=" + Convert.ToString(targetGain) + " action=bounded_recovery");
+                self._lastFailureReason = "ground_route_unproductive";
+                self.Enter("Recover", "ground_route_unproductive");
                 return;
             }
             if ((progress < 1.0 || forwardProgress < 1.0) && targetGain < 4.0)
@@ -1703,22 +1818,8 @@ addon AICadetsWaveCadet
             if (self._groundStalledChecks >= 2)
             {
                 self.LogEvent("motion_stalled", "kind=ground_target dist=" + Convert.ToString(distance));
-                self._cadet.Idle();
-                if (self._targetRecoveries < self.RecoveryBudget())
-                {
-                    self._lastFailureReason = "ground_not_advancing";
-                    self.Enter("Recover", "ground_not_advancing");
-                    return;
-                }
-                self._bannedTargetViewId = self._targetViewId;
-                self._banUntil = Time.GameTime + 15.0;
-                self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=ground_stalled");
-                self._target = null;
-                self._targetViewId = 0;
-                self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
-                self._exploreNextAction = 0.0;
-                self._exploreFailures = 3;
-                self.Enter("Explore", "ground_approach_stalled");
+                self._lastFailureReason = "ground_not_advancing";
+                self.Enter("Recover", "ground_not_advancing");
             }
         }
     }
@@ -2260,6 +2361,10 @@ addon AICadetsWaveCadet
             self._attackReadyWaitLogged = false;
         }
         oldState = self._state;
+        if (oldState == "ApproachGround" && state != "ApproachGround")
+        {
+            self.CancelGroundControl("state_exit_" + state);
+        }
         self._state = state;
         self._stateStart = Time.GameTime;
         self.LogEvent("state_transition", "from=" + oldState + " to=" + state + " reason=" + reason);

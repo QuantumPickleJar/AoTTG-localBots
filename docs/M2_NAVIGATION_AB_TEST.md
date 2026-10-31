@@ -1,4 +1,6 @@
-# M2 ground steering investigation: navdiag-1
+# Historical M2 ground steering investigation: navdiag-1
+
+> **Current implementation:** Pass 1 uses `M2-locomotion-1`, defaults to Direct planar steering, uses projected Titan-base goals for both Direct and Engine ground pursuit, and routes detected circling to bounded recovery before any later target ban. The evidence, implementation, diagnostics, and current live checklist are in [M2_LOCOMOTION_STABILIZATION.md](M2_LOCOMOTION_STABILIZATION.md). Everything below records prior navdiag iterations; its old default-driver statements and test instructions are historical, not current behavior.
 
 ## Established evidence
 

@@ -1,3 +1,10 @@
+## M2 locomotion stabilization Pass 1 (unreleased)
+
+- Watch20 confirms a persistent `MoveToTarget(titan, 4.0)` ground fallback made no arrival before a low-progress circle detector banned the nearby Titan; the trace records no attack attempt. A nape-based 3D arrival mismatch is strongly supported by the pinned public engine source and recorded height gap, but remains conditional because the installed binary is not verified against that source.
+- Default ground combat pursuit now uses repeatable planar `Human.Move` steering toward a reachable ground-plane objective. The optional Engine driver uses refreshed `MoveTo` to the same projected objective. Ground arrival is planar, movement cancellation is centralized on state exit, and unproductive routes enter bounded recovery before target abandonment.
+- Expand motion telemetry to separate requested calls, post-call AI state, measured displacement, target-relative progress, and cancellation. Add regressions for height-separated arrivals, moving/stationary targets, stable steering, Hold and recovery.
+- Automated tests do not establish live steering stability; keep PR #6 in draft pending the City 1 / Training / Waves checklist in `M2_LOCOMOTION_STABILIZATION.md`.
+
 ## Watch19 investigation (unreleased)
 
 - Observed two wall-run animation samples (one rising) and one on-wall downward sample; roof clearance and the exact cause of failure remain unverified. One Attack animation near a Titan had no confirmed damage.

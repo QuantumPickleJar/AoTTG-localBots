@@ -19,7 +19,7 @@ BASELINES = {
 
 
 def git_blob_sha(path):
-    data = path.read_bytes()
+    data = path.read_bytes().replace(b"\r\n", b"\n")
     return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
 
 

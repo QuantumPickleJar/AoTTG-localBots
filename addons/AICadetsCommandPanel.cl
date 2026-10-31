@@ -62,8 +62,8 @@ addon AICadetsCommandPanel
         self._actions.Add(UI.Label("Stand inside a working station trigger:"));
         self._actions.Add(UI.Button("MARK supply here", self.MarkSupply));
         self._actions.Add(UI.Label("Ground pursuit comparison (diagnostic):"));
-        self._actions.Add(UI.Button("GROUND: engine navigation", self.GroundEngine));
-        self._actions.Add(UI.Button("GROUND: direct steering test", self.GroundDirect));
+        self._actions.Add(UI.Button("GROUND: engine steering test", self.GroundEngine));
+        self._actions.Add(UI.Button("GROUND: direct steering (default)", self.GroundDirect));
         self._actions.Add(UI.Button("CLOSE & RESTORE [F8/F9]", self.CloseMenu));
         self._panel.Add(self._actions);
         root.Add(self._panel);
