@@ -1364,6 +1364,10 @@ class WaveM2Tests(unittest.TestCase):
     def test_tactic_catalog_matches_runtime_capabilities_and_fails_closed(self):
         import json
         catalog = json.loads((Path(__file__).resolve().parents[1] / "docs/M2_TACTIC_CATALOG.json").read_text())
+        down_strike = catalog["special_approaches"][0]
+        self.assertEqual(down_strike["required_special"], "DownStrike")
+        self.assertEqual(down_strike["capability"], "definition_only")
+        self.assertIn("physical_activation_validated", down_strike["requirements"])
         w = World()
         w.tick()
         for tactic in catalog["tactics"]:

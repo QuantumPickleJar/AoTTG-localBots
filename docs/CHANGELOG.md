@@ -1,3 +1,8 @@
+## Watch19 investigation (unreleased)
+
+- Observed two wall-run animation samples (one rising) and one on-wall downward sample; roof clearance and the exact cause of failure remain unverified. One Attack animation near a Titan had no confirmed damage.
+- Added a definition-only DownStrike approach with explicit ability and validation prerequisites. No wall control, special activation or fabricated combat outcome was added.
+
 ## M2 combat-arc-5 (unreleased)
 
 - Watch18 recorded three attack animations 45.3 and 37.9 seconds apart, with no damage confirmed. Aborted approaches, depleted recovery budgets, six-second observation and distant target switches filled the intervals; 37 collision forecasts are not themselves proof of false positives.
