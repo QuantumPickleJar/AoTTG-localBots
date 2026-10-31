@@ -1,3 +1,9 @@
+## M2 combat-arc-1 (unreleased)
+
+- Watch6 records a real attack input request but no observed damage by the immediate check; the later Titan death was attributed to the human player. Hook retraction was causing premature target abandonment after forward progress.
+- Preserve the target during bounded hook retraction, check the attack window throughout physical approach, and gate attacks on map line of sight. Add a bounded, target-identity-checked Titan tether arc with selectable sides and existing map-ODM fallback.
+- Record real human state/animation separately from input and callbacks; allow a bounded callback window before reporting no observed damage. In-game arc, swing and damage remain unverified. See M2_COMBAT_MANEUVERS.md.
+
 ## M2 navdiag-3 (unreleased)
 
 - Defer airborne no-anchor replanning until landing or a bounded timeout; preserve the target and avoid burning recovery attempts before physics can advance.

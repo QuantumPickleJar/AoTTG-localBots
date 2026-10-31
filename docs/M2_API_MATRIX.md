@@ -76,3 +76,8 @@ Remaining blockers are validation blockers (gameplay confirmation), not interfac
 - Manual fallback: master host stands at an actual station and presses **MARK supply here** in the M2 command panel. This records only a session-local waypoint, not a verified station entity.
 - No direct edits to `CurrentGas`, no `RefillImmediate`, no fabricated supply encounters. If a station is unavailable, the cadet searches on foot with a deadline and eventually safely holds; it does not fake a replenishment.
 - Live acceptance still required for `AutoRefillGas` on AI-owned humans, built-in City 1 station discovery, and waypoint/ODM hybrid navigation.
+
+
+## combat-arc-1 experimental Titan tether
+
+The documented [`Physics.SphereCast(start: Vector3, end: Vector3, radius: float, collideWith: string) -> Object`](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Physics.md) supplies a selected-Titan identity check before a normal hook input. [`Human.State`](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Human.md) and [`Character.CurrentAnimation`](https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Character.md) are separately logged observations. The cast layer, hook collider and orbital physics remain unverified live; hook proximity to the nape does not establish collider identity. See `M2_COMBAT_MANEUVERS.md` for the field checklist and rollback.

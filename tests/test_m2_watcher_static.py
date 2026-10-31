@@ -35,4 +35,6 @@ class M2WatcherTests(unittest.TestCase):
         observer.OnTick()
         self.assertIn("owned_cadet name=AICadetsM1 view_id=888 alive=True controller_state=no_M2_controller", observer._trace)
         self.assertIn("build=M2-navdiag-1", observer._trace)
+        self.assertIn("human_state=Idle", observer._trace)
+        self.assertIn("animation=idle", observer._trace)
         self.assertEqual(cadet.calls, [])

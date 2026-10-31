@@ -4,8 +4,12 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-navdiag-3";
+    _buildTag = "M2-combat-arc-1";
     GroundSteering = "Engine";
+    # Experimental physical tether arc: Alternate, Left, Right, or Off.
+    CombatArcStyle = "Alternate";
+    CombatArcSeconds = 1.5;
+    AttackVerifySeconds = 1.0;
     ProfileName = "Steady scout";
     Persistence = 3;
     AerialPreference = 3;
@@ -101,6 +105,10 @@ addon AICadetsWaveCadet
     _targetDamageByCadet = false;
     _targetKilled = false;
     _targetKillByCadet = false;
+    _attackStateObserved = false;
+    _orbitAttempts = 0;
+    _orbitSide = 1.0;
+    _orbitStartRadial = null;
     _bannedTargetViewId = 0;
     _banUntil = 0.0;
     _lastDistanceToNape = 0.0;
@@ -141,7 +149,7 @@ addon AICadetsWaveCadet
         {
             return;
         }
-        if ((self.GroundSteering != "Engine" && self.GroundSteering != "Direct") || self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
+        if ((self.GroundSteering != "Engine" && self.GroundSteering != "Direct") || (self.CombatArcStyle != "Alternate" && self.CombatArcStyle != "Left" && self.CombatArcStyle != "Right" && self.CombatArcStyle != "Off") || self.CombatArcSeconds < 0.3 || self.CombatArcSeconds > 2.0 || self.AttackVerifySeconds < 0.2 || self.AttackVerifySeconds > 3.0 || self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
         {
             self.Terminate("failure", "invalid_behavior_profile");
             return;
@@ -266,6 +274,34 @@ addon AICadetsWaveCadet
             }
         }
 
+        if (self._orderMode == "Engage" && (self._state == "OrbitAttach" || self._state == "OrbitSwing"))
+        {
+            if (Time.GameTime >= self._nextRiskCheck)
+            {
+                self._nextRiskCheck = Time.GameTime + 0.1;
+                if (self.CollisionRisk())
+                {
+                    self.EndOrbit("collision_risk");
+                    return;
+                }
+            }
+        }
+        # Check an attack window throughout approach, not only after leg two.
+        if (self._orderMode == "Engage" && ((self.IsTraverseState() && self._traverseMode == "approach") || self._state == "OrbitAttach" || self._state == "OrbitSwing"))
+        {
+            if (!self.RefreshTarget())
+            {
+                self.StopODM();
+                self._cadet.Idle();
+                self.Enter("AcquireTarget", "approach_target_lost");
+                return;
+            }
+            if (self.TryAttackWindow("approach_in_flight"))
+            {
+                return;
+            }
+        }
+
         if (self._state == "SeekSupply")
         {
             self.SeekSupplyStep();
@@ -284,6 +320,34 @@ addon AICadetsWaveCadet
         if (self._state == "ExploreGround")
         {
             self.ExploreGroundStep();
+            return;
+        }
+        if (self._state == "WaitHook")
+        {
+            if (!self.RefreshTarget())
+            {
+                self.Enter("AcquireTarget", "hook_wait_target_lost");
+            }
+            elif (self._cadet.LeftHookReady)
+            {
+                self.LogEvent("hook_wait_end", "reason=ready target=" + Convert.ToString(self._targetViewId));
+                self.Enter("PlanApproach", "hook_ready_retry");
+            }
+            elif (Time.GameTime - self._stateStart >= 2.0)
+            {
+                self.LogEvent("hook_wait_end", "reason=timeout target=" + Convert.ToString(self._targetViewId));
+                self.Enter("Recover", "hook_wait_timeout");
+            }
+            return;
+        }
+        if (self._state == "OrbitAttach")
+        {
+            self.OrbitAttachStep();
+            return;
+        }
+        if (self._state == "OrbitSwing")
+        {
+            self.OrbitSwingStep();
             return;
         }
         if (self._state == "WaitLanding")
@@ -532,6 +596,7 @@ addon AICadetsWaveCadet
         self._targetDamageByCadet = false;
         self._targetKilled = false;
         self._targetKillByCadet = false;
+        self._orbitStartRadial = null;
         best = -1000000.0;
         listed = 0;
         alive = 0;
@@ -608,6 +673,8 @@ addon AICadetsWaveCadet
         self._targetRetryCount = 0;
         self._targetTraverseCount = 0;
         self._targetRecoveries = 0;
+        self._orbitAttempts = 0;
+        self._orbitSide = 1.0;
         self._lastDistanceToNape = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
         self.LogEvent("target_selected", "view_id=" + Convert.ToString(self._targetViewId) + " distance=" + Convert.ToString(self._lastDistanceToNape) + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive));
         self.Enter("PlanApproach", "target_selected");
@@ -644,13 +711,196 @@ addon AICadetsWaveCadet
             self.StartGroundApproach(false);
             return;
         }
+        # Prefer a real Titan-tether arc near the target when the exact Titan
+        # is exposed. Fall back to normal map-anchor ODM when it is not.
+        if (self._lastDistanceToNape <= 45.0 && self.TryStartTitanOrbit())
+        {
+            return;
+        }
         self.StartTraverse(goal, "approach");
+    }
+
+    # The target query confirms identity at launch time. The subsequent hook
+    # proximity check is only a geometric observation, not collider identity.
+    function TryStartTitanOrbit()
+    {
+        if (self.CombatArcStyle == "Off" || self._orbitAttempts >= 2 || !self._cadet.LeftHookReady || self._cadet.CurrentGas < self.MinAttackGas)
+        {
+            return false;
+        }
+        start = self._cadet.Position + Vector3(0.0, 2.0, 0.0);
+        nape = self._target.NapePosition;
+        toNape = nape - start;
+        if (toNape.Magnitude < 0.1 || toNape.Magnitude > self.HookReach || self.MapHit(start, nape) != null)
+        {
+            self.LogEvent("orbit_probe", "reason=out_of_range_or_blocked target=" + Convert.ToString(self._targetViewId));
+            return false;
+        }
+        targetHit = Physics.SphereCast(start, nape + toNape.Normalized * 2.0, 0.6, CollideWithEnum.Titans);
+        if (targetHit == null || targetHit.Type != "Titan" || targetHit.ViewID != self._targetViewId)
+        {
+            self.LogEvent("orbit_probe", "reason=selected_titan_not_observed target=" + Convert.ToString(self._targetViewId));
+            return false;
+        }
+        if (self.CombatArcStyle == "Left")
+        {
+            self._orbitSide = -1.0;
+        }
+        elif (self.CombatArcStyle == "Right")
+        {
+            self._orbitSide = 1.0;
+        }
+        elif (self._orbitAttempts > 0)
+        {
+            self._orbitSide = self._orbitSide * -1.0;
+        }
+        self._orbitAttempts = self._orbitAttempts + 1;
+        self._targetTraverseCount = self._targetTraverseCount + 1;
+        self._orbitStartRadial = null;
+        self._cadet.Idle();
+        if (self._cadet.Grounded)
+        {
+            self._cadet.Jump();
+        }
+        self._cadet.AimAt(nape);
+        self._cadet.LaunchHookLeft(nape);
+        self.LogEvent("orbit_launch", "target=" + Convert.ToString(self._targetViewId) + " side=" + Convert.ToString(self._orbitSide) + " nape=" + Convert.ToString(nape));
+        self.Enter("OrbitAttach", "titan_tether_launched");
+        return true;
+    }
+
+    function OrbitAttachStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self.StopODM();
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "orbit_target_lost");
+            return;
+        }
+        if (Time.GameTime - self._stateStart >= 2.8)
+        {
+            self.EndOrbit("attachment_timeout");
+            return;
+        }
+        if (self._cadet.IsHookedLeft)
+        {
+            hookPoint = self._cadet.LeftHookPosition;
+            if (hookPoint == null || Vector3.Distance(hookPoint, self._target.NapePosition) > 22.0)
+            {
+                self.EndOrbit("attachment_not_near_nape");
+                return;
+            }
+            radial = self._cadet.Position - self._target.NapePosition;
+            self._orbitStartRadial = Vector3.Normalize(Vector3(radial.X, 0.0, radial.Z));
+            self._cadet.UseGas(true);
+            self.LogEvent("orbit_attach", "target=" + Convert.ToString(self._targetViewId) + " hook=" + Convert.ToString(hookPoint) + " nape_distance=" + Convert.ToString(Vector3.Distance(hookPoint, self._target.NapePosition)));
+            self.Enter("OrbitSwing", "hook_near_nape");
+        }
+    }
+
+    function OrbitSwingStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self.StopODM();
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "orbit_target_lost");
+            return;
+        }
+        if (!self._cadet.IsHookedLeft || self._cadet.CurrentGas < self.MinAttackGas || Time.GameTime - self._stateStart >= self.CombatArcSeconds)
+        {
+            self.EndOrbit("arc_finished_or_hook_lost");
+            return;
+        }
+        hookPoint = self._cadet.LeftHookPosition;
+        if (hookPoint == null || Vector3.Distance(hookPoint, self._target.NapePosition) > 24.0)
+        {
+            self.EndOrbit("attachment_moved_away_from_nape");
+            return;
+        }
+        radial = self._cadet.Position - self._target.NapePosition;
+        flat = Vector3(radial.X, 0.0, radial.Z);
+        if (flat.Magnitude < 0.1)
+        {
+            self.EndOrbit("radial_direction_unavailable");
+            return;
+        }
+        direction = flat.Normalized;
+        tangent = Vector3(0.0 - direction.Z, 0.0, direction.X) * self._orbitSide;
+        self._cadet.AimAt(self._target.NapePosition);
+        self._cadet.Move(Vector3.Normalize(tangent - direction * 0.2));
+    }
+
+    function LogOrbitEnd(reason)
+    {
+        detail = "reason=" + reason + " target=" + Convert.ToString(self._targetViewId);
+        if (self._orbitStartRadial != null && self._target != null && self._target.IsAlive)
+        {
+            radial = self._cadet.Position - self._target.NapePosition;
+            flat = Vector3.Normalize(Vector3(radial.X, 0.0, radial.Z));
+            detail = detail + " radial_dot=" + Convert.ToString(Vector3.Dot(self._orbitStartRadial, flat)) + " radial_cross=" + Convert.ToString(self._orbitStartRadial.X * flat.Z - self._orbitStartRadial.Z * flat.X);
+        }
+        self.LogEvent("orbit_end", detail);
+        self._orbitStartRadial = null;
+    }
+
+    function EndOrbit(reason)
+    {
+        self._lastFailureReason = reason;
+        self.LogOrbitEnd(reason);
+        self.StopODM();
+        self._cadet.Idle();
+        if (self.RefreshTarget())
+        {
+            if (!self._cadet.Grounded && !self._cadet.LeftHookReady)
+            {
+                self.LogEvent("hook_wait_start", "target=" + Convert.ToString(self._targetViewId) + " after=orbit");
+                self.Enter("WaitHook", "orbit_hook_retracting");
+            }
+            else
+            {
+                self.Enter("Recover", "orbit_finished");
+            }
+        }
+        else
+        {
+            self.Enter("AcquireTarget", "orbit_target_lost");
+        }
+    }
+
+    function TryAttackWindow(reason)
+    {
+        if (!self.RefreshTarget() || self._cadet.CurrentGas < self.MinAttackGas)
+        {
+            return false;
+        }
+        nape = self._target.NapePosition;
+        if (Vector3.Distance(self._cadet.Position, nape) > self.AttackRange || self.MapHit(self._cadet.Position, nape) != null)
+        {
+            return false;
+        }
+        if (self._state == "OrbitSwing" || self._state == "OrbitAttach")
+        {
+            self.LogEvent("orbit_attack_window", "target=" + Convert.ToString(self._targetViewId));
+            self.LogOrbitEnd("attack_window");
+        }
+        self.StopODM();
+        self._cadet.Idle();
+        self.Enter("AttackSetup", reason);
+        return true;
     }
 
     function StartTraverse(goal, mode)
     {
         if (!self._cadet.LeftHookReady)
         {
+            if (mode == "approach" && self.RefreshTarget())
+            {
+                self.LogEvent("hook_wait_start", "target=" + Convert.ToString(self._targetViewId));
+                self.Enter("WaitHook", "hook_retracting");
+                return;
+            }
             self.Enter("Recover", "hook_not_ready");
             return;
         }
@@ -891,18 +1141,35 @@ addon AICadetsWaveCadet
             self.Enter("PlanApproach", "attack_window_lost");
             return;
         }
+        if (self.MapHit(self._cadet.Position, self._target.NapePosition) != null)
+        {
+            self.LogEvent("attack_blocked", "reason=map_obstruction target=" + Convert.ToString(self._targetViewId));
+            self.Enter("Recover", "attack_line_blocked");
+            return;
+        }
         self._targetDamaged = false;
         self._targetDamageByCadet = false;
         self._targetKilled = false;
         self._targetKillByCadet = false;
+        self._attackStateObserved = false;
         self._cadet.AimAt(self._target.NapePosition);
         self._cadet.Attack(true);
         self.Enter("Strike", "attack_started");
-        self.LogEvent("attack_attempt", "target=" + Convert.ToString(self._targetViewId) + " dist=" + Convert.ToString(distance));
+        self.LogEvent("attack_attempt", "target=" + Convert.ToString(self._targetViewId) + " dist=" + Convert.ToString(distance) + " human_state=" + self._cadet.State + " animation=" + self._cadet.CurrentAnimation + " position=" + Convert.ToString(self._cadet.Position) + " nape=" + Convert.ToString(self._target.NapePosition) + " target_forward=" + Convert.ToString(self._target.Forward) + " cadet_forward=" + Convert.ToString(self._cadet.Forward) + " velocity=" + Convert.ToString(self._cadet.Velocity) + " grounded=" + Convert.ToString(self._cadet.Grounded));
+    }
+
+    function ObserveAttackState()
+    {
+        if (!self._attackStateObserved && self._cadet.State == "Attack")
+        {
+            self._attackStateObserved = true;
+            self.LogEvent("attack_state_observed", "animation=" + self._cadet.CurrentAnimation + " target=" + Convert.ToString(self._targetViewId));
+        }
     }
 
     function StrikeStep()
     {
+        self.ObserveAttackState();
         if (Time.GameTime - self._stateStart >= self.AttackHoldSeconds || self._targetKilled)
         {
             self._cadet.Attack(false);
@@ -912,6 +1179,7 @@ addon AICadetsWaveCadet
 
     function VerifyAttackStep()
     {
+        self.ObserveAttackState();
         if (self._targetKilled)
         {
             self.LogEvent("attack_result", "confirmed_kill=true by_cadet=" + Convert.ToString(self._targetKillByCadet) + " target=" + Convert.ToString(self._targetViewId));
@@ -924,13 +1192,17 @@ addon AICadetsWaveCadet
             self.Enter("AcquireTarget", "target_lost_after_attack");
             return;
         }
+        if (!self._targetDamageByCadet && Time.GameTime - self._stateStart < self.AttackVerifySeconds)
+        {
+            return;
+        }
         if (self._targetDamaged)
         {
             self.LogEvent("attack_result", "confirmed_damage=true by_cadet=" + Convert.ToString(self._targetDamageByCadet) + " target=" + Convert.ToString(self._targetViewId));
         }
         else
         {
-            self.LogEvent("attack_result", "confirmed_damage=false target=" + Convert.ToString(self._targetViewId));
+            self.LogEvent("attack_result", "confirmed_damage=false observation_seconds=" + Convert.ToString(Time.GameTime - self._stateStart) + " attack_state_observed=" + Convert.ToString(self._attackStateObserved) + " target=" + Convert.ToString(self._targetViewId));
         }
         self.Enter("Retreat", "post_attack");
     }
@@ -1367,7 +1639,7 @@ addon AICadetsWaveCadet
         }
         key = self._cadetName;
         PersistentData.SetProperty("AICadetsM2Build-" + key, self._buildTag);
-        PersistentData.SetProperty("AICadetsM2Profile-" + key, self.ProfileName + " P=" + Convert.ToString(self.Persistence) + " A=" + Convert.ToString(self.AerialPreference) + " R=" + Convert.ToString(self.RepositionSkill) + " ground=" + self.GroundSteering);
+        PersistentData.SetProperty("AICadetsM2Profile-" + key, self.ProfileName + " P=" + Convert.ToString(self.Persistence) + " A=" + Convert.ToString(self.AerialPreference) + " R=" + Convert.ToString(self.RepositionSkill) + " ground=" + self.GroundSteering + " arc=" + self.CombatArcStyle);
         PersistentData.SetProperty("AICadetsM2Heartbeat-" + key, Time.GameTime);
         PersistentData.SetProperty("AICadetsM2State-" + key, self._state);
         PersistentData.SetProperty("AICadetsM2Mode-" + key, self._orderMode);

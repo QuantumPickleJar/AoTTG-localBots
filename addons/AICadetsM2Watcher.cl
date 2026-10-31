@@ -51,7 +51,7 @@ addon AICadetsM2Watcher
             return;
         }
         self._start = Time.GameTime;
-        self._trace = "AICadetsM2Watcher v3 navdiag-3; times=GameTime; moving=0.2s; idle=2s; max_records=2000; max=300s after discovery\n";
+        self._trace = "AICadetsM2Watcher v3 combat-arc-1; times=GameTime; moving=0.2s; idle=2s; max_records=2000; max=300s after discovery\n";
         self.Record("watch_started");
         self.Flush();
         Game.Print("[AI Cadets M2 Watch] Recording to PersistentData/" + self._file);
@@ -232,7 +232,7 @@ addon AICadetsM2Watcher
         {
             hookpos = Convert.ToString(self._scout.LeftHookPosition);
         }
-        self.Record(kind + " cadet=" + self._scout.Name + " status_time=" + Convert.ToString(PersistentData.GetProperty("AICadetsM2StatusTime-" + self._scout.Name, 0.0)) + " target=" + Convert.ToString(PersistentData.GetProperty("AICadetsM2TargetId-" + self._scout.Name, 0)) + " target_info=[" + PersistentData.GetProperty("AICadetsM2TargetInfo-" + self._scout.Name, "none") + "] nav=[" + PersistentData.GetProperty("AICadetsM2Navigation-" + self._scout.Name, "none") + "] mode=" + PersistentData.GetProperty("AICadetsM2Mode-" + self._scout.Name, "unknown") + " state=" + PersistentData.GetProperty("AICadetsM2State-" + self._scout.Name, "unknown") + " ai_state=" + self._scout.GetAIState() + " pos=" + Convert.ToString(self._scout.Position) + " vel=" + Convert.ToString(self._scout.Velocity) + " gas=" + Convert.ToString(self._scout.CurrentGas) + " hooked=" + Convert.ToString(self._scout.IsHookedLeft) + " hooking=" + Convert.ToString(self._scout.IsHookingLeft) + " ready=" + Convert.ToString(self._scout.LeftHookReady) + " grounded=" + Convert.ToString(self._scout.Grounded) + " hookpos=" + hookpos);
+        self.Record(kind + " cadet=" + self._scout.Name + " status_time=" + Convert.ToString(PersistentData.GetProperty("AICadetsM2StatusTime-" + self._scout.Name, 0.0)) + " target=" + Convert.ToString(PersistentData.GetProperty("AICadetsM2TargetId-" + self._scout.Name, 0)) + " target_info=[" + PersistentData.GetProperty("AICadetsM2TargetInfo-" + self._scout.Name, "none") + "] nav=[" + PersistentData.GetProperty("AICadetsM2Navigation-" + self._scout.Name, "none") + "] mode=" + PersistentData.GetProperty("AICadetsM2Mode-" + self._scout.Name, "unknown") + " state=" + PersistentData.GetProperty("AICadetsM2State-" + self._scout.Name, "unknown") + " ai_state=" + self._scout.GetAIState() + " human_state=" + self._scout.State + " animation=" + self._scout.CurrentAnimation + " pos=" + Convert.ToString(self._scout.Position) + " vel=" + Convert.ToString(self._scout.Velocity) + " gas=" + Convert.ToString(self._scout.CurrentGas) + " hooked=" + Convert.ToString(self._scout.IsHookedLeft) + " hooking=" + Convert.ToString(self._scout.IsHookingLeft) + " ready=" + Convert.ToString(self._scout.LeftHookReady) + " grounded=" + Convert.ToString(self._scout.Grounded) + " hookpos=" + hookpos);
     }
 
     function Flush()

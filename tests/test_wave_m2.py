@@ -37,6 +37,9 @@ class Cadet:
         self.ViewID = 777
         self.Name = "Levi"
         self.ai_state = "Idle"
+        self.State = "Idle"
+        self.CurrentAnimation = "idle"
+        self.LeftHookPosition = None
         self.attacking = False
         self.calls = []
 
@@ -113,6 +116,7 @@ class World:
         self.humans = CLList([self.cadet])
         self.player_humans = CLList([self.host.Character])
         self.hit = None
+        self.sphere_hit = None
         self.controller = load_controller(
             {
                 "Vector3": Vector,
@@ -132,12 +136,12 @@ class World:
                     IsEnding=False,
                     Print=self.messages.append,
                 ),
-                "Physics": NS(LineCast=self.cast),
+                "Physics": NS(LineCast=self.cast, SphereCast=lambda start, end, radius, layer: self.sphere_hit),
                 "Map": NS(FindMapObjectsByComponent=lambda name: self.supply_stations if name == "SupplyStation" else CLList()),
                 "Convert": NS(ToString=str),
                 "Range": lambda a, b, c: range(a, b, c),
                 "LoadoutEnum": NS(HumanBlades="Blades"),
-                "CollideWithEnum": NS(MapObjects="map", MapEditor="editor"),
+                "CollideWithEnum": NS(MapObjects="map", MapEditor="editor", Titans="titans"),
             },
             SOURCE,
             class_name="AICadetsWaveCadet",
@@ -768,7 +772,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-navdiag-3")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-1")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -870,6 +874,325 @@ class WaveM2Tests(unittest.TestCase):
         for _ in range(12):
             w.tick(1.0)
         self.assertTrue(any("event=tick_health" in m and "max_gap=" in m and "count=" in m for m in w.messages))
+
+    def setup_close_orbit(self, style="Alternate"):
+        w = World()
+        w.tick()
+        w.cadet.Position = Vector(0, 8, 17)
+        w.cadet.Grounded = False
+        w.controller.CombatArcStyle = style
+        w.sphere_hit = w.titan
+        w.controller.AcquireTarget()
+        return w
+
+    def test_titan_arc_requires_exact_visible_target_and_hook_readiness(self):
+        w = self.setup_close_orbit()
+        w.sphere_hit = Titan(202)
+        self.assertFalse(w.controller.TryStartTitanOrbit())
+        self.assertFalse(any(x[0] == "launch" for x in w.cadet.calls))
+        w.sphere_hit = w.titan
+        w.hit = NS(Point=Vector(0, 8, 25), Distance=8.0)
+        self.assertFalse(w.controller.TryStartTitanOrbit())
+        w.hit = None
+        w.cadet.LeftHookReady = False
+        self.assertFalse(w.controller.TryStartTitanOrbit())
+        w.cadet.LeftHookReady = True
+        self.assertTrue(w.controller.TryStartTitanOrbit())
+        self.assertEqual(w.controller._state, "OrbitAttach")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertTrue(any("orbit_launch" in x for x in w.messages))
+
+    def test_arc_uses_physical_hook_and_sideways_motion_then_releases(self):
+        w = self.setup_close_orbit("Right")
+        w.controller.PlanApproach()
+        self.assertEqual(w.controller._state, "OrbitAttach")
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.tick()
+        self.assertEqual(w.controller._state, "OrbitSwing")
+        self.assertIn(("gas", True), w.cadet.calls)
+        w.tick()
+        moves = [x for x in w.cadet.calls if x[0] == "move"]
+        self.assertTrue(moves)
+        self.assertGreater(moves[-1][1].X, 0)
+        w.cadet.Position = Vector(15, 8, 25)
+        w.tick(1.6)
+        self.assertEqual(w.controller._state, "WaitHook")
+        self.assertFalse(w.cadet.IsHookedLeft)
+        self.assertTrue(any("orbit_end" in x and "radial_cross=" in x for x in w.messages))
+
+    def test_left_and_right_styles_select_opposite_tangents(self):
+        directions = []
+        for style in ("Left", "Right"):
+            w = self.setup_close_orbit(style)
+            w.controller.PlanApproach()
+            w.cadet.IsHookedLeft = True
+            w.cadet.LeftHookPosition = w.titan.NapePosition
+            w.tick()
+            w.tick()
+            directions.append([x[1] for x in w.cadet.calls if x[0] == "move"][-1])
+        self.assertLess(directions[0].X, 0)
+        self.assertGreater(directions[1].X, 0)
+
+    def test_wrong_hook_attachment_and_hold_release_arc(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = Vector(500, 40, 500)
+        w.tick()
+        self.assertEqual(w.controller._state, "WaitHook")
+        self.assertFalse(w.cadet.IsHookedLeft)
+        self.assertTrue(any("attachment_not_near_nape" in x for x in w.messages))
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.tick()
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertFalse(w.cadet.IsHookedLeft)
+        self.assertFalse(w.cadet.attacking)
+
+    def test_attack_window_is_checked_during_first_traversal_leg(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller._traverseMode = "approach"
+        w.controller.Enter("TraverseBurst", "test")
+        w.cadet.IsHookedLeft = True
+        w.cadet.Position = w.titan.NapePosition
+        w.tick()
+        self.assertEqual(w.controller._state, "AttackSetup")
+        self.assertFalse(w.cadet.IsHookedLeft)
+        w.tick()
+        self.assertEqual(w.controller._state, "Strike")
+        self.assertIn(("attack", True), w.cadet.calls)
+
+    def test_blocked_nape_and_wrong_orders_do_not_attack_in_flight(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller._traverseMode = "approach"
+        w.controller.Enter("TraverseAttach", "test")
+        w.cadet.Position = w.titan.NapePosition
+        w.hit = NS(Point=Vector(0, 8, 41), Distance=1.0)
+        w.tick()
+        self.assertEqual(w.controller._state, "TraverseAttach")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+        w.hit = None
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+
+    def test_hook_cooldown_does_not_immediately_abandon_target(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.cadet.LeftHookReady = False
+        w.controller.PlanApproach()
+        self.assertEqual(w.controller._state, "WaitHook")
+        w.tick(1.0)
+        self.assertEqual(w.controller._state, "WaitHook")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        w.cadet.LeftHookReady = True
+        w.tick()
+        self.assertEqual(w.controller._state, "PlanApproach")
+
+    def test_attack_observation_waits_for_delayed_damage_callback(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = w.titan.NapePosition
+        w.controller.AcquireTarget()
+        w.controller.Enter("AttackSetup", "test")
+        w.tick()
+        w.cadet.State = "Attack"
+        w.cadet.CurrentAnimation = "attack"
+        w.tick(0.31)
+        self.assertEqual(w.controller._state, "VerifyAttack")
+        self.assertTrue(any("attack_state_observed" in x for x in w.messages))
+        w.tick(0.5)
+        self.assertFalse(any("attack_result" in x for x in w.messages))
+        w.controller.OnCharacterDamaged(w.titan, w.cadet, "cadet", 100)
+        w.tick()
+        self.assertTrue(any("confirmed_damage=true" in x and "by_cadet=True" in x for x in w.messages))
+        self.assertEqual(w.controller._state, "Retreat")
+
+    def test_lost_target_interrupts_orbit_without_attack(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.titans.items.clear()
+        w.tick()
+        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertFalse(w.cadet.attacking)
+        self.assertIn(("release_left",), w.cadet.calls)
+
+    def test_combat_arc_off_falls_back_to_map_traversal(self):
+        w = self.setup_close_orbit("Off")
+        self.assertFalse(w.controller.TryStartTitanOrbit())
+        self.assertNotIn("OrbitAttach", w.controller._state)
+        self.assertFalse(any(x[0] == "launch" for x in w.cadet.calls))
+
+    def test_orbit_attachment_lost_aborts_and_waits_for_hook_retraction(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.tick()
+        w.cadet.LeftHookPosition = Vector(500, 40, 500)
+        w.tick()
+        self.assertEqual(w.controller._state, "WaitHook")
+        self.assertFalse(w.cadet.IsHookedLeft)
+        self.assertTrue(any("attachment_moved_away_from_nape" in x for x in w.messages))
+        w.cadet.LeftHookReady = True
+        w.tick()
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_attack_timeout_reports_no_damage_without_fabricating_swing(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = w.titan.NapePosition
+        w.controller.AcquireTarget()
+        w.controller.Enter("AttackSetup", "test")
+        w.tick()
+        w.tick(0.31)
+        w.tick(1.1)
+        result = [x for x in w.messages if "event=attack_result" in x][-1]
+        self.assertIn("confirmed_damage=false", result)
+        self.assertIn("attack_state_observed=False", result)
+        self.assertNotIn("confirmed_kill=true", result)
+
+    def test_collision_risk_aborts_arc_before_attacking(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.cadet.Velocity = Vector(0, 0, 10)
+        w.hit = NS(Point=Vector(0, 8, 20), Distance=3.0)
+        w.tick()
+        self.assertEqual(w.controller._state, "WaitHook")
+        self.assertTrue(any("orbit_end" in x and "collision_risk" in x for x in w.messages))
+        self.assertFalse(w.cadet.attacking)
+
+    def test_alternating_arc_changes_side_after_failed_attempt(self):
+        w = self.setup_close_orbit("Alternate")
+        self.assertTrue(w.controller.TryStartTitanOrbit())
+        self.assertEqual(w.controller._orbitSide, 1.0)
+        w.controller.EndOrbit("test")
+        w.cadet.LeftHookReady = True
+        self.assertTrue(w.controller.TryStartTitanOrbit())
+        self.assertEqual(w.controller._orbitSide, -1.0)
+        self.assertEqual(w.controller._orbitAttempts, 2)
+        w.controller.EndOrbit("test")
+        w.cadet.LeftHookReady = True
+        self.assertFalse(w.controller.TryStartTitanOrbit())
+
+    def test_arc_attack_window_logs_arc_end_and_attempts_real_attack(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.tick()
+        w.cadet.Position = Vector(0, 8, 35)
+        w.tick()
+        self.assertEqual(w.controller._state, "AttackSetup")
+        self.assertTrue(any("orbit_end" in x and "reason=attack_window" in x and "radial_cross=" in x for x in w.messages))
+        w.tick()
+        self.assertIn(("attack", True), w.cadet.calls)
+        attempt = [x for x in w.messages if "event=attack_attempt" in x][-1]
+        self.assertIn("human_state=", attempt)
+        self.assertIn("target_forward=", attempt)
+
+    def test_orbit_low_gas_preempts_hooks_and_resumes_mission(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.tick()
+        w.cadet.CurrentGas = 20
+        w.tick()
+        self.assertEqual(w.controller._state, "SeekSupply")
+        self.assertEqual(w.controller._resumeAfterSupply, "Engage")
+        self.assertFalse(w.cadet.IsHookedLeft)
+
+    def test_wrong_character_and_missing_titan_never_launch_titan_arc(self):
+        w = self.setup_close_orbit()
+        w.sphere_hit = NS(Type="Human")
+        self.assertFalse(w.controller.TryStartTitanOrbit())
+        w.sphere_hit = None
+        self.assertFalse(w.controller.TryStartTitanOrbit())
+        self.assertFalse(any(x[0] == "launch" for x in w.cadet.calls))
+        self.assertEqual(w.controller._orbitAttempts, 0)
+
+    def test_hook_wait_timeout_and_hold_do_not_start_attack(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.cadet.LeftHookReady = False
+        w.controller.PlanApproach()
+        self.assertEqual(w.controller._state, "WaitHook")
+        w.tick(2.1)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        w.controller.Enter("WaitHook", "test")
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertFalse(w.cadet.attacking)
+
+    def test_map_blocked_attack_setup_falls_back_without_swing(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = w.titan.NapePosition
+        w.controller.AcquireTarget()
+        w.hit = NS(Point=Vector(0, 8, 41), Distance=1.0)
+        w.controller.Enter("AttackSetup", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+        self.assertTrue(any("attack_blocked" in x for x in w.messages))
+
+    def test_collision_check_has_priority_over_in_flight_attack(self):
+        w = self.setup_close_orbit()
+        w.controller.PlanApproach()
+        w.cadet.IsHookedLeft = True
+        w.cadet.LeftHookPosition = w.titan.NapePosition
+        w.cadet.Position = w.titan.NapePosition
+        w.cadet.Velocity = Vector(0, 0, 10)
+        w.hit = NS(Point=Vector(0, 8, 43), Distance=1.0)
+        w.tick()
+        self.assertEqual(w.controller._state, "WaitHook")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+
+    def test_other_actor_damage_does_not_end_window_before_cadet_callback(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = w.titan.NapePosition
+        w.controller.AcquireTarget()
+        w.controller.Enter("AttackSetup", "test")
+        w.tick()
+        w.tick(0.31)
+        w.controller.OnCharacterDamaged(w.titan, NS(ViewID=999), "other", 20)
+        w.tick(0.2)
+        self.assertEqual(w.controller._state, "VerifyAttack")
+        w.controller.OnCharacterDamaged(w.titan, w.cadet, "cadet", 100)
+        w.tick()
+        self.assertTrue(any("confirmed_damage=true" in x and "by_cadet=True" in x for x in w.messages))
+
+    def test_other_actor_damage_is_not_credited_to_cadet(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = w.titan.NapePosition
+        w.controller.AcquireTarget()
+        w.controller.Enter("AttackSetup", "test")
+        w.tick()
+        w.tick(0.31)
+        w.controller.OnCharacterDamaged(w.titan, NS(ViewID=999), "other", 20)
+        w.tick(1.1)
+        self.assertTrue(any("confirmed_damage=true" in x and "by_cadet=False" in x for x in w.messages))
+        self.assertEqual(w.controller._state, "Retreat")
 
     def test_retry_bans_target(self):
         w = World()

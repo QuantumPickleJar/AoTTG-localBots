@@ -97,7 +97,9 @@
         "ViewID",
         "AutoRefillGas",
         "Grounded",
-        "MaxGas"
+        "MaxGas",
+        "State",
+        "LeftHookPosition"
       ]
     },
     "Character": {
@@ -120,7 +122,8 @@
         "ViewID",
         "Grounded",
         "Health",
-        "MaxHealth"
+        "MaxHealth",
+        "CurrentAnimation"
       ]
     },
     "Titan": {
@@ -143,6 +146,11 @@
           "signature": "function LineCast(start: Vector3, end: Vector3, collideWith: string) -> LineCastHitResult",
           "min_args": 3,
           "max_args": 3
+        },
+        "SphereCast": {
+          "signature": "function SphereCast(start: Vector3, end: Vector3, radius: float, collideWith: string) -> Object",
+          "min_args": 4,
+          "max_args": 4
         }
       },
       "properties": []
@@ -255,7 +263,8 @@
       "methods": {},
       "properties": [
         "MapObjects",
-        "MapEditor"
+        "MapEditor",
+        "Titans"
       ]
     },
     "Object": {
