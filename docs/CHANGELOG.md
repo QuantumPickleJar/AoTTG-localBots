@@ -1,3 +1,9 @@
+## M2 Search & Destroy follow-up (unreleased)
+
+- Fixed a source-level pursuit loop that immediately cancelled ground fallback after an unsuccessful anchor search within the 68-unit ODM threshold. Added timed pursuit, stall-to-patrol recovery, and target ban. The actual cause of the reported live Engage failure remains unconfirmed.
+- Treat a missing target after an attack as lost, not a confirmed kill; log callback attribution independently. Retain physical attacks and the Explore navigation path.
+- Stop navigation on supply timeout, approach marked supply points more closely, and retain observed-gas-only refill verification. Added a bounded opt-in M2 watcher and mission/event diagnostics. Live attack and resupply remain unverified.
+
 # Changelog
 
 ## M2 Wave-mode combat prototype — unreleased, pending gameplay validation

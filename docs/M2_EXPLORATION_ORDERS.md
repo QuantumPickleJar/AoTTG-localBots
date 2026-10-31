@@ -84,3 +84,8 @@ This feature is a testable M2 navigation slice, not proof that nape strikes, kil
 6. Finally, test **Hold** while returning to station, then **Engage** to resume. Retest after lobby recreation. Film the M2 cadet, show the exact M2 chat events, and note whether built-in stations appear in the component enumeration.
 
 **Status:** Static/mocked checks only; M2 UI, native supply triggers, and City routing need gameplay validation before merging.
+
+
+## Field-test correction
+
+Explore movement has been reported in-game; the successful movement mechanism is not yet isolated. Search & Destroy shares the existing Explore maneuvers, while explicit Explore remains noncombat and Hold cancels inputs. The source-level 68-unit fallback cancellation has been corrected; target stalls cause a temporary ban and a physical patrol attempt. These are source and mock-validated changes awaiting a live M2 replay. The supply stopping radius is now 2 units to try to reach the marked location more closely; proximity still does not prove a trigger overlap. Failed or unavailable supply still times out safely and restores the previous auto-refill setting. See `M2_MOVEMENT_DIAGNOSTICS.md` for the field procedure and limits.

@@ -360,7 +360,7 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._state, "PlanApproach")
         self.assertEqual(w.cadet.ai_state, "Idle")
-        self.assertTrue(any("motion_destination_near" in m for m in w.messages))
+        self.assertTrue(any("motion_segment_done" in m for m in w.messages))
 
     def test_specific_order_does_not_control_unselected_cadet(self):
         w = World()
@@ -538,6 +538,91 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "SeekSupply")
         w.tick()
         self.assertEqual(w.controller._supplySource, "host_marked_unverified")
+
+    def test_no_anchor_fallback_sustains_ground_pursuit_and_stall_patrol(self):
+        w = World()
+        w.tick()
+        w.controller.Enter("AcquireTarget", "test")
+        w.tick()
+        w.tick()  # no map hit, ground fallback inside hook radius
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertEqual(w.cadet.calls[-1][0], "move_to_target")
+        w.tick(1.0)
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        w.tick(4.1)
+        w.tick(5.1)
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+        w.tick()
+        self.assertEqual(w.controller._state, "ExploreGround")
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+
+    def test_target_appearing_during_ground_search_interrupts_patrol(self):
+        w = World()
+        w.tick()
+        w.titans.items.clear()
+        w.controller.Enter("Explore", "test")
+        w.controller._exploreFailures = 3
+        w.tick()
+        self.assertEqual(w.controller._state, "ExploreGround")
+        w.titans.append(w.titan)
+        w.tick(3.0)
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_disappearance_after_strike_is_not_a_confirmed_kill(self):
+        w = World()
+        w.tick()
+        w.controller._target = w.titan
+        w.controller._targetViewId = w.titan.ViewID
+        w.controller.Enter("VerifyAttack", "test")
+        w.titans.items.clear()
+        w.tick()
+        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertTrue(any("reason=target_lost" in m for m in w.messages))
+        self.assertFalse(any("confirmed_kill=true" in m for m in w.messages))
+
+    def test_hold_stops_persistent_navigation(self):
+        w = World()
+        w.tick()
+        w.controller.Enter("Explore", "test")
+        w.controller._exploreFailures = 3
+        w.tick()
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertEqual(w.cadet.ai_state, "Idle")
+        self.assertFalse(w.cadet.attacking)
+
+    def test_refill_resumes_explore_and_timeout_stops_navigation(self):
+        w = World()
+        w.tick()
+        w.controller._orderMode = "Explore"
+        w.cadet.CurrentGas = 20.0
+        w.tick()
+        w.cadet.CurrentGas = 35.0
+        w.tick()
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertEqual(w.controller._orderMode, "Explore")
+        w.cadet.CurrentGas = 20.0
+        w.supply_stations.append(NS(Position=Vector(4, 0, 100)))
+        w.tick()
+        w.tick()
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        w.tick(w.controller.SupplySearchTimeout + 1)
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertEqual(w.cadet.ai_state, "Idle")
+        self.assertEqual(w.cadet.CurrentGas, 20.0)
+
+    def test_optional_report_is_bounded_and_available_to_passive_watcher(self):
+        w = World()
+        w.controller.SaveRunReport = True
+        w.tick()
+        for i in range(1100):
+            w.controller.LogEvent("sample", "n=" + str(i))
+        self.assertEqual(w.controller._trace.count("\n"), 1000)
+        self.assertEqual(w.persistent["AICadetsM2Report"], w.controller._trace)
 
     def test_retry_bans_target(self):
         w = World()

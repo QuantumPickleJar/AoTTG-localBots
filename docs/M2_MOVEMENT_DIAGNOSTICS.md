@@ -1,6 +1,12 @@
 # M2 movement dispatch verification: City 1 / Training / Waves
 
-## Present verified status
+## Field-test update and remaining evidence
+
+The user reports that Explore physically moved in-game, and that F8 orders and control restoration work. This is gameplay evidence for Explore, but the available M2 controller trace and matching video were not located, so the specific successful call (ODM versus `MoveTo`) has not been isolated. The installed controller matches the branch baseline. Existing local Watch0–7 files identify M1, not M2. Do not treat them as evidence of M2 movement. The current Player log was empty and the previous log contained no M2 events.
+
+A source-level Engage defect is established: inside 68 units, `no_suitable_anchor` started `MoveToTarget`, then `ApproachGroundStep` immediately called `Idle` because the target was already inside 68 units. This can cause rapid planning without physical pursuit. It is a plausible contributor, not a proven diagnosis of the recorded field failure. Ground fallback now uses a separate, bounded segment and stall checks; a stalled target is temporarily banned to allow a ground patrol. Ordinary Explore traversal and `MoveTo` remain in place.
+
+## Earlier investigation (historical)
 
 M2 command-panel `REQUESTED` and controller `order_applied` messages have been observed by the user, but physical movement is **not** observed. A command acknowledgement confirms a change of the Custom Logic controller state, not that the game applied a Human AI movement command.
 
@@ -39,3 +45,15 @@ The next phase requires comparing runtime **positions over time**, not just stat
 If the repository can be tested against the live game, prioritize one owned human NPC, no Titans, with a **simple physically controlled straight-line MoveTo trial** (5â€“10 seconds), and a separate verified wall-hook trial. Correlate events by bot name, host, run ID, tick and game-time; measure position, velocity, ownership and AI state. Never bypass engine AI physics with direct position writes.
 
 Keep changes under the **single existing M2 branch** `feat/m2-exploration-and-orders` and its draft PR #6. Do not merge until live movement is demonstrated. Original M1 scripts remain untouched.
+
+
+## Next controlled City 1 / Training / Waves test
+
+1. Back up installed addons. Install the branch versions of `AICadetsWaveCadet.cl`, `AICadetsCommandPanel.cl`, and optionally `AICadetsM2Watcher.cl`. In the controller set `SaveRunReport = true` for the test. Start a private master-host lobby; disable M1 bots and the M1 watcher. First run without the optional watcher if addon interaction is in doubt.
+2. Give EXPLORE with no Titans. Record video and `motion_command`, `motion_observed`, hooks and AI state. Compare timestamps, position and displacement to identify whether walking or ODM produced movement. Then issue HOLD and check movement inputs stop.
+3. Give ENGAGE with no Titan, allow patrol, then spawn a Titan. Record acquisition. For a distant target compare initial and later distances and physical positions; test a nearby target with no usable anchor and verify `fallback=True` remains in `ApproachGround` and actual movement occurs. A stationary bot should report a stall, ban and patrol.
+4. With a viable anchor, capture launch, attachment, release, approach and `attack_attempt`. Observe HUD and `target_damaged`/`titan_die` callbacks separately. `by_cadet` identifies attribution from the callback; disappearing from the roster alone is not a confirmed kill. Check a surviving or lost target returns to search.
+5. Separately consume gas, stand in a functioning station and MARK supply there, then order RESUPPLY. Capture the route, actual overlap and gas before/after. `supply_arrived` is only a distance test, not proof of trigger entry; only `resupply_verified` indicates observed gas increase. Check resumed Explore and Engage separately. A full tank cannot demonstrate refill. Built-in station enumeration and AI refill remain unverified.
+6. The optional watcher saves `AICadetsM2WatchN` in `Documents/Aottg2/PersistentData`: one owned M2 cadet, up to 90 seconds or 500 records, sampled while moving. Correlate run ID, cadet, game time and state with video and controller events. Enable `SaveRunReport` so the watcher snapshots the bounded controller trace in the shared data. The file may contain unrelated shared properties; inspect it before sharing. It has not been validated in-game. Chat stops after 260 events and trace capture after 1000; event IDs reveal gaps.
+
+Rollback by restoring the backed-up installed addons and disabling the optional watcher. Python tests model controller decisions and do not run game physics or prove attacks, damage, kills, station overlap, or refill.
