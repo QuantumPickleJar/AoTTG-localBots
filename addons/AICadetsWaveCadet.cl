@@ -4,6 +4,10 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
+    ProfileName = "Steady scout";
+    Persistence = 3;
+    AerialPreference = 3;
+    RepositionSkill = 3;
     SpawnSide = 4.0;
     MinGasReserve = 10.0;
     MinAttackGas = 14.0;
@@ -18,7 +22,7 @@ addon AICadetsWaveCadet
     TraverseProgressMin = 4.0;
     MaxTraversePerTarget = 30;
     MaxTargetRetries = 3;
-    MaxRecoveriesPerTarget = 2;
+    MaxRecoveriesPerTarget = 4;
     ExploreSegmentDistance = 58.0;
     ExploreScanSeconds = 2.5;
     ExploreGroundSeconds = 9.0;
@@ -55,6 +59,8 @@ addon AICadetsWaveCadet
     _groundNextCheck = 0.0;
     _groundStalledChecks = 0;
     _groundFallback = false;
+    _groundBearing = null;
+    _nextTravelProbe = 0.0;
     _orderSequence = 0;
     _orderMode = "Engage";
     _nextOrderStatus = 0.0;
@@ -124,6 +130,11 @@ addon AICadetsWaveCadet
         self._eligible = Network.IsMasterClient;
         if (!self._eligible)
         {
+            return;
+        }
+        if (self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
+        {
+            self.Terminate("failure", "invalid_behavior_profile");
             return;
         }
         self._runStart = Time.GameTime;
@@ -243,6 +254,11 @@ addon AICadetsWaveCadet
         if (self._state == "ExploreGround")
         {
             self.ExploreGroundStep();
+            return;
+        }
+        if (self._state == "RecoverGround")
+        {
+            self.RecoverGroundStep();
             return;
         }
         if (self._state == "ApproachGround")
@@ -422,6 +438,7 @@ addon AICadetsWaveCadet
         self._cadet.SetDisplayName(self._cadetName, true);
         self._cadet.Idle();
         self._direction = Vector3.Normalize(Vector3(host.Forward.X, 0.0, host.Forward.Z));
+        self.LogEvent("behavior_profile", "name=" + self.ProfileName + " persistence=" + Convert.ToString(self.Persistence) + " aerial=" + Convert.ToString(self.AerialPreference) + " reposition_skill=" + Convert.ToString(self.RepositionSkill));
         self.LogEvent("cadet_spawned", "name=" + self._cadetName + " view_id=" + Convert.ToString(self._cadet.ViewID));
         self.Enter("Regroup", "spawned");
         self.PublishOrderStatus();
@@ -486,6 +503,15 @@ addon AICadetsWaveCadet
                 continue;
             }
             score = 260.0 - distance;
+            # Momentum breaks close choices only at acquisition, never every tick.
+            if (self._cadet.Velocity.Magnitude >= 9.0)
+            {
+                score = score + Vector3.Dot(Vector3.Normalize(self._cadet.Velocity), Vector3.Normalize(toNape)) * 18.0;
+            }
+            if (self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), titan.NapePosition) != null)
+            {
+                score = score - 20.0;
+            }
             if (titan.IsCrawler)
             {
                 score = score - 12.0;
@@ -604,6 +630,27 @@ addon AICadetsWaveCadet
         {
             self._direction = Vector3.Normalize(baseDirection * 0.8 + horizontalVelocity.Normalized * 0.2);
         }
+        self.FindTraverseAnchor();
+        if (self._anchor == null)
+        {
+            self.LogEvent("anchor_search_failed", "goal=" + Convert.ToString(self._traverseGoal) + " position=" + Convert.ToString(self._cadet.Position) + " leg=" + Convert.ToString(self._trLeg));
+            self._trOutcome = "no_suitable_anchor";
+            self.FinishTraverse();
+            return;
+        }
+        self.Enter("TraverseAttach", "hook_launch");
+        self._cadet.AimAt(self._anchor);
+        if (self._trLeg == 1)
+        {
+            self._cadet.Jump();
+        }
+        self._cadet.LaunchHookLeft(self._anchor);
+        self.LogEvent("hook_launch", "mode=" + self._traverseMode + " leg=" + Convert.ToString(self._trLeg) + " anchor=" + Convert.ToString(self._anchor));
+    }
+
+    # Shared geometric probe. It never cancels navigation or launches a hook.
+    function FindTraverseAnchor()
+    {
         self._anchor = null;
         self._bestScore = -100000.0;
         right = Vector3(self._direction.Z, 0.0, 0.0 - self._direction.X);
@@ -625,21 +672,22 @@ addon AICadetsWaveCadet
             self.ConsiderAnchor(Vector3.Normalize(self._direction + right * 1.8), rise);
             self.ConsiderAnchor(Vector3.Normalize(self._direction - right * 1.8), rise);
         }
-        if (self._anchor == null)
-        {
-            self.LogEvent("anchor_search_failed", "goal=" + Convert.ToString(self._traverseGoal) + " position=" + Convert.ToString(self._cadet.Position) + " leg=" + Convert.ToString(self._trLeg));
-            self._trOutcome = "no_suitable_anchor";
-            self.FinishTraverse();
-            return;
-        }
-        self.Enter("TraverseAttach", "hook_launch");
-        self._cadet.AimAt(self._anchor);
-        if (self._trLeg == 1)
-        {
-            self._cadet.Jump();
-        }
-        self._cadet.LaunchHookLeft(self._anchor);
-        self.LogEvent("hook_launch", "mode=" + self._traverseMode + " leg=" + Convert.ToString(self._trLeg) + " anchor=" + Convert.ToString(self._anchor));
+    }
+
+    function HasTravelAnchor(goal)
+    {
+        oldAnchor = self._anchor;
+        oldDirection = self._direction;
+        oldLeg = self._trLeg;
+        toGoal = goal - self._cadet.Position;
+        self._direction = Vector3.Normalize(Vector3(toGoal.X, 0.0, toGoal.Z));
+        self._trLeg = 1;
+        self.FindTraverseAnchor();
+        found = self._anchor != null;
+        self._anchor = oldAnchor;
+        self._direction = oldDirection;
+        self._trLeg = oldLeg;
+        return found;
     }
 
     function TraverseAttachStep()
@@ -762,7 +810,7 @@ addon AICadetsWaveCadet
         if (self._targetRetryCount > self.MaxTargetRetries)
         {
             self._bannedTargetViewId = self._targetViewId;
-            self._banUntil = Time.GameTime + 4.0;
+            self._banUntil = Time.GameTime + 15.0;
             self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=" + self._lastFailureReason);
             self.Enter("AcquireTarget", "retry_exhausted");
             return;
@@ -844,14 +892,62 @@ addon AICadetsWaveCadet
         self.StartTraverse(retreatPoint, "retreat");
     }
 
+    function RecoveryBudget()
+    {
+        budget = 1.0 + (self.Persistence - 1.0) * 0.5;
+        if (budget > self.MaxRecoveriesPerTarget)
+        {
+            budget = self.MaxRecoveriesPerTarget;
+        }
+        return budget;
+    }
+
+    function RecoverGroundStep()
+    {
+        if (!self.RefreshTarget())
+        {
+            self._cadet.Idle();
+            self.Enter("AcquireTarget", "reposition_target_lost");
+            return;
+        }
+        if (Vector3.Distance(self._cadet.Position, self._groundGoal) <= 4.0 || Time.GameTime - self._stateStart >= 6.0)
+        {
+            self._cadet.Idle();
+            self.LogEvent("reposition_end", "moved=" + Convert.ToString(Vector3.Distance(self._cadet.Position, self._groundStartPosition)));
+            self.Enter("PlanApproach", "reposition_retry_same_target");
+        }
+    }
+
     function RecoverStep()
     {
-        if (self._targetRecoveries >= self.MaxRecoveriesPerTarget)
+        if (self._targetRecoveries >= self.RecoveryBudget())
         {
             self.LogEvent("recover_exhausted", "target=" + Convert.ToString(self._targetViewId) + " reason=" + self._lastFailureReason);
             self._bannedTargetViewId = self._targetViewId;
-            self._banUntil = Time.GameTime + 4.0;
+            self._banUntil = Time.GameTime + 15.0;
             self.Enter("AcquireTarget", "recover_budget_exhausted");
+            return;
+        }
+        if (self._cadet.Grounded && self.RefreshTarget())
+        {
+            self._targetRecoveries = self._targetRecoveries + 1;
+            toTarget = self._target.Position - self._cadet.Position;
+            direction = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+            right = Vector3(direction.Z, 0.0, 0.0 - direction.X);
+            if (self._targetRecoveries == 2)
+            {
+                right = right * -1.0;
+            }
+            self._groundGoal = self._cadet.Position + direction * 8.0 + right * (8.0 + self.RepositionSkill * 3.0);
+            if (self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), self._groundGoal + Vector3(0.0, 1.0, 0.0)) != null)
+            {
+                self._groundGoal = self._cadet.Position + direction * 8.0 - right * (8.0 + self.RepositionSkill * 3.0);
+            }
+            self.StopODM();
+            self._groundStartPosition = self._cadet.Position;
+            self._cadet.MoveTo(self._groundGoal, 3.0);
+            self.LogEvent("reposition_start", "goal=" + Convert.ToString(self._groundGoal) + " attempt=" + Convert.ToString(self._targetRecoveries));
+            self.Enter("RecoverGround", "retain_target_change_route");
             return;
         }
         if (!self._cadet.LeftHookReady || self._cadet.CurrentGas < self.MinAttackGas)
@@ -980,6 +1076,9 @@ addon AICadetsWaveCadet
             return;
         }
         self._groundFallback = fallback;
+        toTarget = self._target.Position - self._cadet.Position;
+        self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
+        self._nextTravelProbe = Time.GameTime + 1.0;
         self._groundMovementStartedAt = Time.GameTime;
         self._groundProgressPosition = self._cadet.Position;
         self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
@@ -1010,13 +1109,31 @@ addon AICadetsWaveCadet
             self.Enter("PlanApproach", "ground_approach_close");
             return;
         }
+        if (Time.GameTime >= self._nextTravelProbe)
+        {
+            self._nextTravelProbe = Time.GameTime + 14.0 - self.AerialPreference * 2.0;
+            if (self._cadet.LeftHookReady && self._cadet.CurrentGas > self.MinAttackGas && self._targetTraverseCount < self.MaxTraversePerTarget)
+            {
+                viable = self.HasTravelAnchor(self._target.NapePosition);
+                self.LogEvent("travel_probe", "viable=" + Convert.ToString(viable) + " distance=" + Convert.ToString(distance));
+                if (viable)
+                {
+                    self.StartTraverse(self._target.NapePosition, "approach");
+                    return;
+                }
+            }
+        }
         if (Time.GameTime >= self._groundNextCheck)
         {
             progress = Vector3.Distance(self._cadet.Position, self._groundProgressPosition);
+            forwardProgress = Vector3.Dot(self._cadet.Position - self._groundProgressPosition, self._groundBearing);
+            self.LogEvent("pursuit_progress", "toward_previous_target=" + Convert.ToString(forwardProgress) + " displacement=" + Convert.ToString(progress) + " distance=" + Convert.ToString(distance));
+            toTarget = self._target.Position - self._cadet.Position;
+            self._groundBearing = Vector3.Normalize(Vector3(toTarget.X, 0.0, toTarget.Z));
             self.LogEvent("motion_observed", "kind=ground_target moved=" + Convert.ToString(progress) + " speed=" + Convert.ToString(self._cadet.Velocity.Magnitude) + " ai_state=" + self._cadet.GetAIState());
             self._groundProgressPosition = self._cadet.Position;
             self._groundNextCheck = Time.GameTime + self.GroundProgressWindow;
-            if (progress < 1.0)
+            if (progress < 1.0 || forwardProgress < 1.0)
             {
                 self._groundStalledChecks = self._groundStalledChecks + 1;
             }
@@ -1028,6 +1145,12 @@ addon AICadetsWaveCadet
             {
                 self.LogEvent("motion_stalled", "kind=ground_target dist=" + Convert.ToString(distance));
                 self._cadet.Idle();
+                if (self._targetRecoveries < self.RecoveryBudget())
+                {
+                    self._lastFailureReason = "ground_not_advancing";
+                    self.Enter("Recover", "ground_not_advancing");
+                    return;
+                }
                 self._bannedTargetViewId = self._targetViewId;
                 self._banUntil = Time.GameTime + 15.0;
                 self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=ground_stalled");

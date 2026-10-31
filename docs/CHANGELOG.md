@@ -1,3 +1,10 @@
+## M2 tactical pursuit and profile foundation (unreleased)
+
+- Probe existing ODM anchor geometry during distant ground pursuit without cancelling ground navigation on an empty probe.
+- Measure directional pursuit progress; keep the current target through bounded ground repositioning before abandoning it. Momentum and obstruction influence new acquisition only.
+- Add named profiles with 1–5 persistence, aerial preference, and reposition skill settings. Defaults retain explicit Explore behavior and hard movement/resource/attack limits.
+- Watch3/4 and video findings, profile combinations, rollback and next field trials are documented in M2_BEHAVIOR_PROFILES.md. Engine spiral steering and combat remain unverified.
+
 ## M2 Watch1 follow-up (unreleased)
 
 - Documented observed Engage movement and Explore stall without inferring target-directed progress from position alone. One spawned cadet is current design; multi-cadet cooperation is not yet implemented.

@@ -552,11 +552,19 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.cadet.ai_state, "MoveTo")
         w.tick(4.1)
         w.tick(5.1)
-        self.assertEqual(w.controller._state, "Explore")
+        self.assertEqual(w.controller._state, "Recover")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "PlanApproach")
+        w.controller._targetRecoveries = w.controller.RecoveryBudget()
+        w.controller.Enter("Recover", "test_exhausted")
+        w.tick()
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
         w.tick()
-        self.assertEqual(w.controller._state, "ExploreGround")
-        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        self.assertEqual(w.controller._state, "Explore")
 
     def test_target_appearing_during_ground_search_interrupts_patrol(self):
         w = World()
@@ -635,6 +643,97 @@ class WaveM2Tests(unittest.TestCase):
             w.controller.LogEvent("sample", "n=" + str(i))
         self.assertEqual(w.controller._trace.count("\n"), 3000)
         self.assertEqual(w.persistent["AICadetsM2Report-AICadetsM2-1"], w.controller._trace)
+
+    def test_distant_pursuit_uses_viable_odm_without_waiting_for_68_units(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(0, 0, 600)
+        w.titan.NapePosition = Vector(0, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.PlanApproach()
+        w.hit = NS(Point=Vector(4, 20, 48), Distance=46.0)
+        w.tick(1.1)
+        self.assertEqual(w.controller._state, "TraverseAttach")
+        self.assertTrue(any(x[0] == "launch" for x in w.cadet.calls))
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_empty_travel_probe_does_not_cancel_ground_movement(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(True)
+        before = list(w.cadet.calls)
+        w.tick(1.1)
+        self.assertEqual(w.cadet.calls, before)
+        self.assertEqual(w.cadet.ai_state, "MoveTo")
+
+    def test_sideways_displacement_is_not_target_progress(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(True)
+        bearing = w.controller._groundBearing
+        side = Vector(bearing.Z, 0, -bearing.X)
+        for i in range(2):
+            w.cadet.Position = w.cadet.Position + side * 5
+            # Keep each window's diagnostic bearing fixed for this lateral trial.
+            w.controller._groundBearing = bearing
+            w.tick(5.1)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_profiles_bound_recovery_and_hold_interrupts_reposition(self):
+        w = World()
+        w.tick()
+        w.controller.Persistence = 1
+        self.assertEqual(w.controller.RecoveryBudget(), 1)
+        w.controller.Persistence = 5
+        self.assertEqual(w.controller.RecoveryBudget(), 3)
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertEqual(w.cadet.ai_state, "Idle")
+
+    def test_momentum_only_biases_new_acquisition(self):
+        w = World()
+        w.tick()
+        behind = Titan(202)
+        behind.Position = Vector(4, 0, -35)
+        behind.NapePosition = Vector(4, 8, -35)
+        w.titans.append(behind)
+        w.cadet.Velocity = Vector(0, 0, 14)
+        w.controller.AcquireTarget()
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        w.controller.StartGroundApproach(True)
+        w.cadet.Velocity = Vector(0, 0, -14)
+        w.tick(0.1)
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_low_gas_preempts_ground_reposition(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        w.cadet.CurrentGas = 20
+        w.tick()
+        self.assertEqual(w.controller._state, "SeekSupply")
+        self.assertEqual(w.controller._resumeAfterSupply, "Engage")
+
+    def test_manual_explore_remains_noncombat_with_aerial_profile(self):
+        w = World()
+        w.tick()
+        w.controller.AerialPreference = 5
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Explore", "AICadetsCmdScope": "all"})
+        for i in range(20):
+            w.tick(0.5)
+        self.assertEqual(w.controller._targetViewId, 0)
+        self.assertFalse(any(x == ("attack", True) for x in w.cadet.calls))
 
     def test_retry_bans_target(self):
         w = World()
