@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-combat-arc-2";
+    _buildTag = "M2-combat-arc-3";
     GroundSteering = "Engine";
     # Experimental physical tether arc: Alternate, Left, Right, or Off.
     PreferredTactic = "NapeStrike";
@@ -109,6 +109,7 @@ addon AICadetsWaveCadet
     _targetKillByCadet = false;
     _combatTactic = "NapeStrike";
     _orbitInterceptLogged = false;
+    _attackReadyWaitLogged = false;
     _attackStateObserved = false;
     _orbitAttempts = 0;
     _orbitSide = 1.0;
@@ -1195,6 +1196,21 @@ addon AICadetsWaveCadet
             self.Enter("PlanApproach", "attack_window_lost");
             return;
         }
+        humanState = self._cadet.State;
+        if (humanState == "Land" || humanState == "Stun" || humanState == "Grab" || humanState == "Reload" || humanState == "Refill" || humanState == "Die" || humanState == "EmoteAction" || humanState == "SpecialAction" || humanState == "SpecialAttack" || humanState == "Attack")
+        {
+            if (!self._attackReadyWaitLogged)
+            {
+                self._attackReadyWaitLogged = true;
+                self.LogEvent("attack_wait_ready", "human_state=" + humanState + " target=" + Convert.ToString(self._targetViewId));
+            }
+            if (Time.GameTime - self._stateStart >= 0.8)
+            {
+                self.LogEvent("attack_not_ready", "human_state=" + humanState + " target=" + Convert.ToString(self._targetViewId));
+                self.Enter("Recover", "attack_state_timeout");
+            }
+            return;
+        }
         if (self.MapHit(self._cadet.Position, self._target.NapePosition) != null)
         {
             self.LogEvent("attack_blocked", "reason=map_obstruction target=" + Convert.ToString(self._targetViewId));
@@ -1612,6 +1628,9 @@ addon AICadetsWaveCadet
             if (path >= 30.0 && progress < path * 0.5)
             {
                 self.LogEvent("circling_detected", "path=" + Convert.ToString(path) + " displacement=" + Convert.ToString(progress) + " forward=" + Convert.ToString(forwardProgress));
+                self._bannedTargetViewId = self._targetViewId;
+                self._banUntil = Time.GameTime + 20.0;
+                self.LogEvent("target_banned", "view_id=" + Convert.ToString(self._targetViewId) + " reason=circling");
                 self.BeginObserve("circling_detected");
                 return;
             }
@@ -2172,6 +2191,10 @@ addon AICadetsWaveCadet
 
     function Enter(state, reason)
     {
+        if (state == "AttackSetup")
+        {
+            self._attackReadyWaitLogged = false;
+        }
         oldState = self._state;
         self._state = state;
         self._stateStart = Time.GameTime;

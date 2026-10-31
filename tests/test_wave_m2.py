@@ -773,7 +773,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-2")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-3")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1249,6 +1249,56 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._combatTactic, "NapeStrike")
         self.assertFalse(w.controller.SelectCombatTactic("UnverifiedTactic"))
         self.assertEqual(w.controller._combatTactic, "NapeStrike")
+
+    def test_attack_waits_for_landing_state_to_clear(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = w.titan.NapePosition
+        w.cadet.State = "Land"
+        w.controller.AcquireTarget()
+        w.controller.Enter("AttackSetup", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "AttackSetup")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+        self.assertTrue(any("attack_wait_ready" in x for x in w.messages))
+        w.cadet.State = "Idle"
+        w.tick(0.1)
+        self.assertEqual(w.controller._state, "Strike")
+        self.assertIn(("attack", True), w.cadet.calls)
+
+    def test_attack_readiness_timeout_and_hold_are_bounded(self):
+        w = World()
+        w.tick()
+        w.cadet.Position = w.titan.NapePosition
+        w.cadet.State = "Land"
+        w.controller.AcquireTarget()
+        w.controller.Enter("AttackSetup", "test")
+        w.tick(0.9)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+        w.controller.Enter("AttackSetup", "test_hold")
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertNotIn(("attack", True), w.cadet.calls)
+
+    def test_circle_temporarily_bans_target_to_avoid_immediate_repeat(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.StartGroundApproach(False)
+        for position in (Vector(14, 0, 0), Vector(14, 0, 10), Vector(4, 0, 10), Vector(4, 0, 0)):
+            w.cadet.Position = position
+            w.tick(1.0)
+        w.tick(1.1)
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+        w.tick(6.1)
+        w.tick()
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertIsNone(w.controller._target)
 
     def test_retry_bans_target(self):
         w = World()

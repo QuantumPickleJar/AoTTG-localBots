@@ -1,3 +1,7 @@
+## M2 combat-arc-3 (unreleased)
+
+- Watch16 recorded an attack input during Land with no observed Attack state, and repeated circling/pauses/reacquisition of the same Titan. Add bounded attack-state readiness waiting and a temporary target ban after detected circling. Live effect remains unverified.
+
 ## M2 combat-arc-2 (unreleased)
 
 - Watch13/14 show four observed attack states/animations and no observed damage. Add a closer, tethered inward intercept before strike input; the range is experimental and needs live calibration.
