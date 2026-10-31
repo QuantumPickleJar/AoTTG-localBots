@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-combat-arc-4";
+    _buildTag = "M2-combat-arc-5";
     GroundSteering = "Engine";
     # Experimental physical tether arc: Alternate, Left, Right, or Off.
     PreferredTactic = "NapeStrike";
@@ -104,6 +104,7 @@ addon AICadetsWaveCadet
     _targetRetryCount = 0;
     _targetTraverseCount = 0;
     _targetRecoveries = 0;
+    _hookWaitTimedOut = false;
     _targetDamaged = false;
     _targetDamageByCadet = false;
     _targetKilled = false;
@@ -337,11 +338,14 @@ addon AICadetsWaveCadet
             elif (self._cadet.LeftHookReady)
             {
                 self.LogEvent("hook_wait_end", "reason=ready target=" + Convert.ToString(self._targetViewId));
+                self._hookWaitTimedOut = false;
                 self.Enter("PlanApproach", "hook_ready_retry");
             }
             elif (Time.GameTime - self._stateStart >= 2.0)
             {
                 self.LogEvent("hook_wait_end", "reason=timeout target=" + Convert.ToString(self._targetViewId));
+                self._hookWaitTimedOut = true;
+                self._lastFailureReason = "hook_wait_timeout";
                 self.Enter("Recover", "hook_wait_timeout");
             }
             return;
@@ -564,6 +568,7 @@ addon AICadetsWaveCadet
         self._direction = Vector3.Normalize(Vector3(host.Forward.X, 0.0, host.Forward.Z));
         self.SelectCombatTactic(self.PreferredTactic);
         self.LogEvent("behavior_profile", "name=" + self.ProfileName + " persistence=" + Convert.ToString(self.Persistence) + " aerial=" + Convert.ToString(self.AerialPreference) + " reposition_skill=" + Convert.ToString(self.RepositionSkill));
+        self.LogEvent("combat_limits", "traverses=" + Convert.ToString(self.MaxTraversePerTarget) + " retries=" + Convert.ToString(self.MaxTargetRetries) + " recoveries=" + Convert.ToString(self.RecoveryBudget()) + " attack_verify=" + Convert.ToString(self.AttackVerifySeconds));
         self.LogEvent("cadet_spawned", "name=" + self._cadetName + " view_id=" + Convert.ToString(self._cadet.ViewID));
         self.Enter("Regroup", "spawned");
         self.PublishOrderStatus();
@@ -680,6 +685,8 @@ addon AICadetsWaveCadet
         self._targetRetryCount = 0;
         self._targetTraverseCount = 0;
         self._targetRecoveries = 0;
+        self._hookWaitTimedOut = false;
+        self._lastFailureReason = "none";
         self._orbitAttempts = 0;
         self._orbitSide = 1.0;
         self._lastDistanceToNape = Vector3.Distance(self._cadet.Position, self._target.NapePosition);
@@ -1135,7 +1142,10 @@ addon AICadetsWaveCadet
     function FinishTraverse()
     {
         self.StopODM();
-        self._targetTraverseCount = self._targetTraverseCount + 1;
+        if (self._traverseMode == "approach" || self._traverseMode == "recover")
+        {
+            self._targetTraverseCount = self._targetTraverseCount + 1;
+        }
         self.LogEvent("traverse_end", "mode=" + self._traverseMode + " outcome=" + self._trOutcome + " legs=" + Convert.ToString(self._trLeg));
         if (self._traverseMode == "supply")
         {
@@ -1400,6 +1410,15 @@ addon AICadetsWaveCadet
                 self.BeginObserve("escape_no_displacement");
                 return;
             }
+            # A physically different route gets a fresh approach budget, but
+            # never refunds the finite recovery attempts used to reach it.
+            if (self._targetTraverseCount >= self.MaxTraversePerTarget)
+            {
+                self._targetTraverseCount = 0;
+                self.LogEvent("approach_budget_refreshed", "reason=physical_reposition moved=" + Convert.ToString(moved) + " recoveries=" + Convert.ToString(self._targetRecoveries));
+            }
+            self._orbitAttempts = 0;
+            self._hookWaitTimedOut = false;
             self.Enter("PlanApproach", "reposition_retry_same_target");
         }
     }
@@ -1437,6 +1456,12 @@ addon AICadetsWaveCadet
             self._cadet.MoveTo(self._groundGoal, 3.0);
             self.LogEvent("reposition_start", "goal=" + Convert.ToString(self._groundGoal) + " attempt=" + Convert.ToString(self._targetRecoveries));
             self.Enter("RecoverGround", "retain_target_change_route");
+            return;
+        }
+        if (!self._cadet.LeftHookReady && self._cadet.CurrentGas >= self.MinAttackGas && !self._hookWaitTimedOut && self.RefreshTarget())
+        {
+            self.LogEvent("hook_wait_start", "target=" + Convert.ToString(self._targetViewId) + " after=recovery");
+            self.Enter("WaitHook", "recovery_hook_retracting");
             return;
         }
         if (!self._cadet.LeftHookReady || self._cadet.CurrentGas < self.MinAttackGas)

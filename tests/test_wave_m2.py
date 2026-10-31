@@ -773,7 +773,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-4")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-combat-arc-5")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1200,6 +1200,71 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._state, "Hold")
         self.assertFalse(w.cadet.attacking)
+
+    def test_airborne_recovery_waits_for_retracting_hook_and_retains_target(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.cadet.Grounded = False
+        w.cadet.LeftHookReady = False
+        w.controller._lastFailureReason = "collision_risk"
+        w.controller.Enter("Recover", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "WaitHook")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertNotEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+        w.cadet.LeftHookReady = True
+        w.tick()
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
+    def test_airborne_recovery_hook_wait_remains_bounded(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.cadet.Grounded = False
+        w.cadet.LeftHookReady = False
+        w.controller._lastFailureReason = "collision_risk"
+        w.controller.Enter("Recover", "test")
+        w.tick()
+        w.tick(2.1)
+        self.assertEqual(w.controller._state, "Recover")
+        w.tick()
+        self.assertEqual(w.controller._state, "Explore")
+        self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+
+    def test_successful_reposition_refreshes_approach_not_recovery_budget(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.MaxTraversePerTarget = 2
+        w.controller._targetTraverseCount = 2
+        w.controller._targetRecoveries = 1
+        w.controller._orbitAttempts = 2
+        w.controller._groundStartPosition = Vector(4, 0, 0)
+        w.controller._groundGoal = Vector(20, 0, 0)
+        w.cadet.Position = Vector(20, 0, 0)
+        w.controller.Enter("RecoverGround", "test")
+        w.tick()
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertEqual(w.controller._targetTraverseCount, 0)
+        self.assertEqual(w.controller._targetRecoveries, 1)
+        self.assertEqual(w.controller._orbitAttempts, 0)
+        self.assertTrue(any("approach_budget_refreshed" in m for m in w.messages))
+        w.tick()
+        self.assertNotEqual(w.controller._state, "Recover")
+
+    def test_retreat_and_patrol_do_not_consume_titan_approach_budget(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        for mode in ("retreat", "explore", "supply"):
+            w.controller._traverseMode = mode
+            w.controller._trOutcome = "completed"
+            w.controller._trStartPosition = w.cadet.Position
+            before = w.controller._targetTraverseCount
+            w.controller.FinishTraverse()
+            self.assertEqual(w.controller._targetTraverseCount, before)
 
     def test_map_blocked_attack_setup_falls_back_without_swing(self):
         w = World()

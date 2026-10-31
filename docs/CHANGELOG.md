@@ -1,3 +1,9 @@
+## M2 combat-arc-5 (unreleased)
+
+- Watch18 recorded three attack animations 45.3 and 37.9 seconds apart, with no damage confirmed. Aborted approaches, depleted recovery budgets, six-second observation and distant target switches filled the intervals; 37 collision forecasts are not themselves proof of false positives.
+- After measured ground repositioning, give an exhausted approach budget another bounded opportunity and retry Titan arcs without refunding recovery attempts. Retraction during airborne recovery now gets a bounded hook wait before target abandonment. Explore, supply and retreat traversals no longer consume the target's approach budget.
+- Record effective combat limits at spawn. The local saved addon settings inspected for this run specify five target traversals, versus the source default of 30; saved settings were not altered. These changes require live verification.
+
 ## M2 combat-arc-4 (unreleased)
 
 - Watch17 shows a Titan being banned by the circle detector despite substantial forward displacement. Require poor forward progress and poor closing distance as well as an inefficient path; keep the existing pause and temporary ban for genuine loops.
