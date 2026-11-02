@@ -1,0 +1,7 @@
+{
+  "schema_version": "aicadets.flight.v1",
+  "run_id": "SYNTHETIC-PERSONALITY-REPLAY",
+  "capture_tier": "synthetic",
+  "capture_complete": true,
+  "sample_phase_verified": false
+}
