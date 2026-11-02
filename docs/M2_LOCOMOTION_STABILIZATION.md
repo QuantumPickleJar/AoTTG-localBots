@@ -98,4 +98,12 @@ Run labels and matching clips were supplied by the user: Watch3 is Direct, Watch
 
 **Assessment: PARTIAL.** Direct fails the building-corner recovery case despite correctly detecting the wall. The chosen clear-ray escape point is not sufficient evidence of a traversable route: the cadet physically moved less than one unit. Engine has strong measured approach progress, but its later target changed and closing progress reversed, so it is not a matched A/B pass. Hold passes physically; Recovery moves and resumes, then still encounters a collision-risk failure. Watch4's attack animation remains unconfirmed for damage. Keep the M2-C1 gate closed until ground recovery passes.
 
-The next bounded correction is to use the remaining per-target recovery attempt after a ground reposition produces less than 2 units of displacement. The existing recovery policy already flips sides on attempt 2 and limits total attempts; this correction must preserve those limits and is **not yet gameplay-validated**. Its M2-L0 card is `docs/validation-runs/2026-11-02-M2-L0-alternate-escape-retry.md`.
+## November 2 alternate-side escape retry implementation
+
+Commit `1ed9e7666d09b0d47a1b4fe3c01406d65f8459bc` (`M2-locomotion-1-f8combo-3-escape-retry`) changes only the first no-displacement ground recovery outcome. If attempt 1 moves less than 2 units and the configured recovery budget allows attempt 2, the controller records `reposition_retry` and runs the existing opposite-side candidate selection once. If that second route also fails to move, it keeps the existing temporary target ban and Observe behavior. It does not raise the retry budget or change steering and attack behavior.
+
+The regression suite passes 140 tests, including a state-machine check that the alternate goal differs and that a second failure stops instead of looping. This is source/mock evidence only; it does not verify Custom Logic execution or physical obstacle recovery.
+
+The new controller file was deployed to `C:\Users\vmorr\Documents\Aottg2\CustomAddon\AICadetsWaveCadet.cl` and SHA-256 verified as `0CEE1C59489E23585F9653078AC5B5EDB3348D2A46BA88E0FC0E5872F413D2AC`. The previous installed file is backed up at `C:\Users\vmorr\AppData\Local\Temp\AoTTG-M2-EscapeRetry-rollback-20261102-135601\AICadetsWaveCadet.cl`. The CommandPanel and M2Watcher installed files were unchanged and hash-match the feature branch.
+
+**CURRENT GAMEPLAY RESULT: NOT YET RUN.** AoTTG2 was running during deployment and must be restarted before testing. The focused M2-L0 card is `docs/validation-runs/2026-11-02-M2-L0-alternate-escape-retry.md`. Keep M2-C1 closed until physical ground recovery and attack/damage evidence are separately accepted.
