@@ -150,6 +150,23 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(result["integrity_failures"], 1)
         self.assertIn("chunk_index_mismatch", kinds)
 
+    def test_invalid_manifest_frame_count_cannot_report_verified_coverage(self):
+        src = self.root / "invalid_manifest_count"
+        src.mkdir()
+        payload = (json.dumps({"type": "frame", "step": 1, "t": 0.02, "phase": "post_physics",
+                              "samples": [{"id": "human:1:0", "pos": [0, 0, 0]}]}) + "\n").encode()
+        (src / "000001.jsonl").write_bytes(payload)
+        (src / "metadata.json").write_text(json.dumps({"schema_version": "aicadets.flight.v1"}))
+        (src / "chunk_manifest.json").write_text(json.dumps({
+            "manifest_schema": "aicadets.flight.chunk-index.v1",
+            "chunks": [{"file": "000001.jsonl", "sha256": hashlib.sha256(payload).hexdigest(),
+                        "bytes": len(payload), "frame_count": "1"}],
+        }))
+        result = analyze(src, self.root / "invalid_manifest_count_report")
+        self.assertEqual(result["integrity_status"], "partial")
+        self.assertIsNone(result["frame_coverage_ratio"])
+        self.assertEqual(result["integrity_failures"], 1)
+
     def test_frame_level_fixed_delta_time_is_checked(self):
         src = self.root / "frame_delta"
         src.mkdir()

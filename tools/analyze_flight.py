@@ -150,6 +150,11 @@ def verify_chunks(reader, files):
             expected_frames += count
         else:
             expected_frames_known = False
+            failures.append({"file": name, "reason": "invalid_manifest_frame_count"})
+        for field in ("first_step", "last_step"):
+            value = entry.get(field)
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                failures.append({"file": name, "reason": f"invalid_manifest_{field}"})
     file_set = set(files)
     valid = []
     for name, entry in by_name.items():
@@ -440,12 +445,14 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                     observed_last = chunk_frame_steps[-1] if chunk_frame_steps else None
                     expected_count = entry.get("frame_count")
                     problems = []
-                    if isinstance(expected_count, int) and not isinstance(expected_count, bool):
+                    if (isinstance(expected_count, int) and not isinstance(expected_count, bool)
+                            and expected_count >= 0):
                         if len(chunk_frame_steps) != expected_count:
                             problems.append(f"frame_count expected={expected_count} actual={len(chunk_frame_steps)}")
                     for field, observed in (("first_step", observed_first), ("last_step", observed_last)):
                         expected = entry.get(field)
-                        if expected is not None and expected != observed:
+                        if (isinstance(expected, int) and not isinstance(expected, bool)
+                                and expected != observed):
                             problems.append(f"{field} expected={expected} actual={observed}")
                     if problems:
                         detail = "; ".join(problems)
