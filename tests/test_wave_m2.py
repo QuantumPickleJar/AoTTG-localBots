@@ -1,11 +1,16 @@
 """Source-driven tests for AICadetsWaveCadet.cl using mocked observations."""
 import unittest
 from pathlib import Path
+import sys
 from types import SimpleNamespace as NS
 
 from cl_harness import Vector, load_controller
 
-SOURCE = (Path(__file__).resolve().parents[1] / "addons" / "AICadetsWaveCadet.cl").read_text()
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from m2_trace_adapter import parse_log_event
+
+SOURCE = (ROOT / "addons" / "AICadetsWaveCadet.cl").read_text()
 
 
 class CLList:
@@ -247,6 +252,23 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
         self.assertEqual(w.controller._state, "PlanApproach")
         self.assertTrue(any("target_selected" in m and "distance=" in m for m in w.messages))
+
+    def test_real_m2_source_harness_emits_observable_target_choice_without_replay_fabrication(self):
+        w = World()
+        w.tick()
+        w.controller.Enter("AcquireTarget", "integration_trace_test")
+        w.tick()
+        rows = [parse_log_event(line) for line in w.controller._trace.splitlines() if line.strip()]
+        selected = next(row for row in rows if row["observed"]["event_name"] == "target_selected")
+        # This source-driven harness executes the actual .cl function through
+        # tests/cl_harness.py; it is not a game runtime or Unity physics test.
+        self.assertEqual(selected["details"]["view_id"], str(w.controller._targetViewId))
+        self.assertEqual(selected["observed"]["target_view_id"], str(w.controller._targetViewId))
+        self.assertEqual(selected["details"]["listed"], "1")
+        self.assertEqual(selected["replayability"]["status"], "unreplayable")
+        self.assertNotIn("decision_input", selected)
+        self.assertNotIn("decision_id", selected)
+        self.assertNotIn("step", selected)
 
     def test_distant_target_first_walks_then_dispatches_hook_near_titan(self):
         w = World()

@@ -53,6 +53,8 @@ The live `Human.Weapon`, `Human.CurrentSpecial`, cooldown fields and `Human.IsCa
 
 The reference functions implement eligibility and soft scoring only. They do not call Unity/Custom Logic and they are not wired to the production M2 controller. This separation avoids claiming that a passing Python comparison proves actual movement.
 
+Decision replay inputs now use this document's exact profile schema v1 and verify `profile_hash` against the serialized profile before running a comparison. The synthetic replay fixture declares `policy_version: "reference-demo-0.1"`; its agreement result is explicitly classified as `python_reference_policy_demo`, not as parity with M2 production behavior. The M2 source harness separately exercises `.cl` code through mocked API translations, and those results do not supply missing replay inputs or count as live runtime parity.
+
 ## Rescue opportunity and outcome model
 
 `RescueOpportunity` requires a stable opportunity/victim identity, optional threat identity, evidence kind, uncertainty, observation time, reaction window, expiry, feasible intervention descriptions, travel feasibility, safety and gas budgets, reservation state and a measured outcome object. Each `Intervention` records status, travel-time estimate and uncertainty, gas cost, risk, command requirements, special/weapon requirements and extra Carry/clearance gates.

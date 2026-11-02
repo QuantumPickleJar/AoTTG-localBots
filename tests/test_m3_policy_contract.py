@@ -123,6 +123,16 @@ class CompositionContractTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             validate_profile(profile)
 
+    def test_profile_schema_version_and_equipment_labels_are_strict_types(self):
+        profile = default_profile()
+        profile["schema_version"] = True
+        with self.assertRaises(ContractError):
+            validate_profile(profile)
+        profile = default_profile()
+        profile["loadout"]["special"] = ["Carry"]
+        with self.assertRaises(ContractError):
+            validate_profile(profile)
+
     def test_schema_zero_migration_preserves_personality_but_not_guessed_special(self):
         migrated = migrate_profile({"schema_version": 0, "name": "legacy", "rescue_priority": 0.9,
                                     "risk_tolerance": 0.2, "aggression": 0.6})
@@ -181,6 +191,26 @@ class CompositionContractTests(unittest.TestCase):
         result = rank_maneuvers(support_profile, [unsafe_rescue], eligible_state())
         self.assertIsNone(result["selected_id"])
 
+    def test_rescue_priority_and_aggression_stay_independent_under_safety_gates(self):
+        rescue = maneuver("rescue", utility={"progress": 0.2, "combat": 0.0, "rescue": 1.0,
+                                               "risk": 0.7, "gas_cost": 0.0})
+        attack = maneuver("attack", utility={"progress": 0.2, "combat": 1.0, "rescue": 0.0,
+                                               "risk": 0.1, "gas_cost": 0.0})
+        support_but_cautious = default_profile()
+        support_but_cautious["personality"].update({"rescue_priority": 1.0, "aggression": 0.0,
+                                                      "risk_tolerance": 0.1})
+        combat_but_cautious = default_profile()
+        combat_but_cautious["personality"].update({"rescue_priority": 0.0, "aggression": 1.0,
+                                                     "risk_tolerance": 0.1})
+        state = eligible_state(safety_budget=0.5)
+        support_result = rank_maneuvers(support_but_cautious, [rescue, attack], state)
+        combat_result = rank_maneuvers(combat_but_cautious, [rescue, attack], state)
+        self.assertEqual(support_result["selected_id"], "attack")
+        self.assertEqual(combat_result["selected_id"], "attack")
+        rejected_rescue = next(row for row in support_result["ranked"] if row["id"] == "rescue")
+        self.assertIn("safety_budget_unknown_or_exceeded", rejected_rescue["reasons"])
+        self.assertTrue(all(row["eligible"] for row in combat_result["ranked"] if row["id"] == "attack"))
+
     def test_low_gas_blocks_costly_maneuver_without_excluding_the_only_safe_fallback(self):
         costly = maneuver("costly", min_gas_fraction=0.3)
         fallback = maneuver("safe_fallback")
@@ -188,6 +218,17 @@ class CompositionContractTests(unittest.TestCase):
         self.assertEqual(result["selected_id"], "safe_fallback")
         rejected = next(x for x in result["ranked"] if x["id"] == "costly")
         self.assertIn("gas_below_maneuver_minimum", rejected["reasons"])
+
+    def test_unknown_gas_or_safety_budget_fails_closed_and_preserves_a_safe_fallback(self):
+        gas_sensitive = maneuver("gas_sensitive", min_gas_fraction=0.25)
+        risk_sensitive = maneuver("risk_sensitive", utility={"progress": 1.0, "risk": 0.1})
+        safe_hold = maneuver("safe_hold", utility={"progress": 0.0})
+        result = rank_maneuvers(default_profile(), [gas_sensitive, risk_sensitive, safe_hold],
+                                eligible_state(gas_fraction=None, safety_budget=None))
+        self.assertEqual(result["selected_id"], "safe_hold")
+        rejected = {row["id"]: row["reasons"] for row in result["ranked"] if not row["eligible"]}
+        self.assertIn("gas_fraction_unknown", rejected["gas_sensitive"])
+        self.assertIn("safety_budget_unknown_or_exceeded", rejected["risk_sensitive"])
 
     def test_seeded_replays_repeat_and_novelty_is_soft(self):
         options = [maneuver("left"), maneuver("right")]

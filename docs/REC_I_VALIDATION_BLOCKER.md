@@ -18,7 +18,9 @@ Run it against the current launcher installation root only if that path is avail
 
 - `tools/analyze_flight.py` accepts the reference `aicadets.flight.v1` trace format and optional hashed chunk manifest.
 - Synthetic fixtures and tests exercise multi-entity tracking, fixed-step coverage, gaps, integrity failure recovery, event correlation and evidence grades.
-- `tools/replay_decisions.py` extracts serialized planner decisions for deterministic offline policy comparisons. It does not replay Unity physics.
+- `tools/replay_decisions.py` extracts serialized planner decisions for deterministic offline policy comparisons. It does not replay Unity physics. Its `python_reference_policy_demo` agreement is separate from M2 controller behavior.
+- `tools/m2_trace_adapter.py` preserves the existing M2 `LogEvent` observations and reports missing decision-replay fields. It does not fabricate M3 profiles, candidate gates, decision IDs, stable spawn IDs, physics steps, or frames.
+- `tests/test_wave_m2.py` executes the actual M2 Custom Logic source through the project's constrained translation harness and mocked APIs. Those source-driven checks are not installed-game parser or physics validation.
 - `addons/AICadetsPrimitiveObserver.cl` is an opt-in, low-rate Custom Logic fallback for an isolated probe. It is not a physics-step recorder, has no verified post-physics phase, and cannot establish full entity/collision coverage.
 
 There is no game-side writer, bounded native queue, coverage registry, capture cap implementation, or deployable recorder package in this change. The offline reader cannot certify data that no verified recorder produced.

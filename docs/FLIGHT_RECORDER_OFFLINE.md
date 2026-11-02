@@ -17,6 +17,19 @@ Runs declare `schema_version: "aicadets.flight.v1"` in `metadata.json` and conta
 
 The optional `chunk_manifest.json` uses `manifest_schema: "aicadets.flight.chunk-index.v1"`. Each entry identifies a chunk by relative `file`, exact stored-byte `bytes`, SHA-256, `frame_count`, and optional first/last step. Hash and size checks run before parsing. Corrupt or missing chunks are reported and rejected while independent valid chunks can still be analyzed. Unindexed chunks are reported. Without this manifest, integrity is `not_provided`; it is not described as verified.
 
+## Existing M2 source trace bridge
+
+`addons/AICadetsWaveCadet.cl` currently writes `LogEvent` key/value lines. `tools/m2_trace_adapter.py` can preserve those lines as `m2_source_observation` events in a clearly incomplete `custom_logic_m2_log_events_only` run:
+
+```bash
+python3 tools/m2_trace_adapter.py m2_log.txt --out m2_observations
+python3 tools/replay_decisions.py m2_observations --out m2_replay_report
+```
+
+The adapter preserves the raw line and exact source fields. It does not turn event sequence IDs into decision IDs, cadet names into stable spawn IDs, legacy `behavior_profile` settings into an M3 profile, or timestamps into physics steps. The replay reader reports these events as observation-only and lists the contract fields they lack. The output is useful for inspecting what the controller actually logged; it cannot reconstruct or replay a complete M2 decision.
+
+The source-based M2 tests in `tests/test_wave_m2.py` execute functions from `AICadetsWaveCadet.cl` through `tests/cl_harness.py` with mocked game APIs. They verify source-level decisions and observed log fields, but do not run the AoTTG2 parser, installed runtime, or Unity physics. The Python `reference_policy` is a separate illustrative policy. Its replay agreement is labeled `python_reference_policy_demo` and is **not** M2 production-policy parity. A native M2 decision replay would require the controller to have emitted the full decision input contract and a same-step entity frame; that evidence does not currently exist, and this offline bridge does not modify the M2 controller.
+
 ## Evidence and attribution rules
 
 - A global step marker and a sample are separate. Missing steps, time mismatches, nonmonotonic values, declared gaps, bad chunks, and per-entity sampling gaps remain visible.
@@ -32,4 +45,4 @@ The optional `chunk_manifest.json` uses `manifest_schema: "aicadets.flight.chunk
 
 ## Local checks
 
-The fixture suite validates parsing, bounded reports, manifest integrity, frame coverage, event correlation and decision replay on synthetic data. See [REC-I status](REC_I_VALIDATION_BLOCKER.md) for the separate installed-game blocker. Until REC-I has a real calibrated pass, routine gameplay evidence remains video-first per the validation harness.
+The fixture suite validates parsing, bounded reports, manifest integrity, frame coverage, event correlation and decision replay on synthetic data. It also checks that source-harness M2 observations remain unreplayable when required state is absent. See [REC-I status](REC_I_VALIDATION_BLOCKER.md) for the separate installed-game blocker. Until REC-I has a real calibrated pass, routine gameplay evidence remains video-first per the validation harness.
