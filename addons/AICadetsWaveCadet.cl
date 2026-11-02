@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-locomotion-1-f8combo-2-holdrecovery";
+    _buildTag = "M2-locomotion-1-f8combo-3-escape-retry";
     # Ground Titan pursuit uses explicit planar steering. The native MoveTo
     # angle offsets are retained only as an opt-in comparison driver.
     GroundSteering = "Direct";
@@ -1413,6 +1413,13 @@ addon AICadetsWaveCadet
             self.LogEvent("reposition_end", "moved=" + Convert.ToString(moved));
             if (moved < 2.0)
             {
+                self._lastFailureReason = "escape_no_displacement";
+                if (self._targetRecoveries == 1 && self._targetRecoveries < self.RecoveryBudget())
+                {
+                    self.LogEvent("reposition_retry", "reason=escape_no_displacement moved=" + Convert.ToString(moved) + " next_attempt=2 budget=" + Convert.ToString(self.RecoveryBudget()));
+                    self.Enter("Recover", "escape_no_displacement_retry");
+                    return;
+                }
                 self._bannedTargetViewId = self._targetViewId;
                 self._banUntil = Time.GameTime + 15.0;
                 self.BeginObserve("escape_no_displacement");

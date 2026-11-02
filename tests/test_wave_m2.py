@@ -816,7 +816,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-2-holdrecovery")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-3-escape-retry")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1409,12 +1409,29 @@ class WaveM2Tests(unittest.TestCase):
         self.assertTrue(any("escape_route candidate=4" in x for x in w.messages))
         self.assertTrue(any(x[0] == "move_to" for x in w.cadet.calls))
 
-    def test_failed_escape_pauses_instead_of_repeating_same_route(self):
+    def test_failed_escape_tries_one_alternate_route_then_pauses_if_still_stuck(self):
         w = World()
         w.tick()
+        w.controller.Persistence = 3
+        self.assertEqual(w.controller.RecoveryBudget(), 2)
         w.controller.AcquireTarget()
         w.controller.Enter("Recover", "test")
         w.tick()
+        first_goal = w.controller._groundGoal
+        self.assertEqual(w.controller._targetRecoveries, 1)
+
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertEqual(w.controller._targetRecoveries, 1)
+        self.assertEqual(w.controller._bannedTargetViewId, 0)
+        self.assertTrue(any("reposition_retry" in x and "next_attempt=2" in x for x in w.messages))
+
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        second_goal = w.controller._groundGoal
+        self.assertNotEqual(second_goal, first_goal)
+        self.assertEqual(w.controller._targetRecoveries, 2)
+
         w.tick(6.1)
         self.assertEqual(w.controller._state, "Observe")
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
