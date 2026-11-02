@@ -43,4 +43,4 @@ PASS / FAIL / PARTIAL / INCONCLUSIVE CRITERIA: Pass the ground comparison only w
 
 ROLLBACK FILES OR COMMIT: Restore `AICadetsWaveCadet.cl` and `AICadetsCommandPanel.cl` from `C:\Users\vmorr\AppData\Local\Temp\AoTTG-M2-HoldRecovery-rollback-20261102-130500`; restore prior source from base commit `027ac43b2d77cbbaaa33b5a403b11de92177ea84` if needed. `AICadetsM2Watcher.cl` is unchanged.
 
-CURRENT RESULT: NOT YET RUN. This card is for a future user-performed gameplay session.
+CURRENT RESULT: **PARTIAL** — W3/W4/W5 were run on build `M2-locomotion-1-f8combo-2-holdrecovery`. W3 Direct reproduces wall blockage and near-zero recovery displacement. W4 Engine has strong initial pursuit but later negative target gain after a target switch. W5 confirms a physical Hold stop and recovery displacement, followed by `collision_risk` recovery exhaustion. See `2026-11-02-M2-L0-W3-W5-wall-encounter.md`. The planned clear-street matched A/B was not completed; do not treat these as a controlled comparison.
