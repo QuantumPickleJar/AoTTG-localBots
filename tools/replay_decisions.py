@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Any
 
 from analyze_flight import Reader, SCHEMA
+from m3_policy_contract import ContractError, profile_hash, validate_profile
 
 
 class ReplayError(ValueError):
@@ -44,14 +45,14 @@ def validate_input(event: dict) -> dict:
     profile = event.get('profile')
     if not isinstance(profile, dict):
         raise ReplayError('missing profile object')
-    for group in ('skill', 'movement_style', 'personality', 'loadout'):
-        if not isinstance(profile.get(group), dict):
-            raise ReplayError(f'missing profile.{group} object')
-    p = profile['personality']
-    if 'rescue_priority' in p:
-        rp = _finite_float(p['rescue_priority'], 'rescue_priority')
-        if not 0 <= rp <= 1:
-            raise ReplayError('rescue_priority must be within [0, 1]')
+    try:
+        validate_profile(profile)
+    except ContractError as err:
+        raise ReplayError(f'profile does not match M3 profile schema v1: {err}') from err
+    actual_profile_hash = profile_hash(profile)
+    recorded_profile_hash = event.get('profile_hash')
+    if not isinstance(recorded_profile_hash, str) or recorded_profile_hash != actual_profile_hash:
+        raise ReplayError('profile_hash does not match the validated serialized profile')
     candidates = event.get('candidates')
     if not isinstance(candidates, list):
         raise ReplayError('missing candidate list')
@@ -66,8 +67,20 @@ def validate_input(event: dict) -> dict:
             raise ReplayError(f"candidate {c['id']} missing validation status")
         if not isinstance(c.get('eligible'), bool):
             raise ReplayError(f"candidate {c['id']} must record an actual capability gate")
-        if not isinstance(c.get('eligibility_reasons'), list):
+        if not isinstance(c.get('eligibility_reasons'), list) or not all(
+                isinstance(reason, str) for reason in c['eligibility_reasons']):
             raise ReplayError(f"candidate {c['id']} missing eligibility reasons")
+        if not isinstance(c.get('mechanically_supported'), bool):
+            raise ReplayError(f"candidate {c['id']} must record mechanical support")
+        if c['status'] == 'definition_only' and c['eligible']:
+            raise ReplayError(f"definition-only candidate {c['id']} cannot be eligible")
+        if not c['mechanically_supported'] and c['eligible']:
+            raise ReplayError(f"unsupported candidate {c['id']} cannot be eligible")
+        metrics = c.get('metrics', {})
+        if not isinstance(metrics, dict):
+            raise ReplayError(f"candidate {c['id']} metrics must be an object")
+        for name, value in metrics.items():
+            _finite_float(value, f"candidate {c['id']}.metrics.{name}")
     observations = event.get('observations')
     if not isinstance(observations, dict):
         raise ReplayError('missing recorded observation object')
@@ -110,6 +123,16 @@ def read_pairs(source) -> tuple[dict, list[dict], list[dict]]:
                     if record.get('type') != 'event':
                         continue
                     typ = record.get('event')
+                    if typ == 'm2_source_observation':
+                        replayability = record.get('replayability', {})
+                        source = record.get('source')
+                        problems.append({
+                            'kind': 'm2_observation_not_replayable',
+                            'source_event_id': source.get('event_sequence') if isinstance(source, dict) else None,
+                            'missing': replayability.get('missing_fields', []) if isinstance(replayability, dict) else [],
+                            'detail': 'M2 LogEvent observations do not contain the complete decision replay input contract.',
+                        })
+                        continue
                     if typ not in ('decision_input', 'decision_result', 'action_outcome'):
                         continue
                     key = (record.get('id'), record.get('decision_id'))
@@ -161,11 +184,15 @@ def replay_with_policy(rows: list[dict], policy: Callable[[dict], str]) -> list[
             if not isinstance(predicted, str):
                 raise ReplayError('policy must return a choice ID string')
             actual = end.get('choice')
+            scope = ('python_reference_policy_demo' if policy is reference_policy
+                     else f"offline_policy:{getattr(policy, '__name__', policy.__class__.__name__)}")
             matches.append({'id': row['id'], 'decision_id': row['decision_id'],
                             'recorded_choice': actual, 'replay_choice': predicted,
                             'agrees': predicted == actual,
                             'physics_frame_present': row['has_entity_frame_at_input_step'],
-                            'policy_version': inp['policy_version']})
+                            'policy_version': inp['policy_version'],
+                            'comparison_scope': scope,
+                            'production_m2_parity': 'not_evaluated'})
         except ReplayError as exc:
             matches.append({'decision_id': row['decision_id'], 'error': str(exc)})
     return matches
@@ -208,14 +235,20 @@ def run(source, out, policy=None):
     comparisons = replay_with_policy(pairs, policy) if policy else []
     (out/'policy_replay.json').write_text(json.dumps(comparisons, indent=2)+'\n', encoding='utf-8')
     outcome_count = sum('action_outcome' in row for row in pairs)
+    policy_scope = ('not_run' if policy is None else
+                    'python_reference_policy_demo' if policy is reference_policy else
+                    f"offline_policy:{getattr(policy, '__name__', policy.__class__.__name__)}")
     summary = {'schema_version': SCHEMA, 'run_id': meta.get('run_id', 'unknown'),
                'capture_tier': meta.get('capture_tier', 'unknown'),
                'planner_decisions': len(pairs), 'inputs': len(scenarios),
                'results': sum('decision_result' in r for r in pairs),
                'measured_outcomes': outcome_count, 'problems': len(problems),
+               'm2_observations_not_replayable': sum(p.get('kind') == 'm2_observation_not_replayable' for p in problems),
                'physics_frame_correlated': sum(r.get('has_entity_frame_at_input_step', False) for r in pairs),
                'replay_agreement': sum(r.get('agrees', False) for r in comparisons),
                'replay_checked': sum('agrees' in r for r in comparisons),
+               'policy_comparison_scope': policy_scope,
+               'production_m2_policy_parity': 'not_evaluated_by_python_replay',
                'warning': 'Policy agreement tests decisions, NOT accuracy of mocked physics or gameplay.'}
     (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n', encoding='utf-8')
     return summary
@@ -225,7 +258,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('source')
     ap.add_argument('--out', default='replay_report')
-    ap.add_argument('--demo-policy', action='store_true', help='Use illustrative non-production policy for a synthetic example')
+    ap.add_argument('--demo-policy', action='store_true', help='Compare with the illustrative Python reference policy; this is not M2 production-policy parity')
     a = ap.parse_args()
     print(json.dumps(run(a.source, a.out, reference_policy if a.demo_policy else None), indent=2))
 

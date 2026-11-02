@@ -71,7 +71,9 @@ def validate_profile(profile: dict[str, Any]) -> dict[str, Any]:
         missing = sorted(PROFILE_KEYS - set(profile))
         extra = sorted(set(profile) - PROFILE_KEYS)
         raise ContractError(f"profile keys mismatch; missing={missing}, extra={extra}")
-    if profile["schema_version"] != PROFILE_SCHEMA_VERSION:
+    if (isinstance(profile["schema_version"], bool)
+            or not isinstance(profile["schema_version"], int)
+            or profile["schema_version"] != PROFILE_SCHEMA_VERSION):
         raise ContractError(f"unsupported profile schema_version {profile['schema_version']!r}")
     if not isinstance(profile["id"], str) or not profile["id"].strip():
         raise ContractError("profile.id must be a non-empty string")
@@ -89,11 +91,12 @@ def validate_profile(profile: dict[str, Any]) -> dict[str, Any]:
     loadout = profile["loadout"]
     if not isinstance(loadout, dict) or set(loadout) != {"weapon", "special", "observed", "source"}:
         raise ContractError("loadout requires exactly weapon, special, observed and source")
-    if loadout["weapon"] not in WEAPONS or loadout["special"] not in SPECIALS:
+    if (not isinstance(loadout["weapon"], str) or loadout["weapon"] not in WEAPONS
+            or not isinstance(loadout["special"], str) or loadout["special"] not in SPECIALS):
         raise ContractError("loadout contains an unknown weapon or special label")
     if not isinstance(loadout["observed"], bool):
         raise ContractError("loadout.observed must be boolean")
-    if loadout["source"] not in {"live_api", "unknown"}:
+    if not isinstance(loadout["source"], str) or loadout["source"] not in {"live_api", "unknown"}:
         raise ContractError("loadout.source must be live_api or unknown")
     if loadout["observed"] and loadout["source"] != "live_api":
         raise ContractError("observed equipment must identify live_api as its source")

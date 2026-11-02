@@ -1,8 +1,16 @@
 # AI Cadets — gameplay validation harness
 
-**Status:** Operational test-session playbook, November 2, 2026. **This is documentation, not an executable harness or evidence that a game test passed.** Branch: `feat/m2-exploration-and-orders`. Keep M2 PR #6 draft until actual gameplay acceptance.
+**Status:** Operational test-session playbook, November 2, 2026. **This is documentation, not an executable harness or evidence that a game test passed.** Prompts 1 and 2 have completed and their results have been analyzed; this records completion only and does not label either result pass, accepted, or gameplay-validated. Post-Prompt-2 stabilization continues. Branch: `feat/m2-exploration-and-orders`. Keep M2 PR #6 draft until actual gameplay acceptance.
 
-**Start here:** Run Luna Prompt 1 to inspect and prepare the latest feature-branch deployment, then run profile `M2-L0` *before* Prompt 2. Do **not** merge the PR merely to test. A feature branch can be checked out and copied directly to AoTTG2's Addons folder.
+**Start here:** Do not rerun or overwrite Prompts 1 or 2. Their baseline and Prompt-2 results have been analyzed. Continue offline stabilization and prepare a focused `M2-C1` smoke check for the next gameplay-changing revision when the installed client is available. Do **not** merge the PR merely to test. A feature branch can be checked out and copied directly to AoTTG2's Addons folder.
+
+## Current prompt status
+
+| Work | Status | Next gate |
+|---|---|---|
+| Prompt 1 / M2-L0 | Completed and analyzed. This status is not a pass or acceptance claim. | Preserve the existing evidence; repeat only if the analysis identifies a specific unresolved baseline question. |
+| Prompt 2 / M2-C1 | Completed and analyzed. This status is not a pass or acceptance claim. | Post-Prompt-2 stabilization is ongoing; smoke-test each later gameplay-changing M2 revision before calling it validated. |
+| REC-I installed-game audit | Blocked until the installed AoTTG2 files/runtime are available for inspection. | Establish Unity build/backend, permitted loading path and callback feasibility before considering native instrumentation. |
 
 ## Rules for every Luna/Codex implementation session
 
@@ -31,8 +39,8 @@ An add-on file existing in the installed folder is **not** proof that it is disa
 
 | Profile | Use it | Enable | Disable | Acceptance focus |
 |---|---|---|---|---|
-| **M2-L0** | After Prompt 1, *before* Prompt 2 | `AICadetsWaveCadet`, `AICadetsCommandPanel`, `AICadetsM2Watcher` (watcher recommended) | `AICadetsProbe`, `AICadetsTraversal`, `AICadetsTraversalReliable`, `AICadetsWatcher`, any future active test probes | `M2-locomotion-1`: Direct/Engine A/B, planar approach, stalls, Hold, recovery |
-| **M2-C1** | After each Prompt 2 gameplay-code revision | Same M2 trio | All M0/M1 and independent probes | Physical ODM pursue/close/strike; attack animation **and** attributed damage/kill; target recovery |
+| **M2-L0** | Prompt 1 baseline completed and analyzed; repeat only for an identified evidence gap | `AICadetsWaveCadet`, `AICadetsCommandPanel`, `AICadetsM2Watcher` (watcher recommended) | `AICadetsProbe`, `AICadetsTraversal`, `AICadetsTraversalReliable`, `AICadetsWatcher`, any future active test probes | `M2-locomotion-1`: Direct/Engine A/B, planar approach, stalls, Hold, recovery |
+| **M2-C1** | Prompt 2 results completed and analyzed; use for a focused check after later gameplay-changing stabilization revisions | Same M2 trio | All M0/M1 and independent probes | Physical ODM pursue/close/strike; attack animation **and** attributed damage/kill; target recovery |
 | **M1-R** | Only when M1 traversal regression is implicated | Exactly **one of** `AICadetsTraversal` or `AICadetsTraversalReliable`, optional `AICadetsWatcher` | Both M2 controller/panel/watcher, `AICadetsProbe`, the *other* M1 controller, all new active probes | Two anchors, release, gas, collisions/recovery, reset |
 | **M0-R** | Only when spawn/low-level hook regression is suspected | `AICadetsProbe` alone | All M1/M2 controllers and independent probes; omit watchers unless explicitly justified | Single-hook reference behavior |
 | **PRIM-I** | After REC-I passes; Prompt 3 supplies the isolated probe | `AICadetsPrimitiveProbe`; add REC-I recorder if calibrated, otherwise pair `AICadetsPrimitiveObserver` and one short calibration video as provisional evidence | M0/M1/M2 controllers, F8 panel, all M0/M1/M2 watchers and every other active probe | Ground Dodge, Jump, four one-direction Dash cases, gas pulse, jump + dash, airborne dash, ground steer, single hook; measured gas/state/velocity/displacement |
@@ -66,7 +74,9 @@ PASS / FAIL / PARTIAL / INCONCLUSIVE: Pass only when the commanded effect and ph
 ROLLBACK: Remove/disable both primitive add-ons; restore the previous Addons folder copy. No M2 runtime files are changed.
 ```
 
-## First required test: M2-L0
+## Prompt 1 baseline: M2-L0 (completed and analyzed)
+
+The procedure below is retained for traceability and any specifically justified rerun; it is not a request to repeat Prompt 1. Completion and analysis do not imply a pass. Preserve the original recordings and notes.
 
 - Source: `feat/m2-exploration-and-orders`, gameplay revision `ba0ba05` (`M2-locomotion-1`); later documentation-only commits do not alter the controller.
 - Host: fresh private master-host City 1 / Training / Waves; only the M2 trio enabled; saved addon settings may override defaults.
@@ -79,7 +89,7 @@ ROLLBACK: Remove/disable both primitive add-ons; restore the previous Addons fol
 
 ## Additional session cards
 
-**M2-C1 (after Prompt 2):** start with a single exposed Titan, then moving Titan, then building corner; collect current build ID, `orbit_intercept`, `attack_attempt`, actual Human Attack state, damage/death attribution and HUD/wave consistency. A visible swing without damage is **partial**, not a confirmed combat kill.
+**M2-C1 (Prompt 2 completed and analyzed):** the prior results have been reviewed; no pass is inferred by this status note. For a later gameplay-changing stabilization revision, start with a single exposed Titan, then moving Titan, then building corner; collect current build ID, `orbit_intercept`, `attack_attempt`, actual Human Attack state, damage/death attribution and HUD/wave consistency. A visible swing without damage is **partial**, not a confirmed combat kill.
 
 **PRIM-I (after Prompt 3):** fresh quiet/clear test area; one movement probe only. Isolate `Dodge`, `Jump`, `Dash(direction)`, `UseGas(true/false)`, Jump-then-Dash, then an airborne dash; record before/after gas, position, velocity, state, duration and outcome. Do not infer the combination works merely because individual commands are documented.
 
@@ -136,10 +146,9 @@ Use `docs/validation-runs/<date>-<profile>-<short-id>.md` for a short manual rep
 ## How sessions and prompts connect
 
 ```text
-Prompt 1 (deploy/preflight only)
-  -> M2-L0 live validation
-  -> Prompt 2 (only as indicated by M2-L0 findings)
-       -> M2-C1 after every material gameplay fix; repeat until reliable enough
+Prompt 1 / M2-L0 (completed and analyzed)
+  -> Prompt 2 / M2-C1 (completed and analyzed)
+       -> post-Prompt-2 stabilization (ongoing; focused M2-C1 check after each gameplay-changing revision)
   -> Prompt 3 isolated probe -> PRIM-I
   -> Prompt 4 catalog+profile unit checks -> COMP-E if executable M2 changes
   -> Prompt 5 Carry mechanics probe -> CARRY-I
