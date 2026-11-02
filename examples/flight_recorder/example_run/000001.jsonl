@@ -1,0 +1,12 @@
+{"type":"entity","action":"spawn","t":0.00,"step":0,"id":"human:1:0","kind":"human"}
+{"type":"entity","action":"spawn","t":0.00,"step":0,"id":"titan:2:0","kind":"titan"}
+{"type":"frame","step":1,"t":0.02,"phase":"post_physics","samples":[{"id":"human:1:0","kind":"human","pos":[0,0,0],"vel":[2,0,0],"state":"Run","ai_state":"MoveTo"},{"id":"titan:2:0","kind":"titan","pos":[10,0,0],"vel":[-1,0,0]}]}
+{"type":"event","step":1,"t":0.02,"event":"command","id":"human:1:0","action":"MoveTo","evidence":"observed"}
+{"type":"frame","step":2,"t":0.04,"phase":"post_physics","samples":[{"id":"human:1:0","kind":"human","pos":[0.04,0,0],"vel":[2,0,0],"state":"Run","ai_state":"MoveTo"},{"id":"titan:2:0","kind":"titan","pos":[9.98,0,0],"vel":[-1,0,0]}]}
+{"type":"event","step":2,"t":0.04,"event":"hook_launch","id":"human:1:0","evidence":"observed"}
+{"type":"event","step":3,"t":0.06,"event":"hook_attached","id":"human:1:0","evidence":"observed"}
+{"type":"frame","step":3,"t":0.06,"phase":"post_physics","samples":[{"id":"human:1:0","kind":"human","pos":[0.08,0,0],"vel":[2,0,0],"state":"Air","ai_state":"Idle"},{"id":"titan:2:0","kind":"titan","pos":[9.96,0,0],"vel":[-1,0,0]}]}
+{"type":"event","step":4,"t":0.08,"event":"attack_input","id":"human:1:0","evidence":"observed"}
+{"type":"frame","step":4,"t":0.08,"phase":"post_physics","samples":[{"id":"human:1:0","kind":"human","pos":[0.12,0,0],"vel":[2,0,0],"state":"Attack","ai_state":"Idle"},{"id":"titan:2:0","kind":"titan","pos":[9.94,0,0],"vel":[-1,0,0]}]}
+{"type":"gap","step":5,"t":0.10,"count":2,"reason":"synthetic_overflow_demo"}
+{"type":"frame","step":6,"t":0.12,"phase":"post_physics","samples":[{"id":"human:1:0","kind":"human","pos":[0.2,0,0],"vel":[2,0,0],"state":"Air","ai_state":"Idle"},{"id":"titan:2:0","kind":"titan","pos":[9.90,0,0],"vel":[-1,0,0]}]}
