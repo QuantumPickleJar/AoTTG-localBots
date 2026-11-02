@@ -52,7 +52,7 @@ An add-on file existing in the installed folder is **not** proof that it is disa
 ```text
 SESSION ID: PRIM-I
 GOAL: Measure each documented movement primitive in isolation before any M2 integration.
-BRANCH / EXACT COMMIT / REPORTED BUILD: Use the PRIM-I pull request head SHA; record the installed AoTTG2 build separately.
+BRANCH / EXACT COMMIT / REPORTED BUILD: `codex/2026-11-02-prim-i-offline` at primitive source commit `56cb7d90bd6b2df703b5be6127bcec221a82749f`; record the installed AoTTG2 build separately.
 FILES TO COPY: addons/AICadetsPrimitiveProbe.cl; addons/AICadetsPrimitiveObserver.cl only if REC-I has not qualified a recorder.
 ENABLE: AICadetsPrimitiveProbe with RunTest=true and exactly one TestCase per fresh round; calibrated REC-I recorder if available; otherwise AICadetsPrimitiveObserver with RunObserver=true.
 DISABLE: AICadetsProbe, AICadetsTraversal, AICadetsTraversalReliable, AICadetsWatcher, AICadetsWaveCadet, AICadetsCommandPanel, AICadetsM2Watcher, and every other controller or active probe.
