@@ -54,13 +54,14 @@ The saved `m2-test` preset is City1 / Waves with the M2 trio and Direct steering
 
 ## Result and evidence fields
 
-- Outcome: **NOT YET RUN**.
-- Direct obstacle reproduced: yes / no.
-- Retry telemetry and different goal: pass / fail / inconclusive.
-- Physical displacement and same-target progress after attempt 2: pass / fail / inconclusive.
-- Engine regression: pass / fail / inconclusive.
-- Evidence filenames / run IDs: pending.
-- Limitations: Direct and Engine remain sensitive to route, spawn and Titan geometry. Two clear-ray candidates do not prove NavMesh reachability. This check does not validate attacks, damage attribution, or Titan kills.
+- Outcome: **PARTIAL** for startup/build and one-click mode selection; **INCONCLUSIVE** for ground movement and alternate escape acceptance.
+- Direct obstacle reproduced: unclear. The later video panel shows `[RecoverGround]`, but the exact W3 building collision is not established from the clip alone.
+- Startup/build: the Direct clips show build `M2-locomotion-1-f8combo-3-escape-retry`, `driver=Direct`, and `APPLIED #1 EngageDirect`; the Engine clip shows the same build, `driver=Engine`, and `APPLIED #2 EngageEngine`.
+- Direct retry telemetry and different goal: inconclusive. One later panel frame shows `[RecoverGround]`, while the on-screen diagnostic text remains at `id=260`, `t=35.26062`, `WaitLanding`, reason `airborne_no_anchor`. The displayed trace is stale relative to the panel state; no `reposition_retry` event or second goal is visible.
+- Physical displacement and same-target progress after attempt 2: inconclusive. The clips change camera/view and do not provide position samples aligned with the recovery attempt.
+- Engine regression: inconclusive. The visible event is `Human.MoveTo` toward `(406.58, 10.12, 397.77)`, planar distance `462.9113`, with `ai_state_after=MoveTo`. This confirms API dispatch only; no physical displacement or target gain is available from the video.
+- Evidence filenames: `engage-direct-2026.11.02 - 14.16.15.76.mp4`, `engage-direct-2026.11.02 - 14.17.01.77.mp4`, `engage-engine-2026.11.02 - 14.19.26.78.mp4`. The user-referenced `AICadetsM2Watch6.txt` and `AICadetsM2Watch7.txt` were not present at `C:\Users\vmorr\Documents\Aottg2\PersistentData` or in the searched local document/download/temp locations at review time. Product build, lobby privacy and the complete enabled-add-on list are not visible in the clips.
+- Limitations: Direct and Engine remain sensitive to route, spawn and Titan geometry. Two clear-ray candidates do not prove NavMesh reachability. This check does not validate attacks, damage attribution, or Titan kills. Do not call the retry successful from the command-panel state or visible command alone.
 
 ## Rollback
 
