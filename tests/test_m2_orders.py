@@ -149,7 +149,9 @@ class OrdersTest(unittest.TestCase):
         panel.OnGameStart()
         panel.OpenMenu()
         buttons = [e for e in panel._actions.children if hasattr(e, "callback")]
-        self.assertEqual(len(buttons), 13)
+        self.assertEqual(len(buttons), 16)
+        labels = {e.Text for e in buttons}
+        self.assertTrue({"ENGAGE + DIRECT", "ENGAGE + ENGINE", "HOLD position", "RECOVER + RESUME ENGAGE"}.issubset(labels))
         panel.SelectTwo()
         panel.Explore()
         self.assertEqual(data["AICadetsCmdScope"], "AICadetsM2-2")
@@ -178,6 +180,21 @@ class OrdersTest(unittest.TestCase):
         self.assertEqual(data["AICadetsCmdSequence"], 3)
         panel.Engage()
         self.assertEqual(data["AICadetsCmdSequence"], 4)
+
+    def test_single_click_engage_and_recovery_buttons_send_their_orders(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        panel.OpenMenu()
+        buttons = {e.Text: e for e in panel._actions.children if hasattr(e, "callback")}
+
+        for sequence, label, mode in (
+            (1, "ENGAGE + DIRECT", "EngageDirect"),
+            (2, "ENGAGE + ENGINE", "EngageEngine"),
+            (3, "RECOVER + RESUME ENGAGE", "Recovery"),
+        ):
+            buttons[label].callback()
+            self.assertEqual(data["AICadetsCmdSequence"], sequence)
+            self.assertEqual(data["AICadetsCmdMode"], mode)
 
     def test_m1_only_does_not_appear_controllable(self):
         panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()

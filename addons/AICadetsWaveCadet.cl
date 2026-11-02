@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-locomotion-1";
+    _buildTag = "M2-locomotion-1-f8combo-2-holdrecovery";
     # Ground Titan pursuit uses explicit planar steering. The native MoveTo
     # angle offsets are retained only as an opt-in comparison driver.
     GroundSteering = "Direct";
@@ -1951,10 +1951,23 @@ addon AICadetsWaveCadet
             return;
         }
         order = PersistentData.GetProperty("AICadetsCmdMode", "Engage");
-        if (order != "Engage" && order != "Explore" && order != "Hold" && order != "Resupply" && order != "GroundEngine" && order != "GroundDirect")
+        if (order != "Engage" && order != "Explore" && order != "Hold" && order != "Recovery" && order != "Resupply" && order != "GroundEngine" && order != "GroundDirect" && order != "EngageEngine" && order != "EngageDirect")
         {
             self.LogEvent("order_rejected", "seq=" + Convert.ToString(sequence) + " mode=" + order);
             return;
+        }
+        requestedOrder = order;
+        ackOrder = order;
+        if (order == "EngageEngine" || order == "EngageDirect")
+        {
+            self.GroundSteering = "Engine";
+            if (order == "EngageDirect")
+            {
+                self.GroundSteering = "Direct";
+            }
+            self.LogEvent("ground_driver_changed", "driver=" + self.GroundSteering + " reason=combined_engage");
+            self.LogEvent("engage_preset_applied", "preset=" + requestedOrder + " ground=" + self.GroundSteering + " effective_mode=Engage");
+            order = "Engage";
         }
         if (order == "GroundEngine" || order == "GroundDirect")
         {
@@ -1968,13 +1981,20 @@ addon AICadetsWaveCadet
                 self.StartGroundApproach(self._groundFallback);
             }
             self.LogEvent("ground_driver_changed", "driver=" + self.GroundSteering);
-            self.AcknowledgeOrder(sequence, order);
+            self.AcknowledgeOrder(sequence, ackOrder);
             return;
         }
         previousMode = self._orderMode;
         self.StopODM();
         self._cadet.Idle();
-        self.LogEvent("order_received", "seq=" + Convert.ToString(sequence) + " mode=" + order + " scope=" + scope);
+        if (requestedOrder == order)
+        {
+            self.LogEvent("order_received", "seq=" + Convert.ToString(sequence) + " mode=" + order + " scope=" + scope);
+        }
+        else
+        {
+            self.LogEvent("order_received", "seq=" + Convert.ToString(sequence) + " mode=" + requestedOrder + " effective_mode=" + order + " scope=" + scope);
+        }
 
         if (order == "Resupply")
         {
@@ -1982,7 +2002,7 @@ addon AICadetsWaveCadet
             {
                 self._orderMode = "Resupply";
                 self.LogEvent("resupply_already_in_progress", "gas=" + Convert.ToString(self._cadet.CurrentGas));
-                self.AcknowledgeOrder(sequence, order);
+                self.AcknowledgeOrder(sequence, ackOrder);
                 return;
             }
             if (previousMode == "Explore")
@@ -1995,7 +2015,7 @@ addon AICadetsWaveCadet
             }
             self._orderMode = "Resupply";
             self.BeginResupply("manual_order");
-            self.AcknowledgeOrder(sequence, order);
+            self.AcknowledgeOrder(sequence, ackOrder);
             return;
         }
 
@@ -2007,7 +2027,24 @@ addon AICadetsWaveCadet
         if (order == "Hold")
         {
             self.Enter("Hold", "user_hold");
-            self.AcknowledgeOrder(sequence, order);
+            self.AcknowledgeOrder(sequence, ackOrder);
+            return;
+        }
+        if (order == "Recovery")
+        {
+            self._orderMode = "Engage";
+            if (self.RefreshTarget())
+            {
+                self._lastFailureReason = "manual_recovery";
+                self.LogEvent("manual_recovery_requested", "target=" + Convert.ToString(self._targetViewId) + " attempts=" + Convert.ToString(self._targetRecoveries));
+                self.Enter("Recover", "user_recovery");
+            }
+            else
+            {
+                self.LogEvent("manual_recovery_requested", "target=none action=acquire_target");
+                self.Enter("AcquireTarget", "user_recovery_no_target");
+            }
+            self.AcknowledgeOrder(sequence, ackOrder);
             return;
         }
         if (order == "Explore")
@@ -2017,11 +2054,11 @@ addon AICadetsWaveCadet
             self._exploreNextAction = 0.0;
             self._exploreNextScan = Time.GameTime + self.ExploreScanSeconds;
             self.Enter("Explore", "user_explore");
-            self.AcknowledgeOrder(sequence, order);
+            self.AcknowledgeOrder(sequence, ackOrder);
             return;
         }
         self.Enter("AcquireTarget", "user_engage");
-        self.AcknowledgeOrder(sequence, order);
+        self.AcknowledgeOrder(sequence, ackOrder);
     }
 
     function IsSupplyState()

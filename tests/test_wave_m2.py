@@ -451,6 +451,41 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._orderMode, "Engage")
         self.assertEqual(w.controller._state, "PlanApproach")
 
+    def test_combined_engage_presets_set_driver_and_ack_requested_mode(self):
+        w = World()
+        w.tick()
+        for sequence, preset, driver in (
+            (1, "EngageEngine", "Engine"),
+            (2, "EngageDirect", "Direct"),
+        ):
+            w.persistent.update({
+                "AICadetsCmdSequence": sequence,
+                "AICadetsCmdMode": preset,
+                "AICadetsCmdScope": "all",
+            })
+            w.tick()
+            self.assertEqual(w.controller.GroundSteering, driver)
+            self.assertEqual(w.controller._orderMode, "Engage")
+            self.assertEqual(w.persistent["AICadetsM2AckMode-AICadetsM2-1"], preset)
+
+    def test_manual_recovery_order_resumes_autonomous_engage(self):
+        w = World()
+        w.tick()
+        w.controller._target = w.titan
+        w.controller._targetViewId = w.titan.ViewID
+        w.controller._orderMode = "Hold"
+        w.controller.Enter("Hold", "test_hold")
+        w.persistent.update({
+            "AICadetsCmdSequence": 1,
+            "AICadetsCmdMode": "Recovery",
+            "AICadetsCmdScope": "all",
+        })
+        w.tick()
+        self.assertEqual(w.controller._orderMode, "Engage")
+        self.assertEqual(w.persistent["AICadetsM2AckMode-AICadetsM2-1"], "Recovery")
+        self.assertTrue(any("manual_recovery_requested" in message for message in w.messages))
+        self.assertNotEqual(w.controller._state, "Hold")
+
     def test_low_gas_enters_resupply_instead_of_terminating(self):
         w = World()
         w.tick()
@@ -781,7 +816,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-2-holdrecovery")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()

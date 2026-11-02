@@ -56,8 +56,11 @@ addon AICadetsCommandPanel
         self._actions.Add(UI.Button("M2 cadet 4", self.SelectFour));
         self._actions.Add(UI.Label("Orders:"));
         self._actions.Add(UI.Button("ENGAGE Titans", self.Engage));
+        self._actions.Add(UI.Button("ENGAGE + DIRECT", self.EngageDirect));
+        self._actions.Add(UI.Button("ENGAGE + ENGINE", self.EngageEngine));
         self._actions.Add(UI.Button("EXPLORE map", self.Explore));
         self._actions.Add(UI.Button("HOLD position", self.Hold));
+        self._actions.Add(UI.Button("RECOVER + RESUME ENGAGE", self.Recovery));
         self._actions.Add(UI.Button("RESUPPLY now", self.Resupply));
         self._actions.Add(UI.Label("Stand inside a working station trigger:"));
         self._actions.Add(UI.Button("MARK supply here", self.MarkSupply));
@@ -194,6 +197,16 @@ addon AICadetsCommandPanel
         self.SendOrder("Engage");
     }
 
+    function EngageDirect()
+    {
+        self.SendOrder("EngageDirect");
+    }
+
+    function EngageEngine()
+    {
+        self.SendOrder("EngageEngine");
+    }
+
     function Explore()
     {
         self.SendOrder("Explore");
@@ -202,6 +215,11 @@ addon AICadetsCommandPanel
     function Hold()
     {
         self.SendOrder("Hold");
+    }
+
+    function Recovery()
+    {
+        self.SendOrder("Recovery");
     }
 
     function Resupply()
