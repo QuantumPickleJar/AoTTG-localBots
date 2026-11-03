@@ -16,7 +16,7 @@ The H3VR BepInEx 5 Mono files were not copied. AoTTG2 uses its separately instal
 ## REC-I validation card
 
     SESSION: REC-I short passive capture
-    SOURCE: codex/flight-recorder-il2cpp-adapter; adapter implementation commit 21644a378440ed19159fb847debe991b78012146
+    SOURCE: codex/flight-recorder-il2cpp-adapter; adapter/build commit 94e033699b0f67387d030e810e35fa422b81dd55
     PACKAGE: AoTTG2 Flight Recorder 0.1.5, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
     GAME CONFIG: BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg; Enabled=true only for this capture, then restore false
     RECEIVER: Copy the example JSON to a new local config, set recording_enabled=true and a new empty output directory; start scripts/start_flight_recorder_receiver.ps1 with that config and verify the pipe is listening
