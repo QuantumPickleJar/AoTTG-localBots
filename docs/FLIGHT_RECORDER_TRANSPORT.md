@@ -36,8 +36,8 @@ The config and output path are local. Do not include installation paths, proprie
 
 - The .NET producer and Unity plugin build locally; the Unity plugin compiles against interop generated from the exact installed x64 Unity 2023.1.22f1 build.
 - Python protocol/writer/analyzer suite: 115 tests pass on the current implementation.
-- The ordered pipe/backpressure smoke and Windows pipe-to-writer recovery smoke pass with the workspace Python runtime; confirm the 0.1.6 embedded runtime after packaging.
-- The earlier package receiver launcher smoke was on 0.1.5; no 0.1.6 startup result is claimed here.
-- Installed-runtime package 0.1.5 menu smoke passed. It confirms BepInEx/plugin startup, Unity FixedUpdate calls, local handshake, frame writing/hash integrity, health reporting and graceful shutdown. There were no entities because no lobby or mission was entered. The 0.1.6 direct-serialization path awaits a new installed-game performance measurement.
+- The ordered pipe/backpressure smoke and Windows pipe-to-writer recovery smoke pass with the workspace Python runtime and the 0.1.6 embedded Python runtime.
+- The 0.1.6 packaged receiver launcher passed a two-session local pipe smoke: it finalized the disconnected first run as incomplete, wrote a complete second run, and the packaged analyzer verified its chunk. The packaged analyzer also produced the expected inferred-kill output on the supplied capture.
+- Installed-runtime package 0.1.5 menu smoke passed. It confirms BepInEx/plugin startup, Unity FixedUpdate calls, local handshake, frame writing/hash integrity, health reporting and graceful shutdown. There were no entities because no lobby or mission was entered. The 0.1.6 package was not installed into the game; its Unity startup and performance await private validation.
 
 The supplied 0.1.5 gameplay capture did observe Humans, Titans, Hooks, and Human collision callbacks. It suggests a cadet kill without direct damage attribution. REC-I Level 3 remains pending a new private 0.1.6 performance and phase calibration.

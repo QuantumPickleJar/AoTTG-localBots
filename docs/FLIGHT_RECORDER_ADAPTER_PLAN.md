@@ -53,7 +53,7 @@ Package install/rollback details are in [FLIGHT_RECORDER_IL2CPP_PACKAGE_README.m
 | Level | Result | Establishes |
 |---|---|---|
 | 1 — Offline | 115 Python tests pass; transport builds for .NET 6 and .NET 8; ordered-pipe/backpressure smoke and Windows pipe-to-writer recovery smoke pass; the Unity plug-in builds with zero warnings/errors against the installed interop. | Compilation and synthetic data through hashed writer chunks; no game-performance claim. |
-| 2 — Installed-runtime smoke | 0.1.5 passed a main-menu smoke. The supplied 0.1.5 gameplay trace also has 56,970 ordered frames, verified chunks, 209 collision callbacks, and a complete writer stop. | Startup and gameplay data visibility are established for 0.1.5. The 0.1.6 fast path still needs loader/handshake/shutdown smoke. |
+| 2 — Installed-runtime smoke | 0.1.5 passed a main-menu smoke. The supplied 0.1.5 gameplay trace also has 56,970 ordered frames, verified chunks, 209 collision callbacks, and a complete writer stop. The 0.1.6 packaged receiver/analyzer passed local two-session pipe and hash verification, but the 0.1.6 game plug-in has not been installed or smoke-tested. | Startup and gameplay data visibility are established for 0.1.5. The 0.1.6 Unity startup and shutdown still need a controlled installed-runtime smoke. |
 | 3 — REC-I gameplay calibration | 0.1.5 later-window p95 was 1.8008 ms at 20 ms fixedDeltaTime, above the 1.0 ms limit. The updated analyzer leaves 174 velocity changes unresolved. 0.1.6 is not yet measured in-game. | Requires a new private session, p95/max measurement, zero transport losses, verified chunks, motion cross-check, and phase/coverage review. Preserve startup and steady-state health windows separately. |
 
 ## References
