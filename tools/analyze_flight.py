@@ -221,7 +221,9 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
         actions = {}
         latest_step = None
         latest_time = None
-        dropped = 0
+        dropped = 0  # legacy/unspecified gap counts retained for compatibility
+        dropped_frames = 0
+        dropped_entity_samples = 0
         observed_frame_steps = 0
         observed_frame_step_ids = set()
         last_frame_step = None
@@ -327,7 +329,19 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                                 continue
                             if typ == "gap":
                                 count = max(0, int(rec.get("count", 0)))
-                                dropped += count
+                                unit = rec.get("unit")
+                                frame_count = rec.get("dropped_frames")
+                                sample_count = rec.get("dropped_entity_samples")
+                                if isinstance(frame_count, int) and not isinstance(frame_count, bool):
+                                    dropped_frames += max(0, frame_count)
+                                elif unit == "frames":
+                                    dropped_frames += count
+                                if isinstance(sample_count, int) and not isinstance(sample_count, bool):
+                                    dropped_entity_samples += max(0, sample_count)
+                                elif unit == "entity_samples":
+                                    dropped_entity_samples += count
+                                elif unit not in ("frames", "entity_samples"):
+                                    dropped += count
                                 first = rec.get("first_step")
                                 last_gap = rec.get("last_step")
                                 step_range = f" steps={first}..{last_gap}" if first is not None or last_gap is not None else ""
@@ -498,7 +512,9 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                    "observed_entity_kinds": sorted(observed_kinds),
                    "declared_excluded_classes": metadata.get("coverage", {}).get("excluded_classes", []),
                    "entities": len(track_stats), "events": counters["event"],
-                   "reported_dropped_samples": dropped,
+                   "reported_dropped_samples": dropped + dropped_entity_samples,
+                   "reported_dropped_frames": dropped_frames,
+                   "reported_dropped_entity_samples": dropped_entity_samples,
                    "missing_per_entity_sample_steps": missing_track_steps,
                    "parse_errors": parse_errors, "anomaly_total": sum(v for k, v in counters.items() if k.startswith("anomaly_")),
                    "anomalies_returned": len(anomalies), "focus_samples": focus_count,
@@ -519,7 +535,9 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                 f"- Integrity: `{summary['integrity_status']}` ({summary['valid_chunks']} valid; {summary['integrity_failures']} rejected; {summary['unindexed_chunks']} unindexed)",
                 f"- Frame markers: {summary['frames']}", f"- Tracked entities: {summary['entities']}",
                 f"- Frame coverage ratio: {summary['frame_coverage_ratio']}",
-                f"- Event records: {summary['events']}", f"- Declared dropped samples: {dropped}",
+                f"- Event records: {summary['events']}",
+                f"- Declared dropped frames: {dropped_frames}",
+                f"- Declared dropped entity samples: {dropped_entity_samples + dropped}",
                 f"- Missing per-entity steps (raw): {missing_track_steps}",
                 f"- Malformed records: {parse_errors}", f"- Capture complete flag: {summary['capture_complete']}",
                 "", "## Anomalies (bounded sample)", ""]
