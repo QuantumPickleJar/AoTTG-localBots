@@ -4,6 +4,7 @@
     <LangVersion>10.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
     <AssemblyName>AoTTG2.FlightRecorder</AssemblyName>
     <RootNamespace>Aicadets.FlightRecorder.UnityIl2Cpp</RootNamespace>
     <GameRoot Condition="'$(GameRoot)' == ''">$(AOTTG2_GAME_ROOT)</GameRoot>
