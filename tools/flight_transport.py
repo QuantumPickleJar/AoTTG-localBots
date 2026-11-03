@@ -154,8 +154,8 @@ class FlightTransportReceiver:
                 evidence="observed", fields=details,
             ))
 
-    def accept_line(self, raw: bytes) -> bool:
-        """Consume one complete JSON line. Return False after a valid stop message."""
+    def accept_line(self, raw: bytes, *, new_pipe_connection: bool = False) -> bool:
+        """Consume one line; rotate to a new run only on a new connection's first hello."""
         with self._lock:
             if self.stopped:
                 raise TransportProtocolError("message received after stop")
@@ -169,7 +169,18 @@ class FlightTransportReceiver:
                 if kind == "hello" and payload.get("writer_schema") != FLIGHT_SCHEMA:
                     raise TransportProtocolError("producer does not declare aicadets.flight.v1 compatibility")
                 if self.run_id is not None and run_id != self.run_id:
-                    raise TransportProtocolError("run_id changed within one pipe session")
+                    if not (new_pipe_connection and kind == "hello" and sequence == 1):
+                        raise TransportProtocolError("run_id changed within one pipe connection")
+                    self.close_uncleanly("producer_disconnected_before_stop", details={
+                        "previous_run_id": self.run_id,
+                        "next_run_id": run_id,
+                    })
+                    self.writer = None
+                    self.run_id = None
+                    self.last_sequence = 0
+                    self.connection_count = 0
+                    self.stopped = False
+                    self._seen.clear()
                 if sequence <= self.last_sequence:
                     if self._seen.get(sequence) == digest:
                         return True  # Repeated write after a broken pipe; already committed.
@@ -339,11 +350,12 @@ class FlightTransportReceiver:
             return
         raise TransportProtocolError(f"unsupported message kind {kind}")
 
-    def close_uncleanly(self, reason: str) -> dict[str, Any] | None:
+    def close_uncleanly(self, reason: str,
+                        details: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         with self._lock:
             if self.writer is None or self.stopped:
                 return None
-            self._mark_incomplete(reason)
+            self._mark_incomplete(reason, details=details)
             stats = self.writer.close()
             self.stopped = True
             return stats
@@ -465,6 +477,7 @@ class WindowsNamedPipeServer:
         pending = bytearray()
         buffer = ctypes.create_string_buffer(MAX_READ_BYTES)
         read_count = wintypes.DWORD()
+        new_pipe_connection = True
         print("Flight Recorder producer connected", flush=True)
         while not self._stopping.is_set():
             ok = _kernel32.ReadFile(wintypes.HANDLE(handle), buffer, MAX_READ_BYTES,
@@ -493,10 +506,17 @@ class WindowsNamedPipeServer:
                 del pending[:newline + 1]
                 try:
                     envelope = parse_envelope(line)
-                    keep_serving = self.receiver.accept_line(line)
+                    previous_run_id = self.receiver.run_id
+                    keep_serving = self.receiver.accept_line(
+                        line, new_pipe_connection=new_pipe_connection)
+                    new_pipe_connection = False
                     self._write_ack(handle, envelope["run_id"], envelope["sequence"], True)
                     if envelope["kind"] in {"hello", "gap", "stop"}:
                         print(f"Flight Recorder received {envelope['kind']} seq={envelope['sequence']}", flush=True)
+                    if (envelope["kind"] == "hello" and previous_run_id is not None
+                            and envelope["run_id"] != previous_run_id):
+                        print(f"Finalized disconnected run {previous_run_id} as incomplete; "
+                              f"accepted new run {envelope['run_id']}", flush=True)
                     if not keep_serving:
                         _kernel32.FlushFileBuffers(wintypes.HANDLE(handle))
                         self.stop()

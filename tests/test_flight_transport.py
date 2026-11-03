@@ -65,6 +65,11 @@ class FlightTransportTests(unittest.TestCase):
             parse_envelope(json.dumps({"protocol": PROTOCOL, "run_id": self.run_id,
                                        "sequence": True, "kind": "hello", "payload": {}}).encode())
 
+    def test_new_run_id_is_rejected_without_a_new_pipe_connection(self):
+        self.receiver.accept_line(hello(self.run_id))
+        with self.assertRaises(TransportProtocolError):
+            self.receiver.accept_line(hello(uuid.uuid4().hex))
+
     def test_explicit_frame_gap_and_writer_schema_round_trip(self):
         self.assertTrue(self.receiver.accept_line(hello(self.run_id)))
         self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 2, "lifecycle", {
@@ -121,6 +126,34 @@ class FlightTransportTests(unittest.TestCase):
         self.assertFalse(metadata["capture_complete"])
         self.assertTrue(any(item["reason"] == "transport_message_sequence_gap"
                             for item in metadata["incomplete_reasons"]))
+
+    def test_new_producer_run_finalizes_disconnected_run_before_accepting_hello(self):
+        first_run_id = uuid.uuid4().hex
+        second_run_id = uuid.uuid4().hex
+        self.assertTrue(self.receiver.accept_line(hello(first_run_id), new_pipe_connection=True))
+        self.assertTrue(self.receiver.accept_line(envelope(
+            first_run_id, 2, "frame", frame(1, 0.02, 0.0))))
+
+        self.assertTrue(self.receiver.accept_line(hello(second_run_id), new_pipe_connection=True))
+        first_dir = self.root / "recordings" / f"run-{first_run_id}"
+        first_metadata = json.loads((first_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertFalse(first_metadata["capture_complete"])
+        self.assertTrue(any(item["reason"] == "producer_disconnected_before_stop"
+                            for item in first_metadata["incomplete_reasons"]))
+        self.assertEqual(analyze(first_dir, self.root / "first-run-analysis")["integrity_status"],
+                         "verified")
+
+        self.assertTrue(self.receiver.accept_line(envelope(
+            second_run_id, 2, "frame", frame(1, 0.02, 1.0))))
+        self.assertFalse(self.receiver.accept_line(envelope(second_run_id, 3, "stop", {
+            "graceful": True, "reason": "game_shutdown", "dropped_frames": 0,
+            "dropped_control_messages": 0,
+        })))
+        second_dir = self.root / "recordings" / f"run-{second_run_id}"
+        second_metadata = json.loads((second_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertTrue(second_metadata["capture_complete"])
+        self.assertEqual(analyze(second_dir, self.root / "second-run-analysis")["integrity_status"],
+                         "verified")
 
     def test_partial_il2cpp_capture_payload_keeps_provenance_and_optional_fields(self):
         hello_payload = {

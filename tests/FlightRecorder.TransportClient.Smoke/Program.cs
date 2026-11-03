@@ -8,6 +8,12 @@ if (args.Length == 3 && args[0] == "--send-to-python")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--send-two-sessions-to-python")
+{
+    await SendTwoSessionsToPythonReceiverAsync(args[1], args[2], args[3]);
+    return;
+}
+
 var pipeName = $"aicadets-test-{Guid.NewGuid():N}";
 var runId = Guid.NewGuid().ToString("N");
 var read = ReadThreeLinesAsync(pipeName, runId);
@@ -58,6 +64,29 @@ static async Task SendToPythonReceiverAsync(string pipeName, string runId)
         throw new InvalidOperationException("stop message was not queued");
     if (!await publisher.StopAndDrainAsync(TimeSpan.FromSeconds(15)))
         throw new InvalidOperationException($"Python pipe delivery failed: {publisher.Failure ?? publisher.LastConnectionError}");
+}
+
+static async Task SendTwoSessionsToPythonReceiverAsync(string pipeName, string firstRunId, string secondRunId)
+{
+    var hello = "{\"writer_schema\":\"aicadets.flight.v1\",\"producer\":\"transport-smoke\"," +
+        "\"producer_version\":\"0.1.0\",\"runtime_observation_phase\":\"fixture\"," +
+        "\"declared_coverage\":{\"fixture\":\"synthetic\"}}";
+    await using (var first = new PipePublisher(pipeName, firstRunId, hello))
+    {
+        if (!first.TryPublishFrame(FramePayload(0), 0))
+            throw new InvalidOperationException("first-session frame was not queued");
+        if (!await first.StopAndDrainAsync(TimeSpan.FromSeconds(15)))
+            throw new InvalidOperationException($"first session did not disconnect cleanly: {first.Failure ?? first.LastConnectionError}");
+    }
+
+    await using var second = new PipePublisher(pipeName, secondRunId, hello);
+    if (!second.TryPublishFrame(FramePayload(0), 0))
+        throw new InvalidOperationException("second-session frame was not queued");
+    if (!second.TryPublishControl("stop", "{\"graceful\":true,\"reason\":\"fixture_stop\"," +
+            "\"dropped_frames\":0,\"dropped_control_messages\":0}"))
+        throw new InvalidOperationException("second-session stop was not queued");
+    if (!await second.StopAndDrainAsync(TimeSpan.FromSeconds(15)))
+        throw new InvalidOperationException($"second session did not complete: {second.Failure ?? second.LastConnectionError}");
 }
 
 static async Task<List<string>> ReadThreeLinesAsync(string pipeName, string runId)

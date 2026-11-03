@@ -46,6 +46,8 @@ Unavailable/unverified: moving world geometry, Titan collision callbacks, direct
 
 The launcher runs the packaged embeddable Python runtime without changing PATH or installing a system-wide Python. It starts the receiver in a hidden window and writes local stdout/stderr logs next to the receiver config. The Windows receiver uses a current-user DACL and rejects remote named-pipe clients. No external network or cloud telemetry is used by the recorder.
 
+If a game process disconnects before sending its stop message, the receiver finalizes that run as incomplete. A later client connection with a new run ID is written to a separate run directory; the interrupted run is not continued or overwritten. A valid stop ends the receiver, so start it again before a later capture.
+
 ## Rollback
 
 Close the game and run the packaged remove_flight_recorder.ps1 with the same GameRoot. It validates the install receipt and file hashes, refuses modified/unlisted files, then removes only the two recorder DLLs and their receipt. It leaves BepInEx, loader files, generated interop, and user configuration untouched. Review and remove the recorder config separately if desired. Loader removal is a separate action.

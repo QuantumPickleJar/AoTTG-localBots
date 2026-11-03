@@ -15,6 +15,7 @@ if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
 
 $caseId = [guid]::NewGuid().ToString('N')
 $pipeName = "aicadets-it-$caseId"
+$firstRunId = [guid]::NewGuid().ToString('N')
 $runId = [guid]::NewGuid().ToString('N')
 $root = Join-Path ([IO.Path]::GetTempPath()) "aicadets-flight-transport-$caseId"
 $outputDir = Join-Path $root 'recordings'
@@ -57,13 +58,23 @@ try {
         throw 'Receiver did not report that its local pipe is listening.'
     }
 
-    dotnet run --project $smokeProject --configuration Release -- --send-to-python $pipeName $runId
+    dotnet run --project $smokeProject --configuration Release -- --send-two-sessions-to-python $pipeName $firstRunId $runId
     if ($LASTEXITCODE -ne 0) { throw "Transport producer exited with code $LASTEXITCODE" }
     if (-not $receiver.WaitForExit(15000)) { throw 'Receiver did not stop after the producer stop message.' }
     $receiver.Refresh()
     if ($null -ne $receiver.ExitCode -and [int]$receiver.ExitCode -ne 0) {
         $errorText = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { '' }
         throw "Receiver exited with code $($receiver.ExitCode): $errorText"
+    }
+
+    $firstRunDir = Join-Path $outputDir "run-$firstRunId"
+    $firstMetadata = Get-Content -LiteralPath (Join-Path $firstRunDir 'metadata.json') -Raw | ConvertFrom-Json
+    $firstManifest = Get-Content -LiteralPath (Join-Path $firstRunDir 'chunk_manifest.json') -Raw | ConvertFrom-Json
+    if ($firstMetadata.schema_version -ne 'aicadets.flight.v1' -or
+        $firstMetadata.capture_complete -or
+        -not ($firstMetadata.incomplete_reasons.reason -contains 'producer_disconnected_before_stop') -or
+        $firstManifest.chunks.Count -lt 1) {
+        throw 'Disconnected first producer was not finalized as an incomplete, indexed run.'
     }
 
     $runDir = Join-Path $outputDir "run-$runId"
@@ -74,9 +85,11 @@ try {
     }
     $manifest = Get-Content -LiteralPath (Join-Path $runDir 'chunk_manifest.json') -Raw | ConvertFrom-Json
     if ($manifest.chunks.Count -lt 1) { throw 'Writer produced no hashed chunks.' }
+    & $PythonExe (Join-Path $repoRoot 'tools\analyze_flight.py') $firstRunDir --out (Join-Path $root 'analysis-first')
+    if ($LASTEXITCODE -ne 0) { throw "Incomplete first-run analysis exited with code $LASTEXITCODE" }
     & $PythonExe (Join-Path $repoRoot 'tools\analyze_flight.py') $runDir --out $reportDir
     if ($LASTEXITCODE -ne 0) { throw "Flight analyzer exited with code $LASTEXITCODE" }
-    Write-Output "Windows pipe-to-writer smoke passed. Run: $runDir"
+    Write-Output "Windows sequential-run recovery smoke passed. Complete run: $runDir; interrupted run: $firstRunDir"
 }
 finally {
     if (-not $receiver.HasExited) {
