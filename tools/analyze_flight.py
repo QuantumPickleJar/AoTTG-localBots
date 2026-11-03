@@ -22,7 +22,9 @@ import json
 import math
 from pathlib import Path
 from pathlib import PurePosixPath
+import sys
 import zipfile
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flight_attribution import KillAttributionCollector
 
 SCHEMA = "aicadets.flight.v1"
