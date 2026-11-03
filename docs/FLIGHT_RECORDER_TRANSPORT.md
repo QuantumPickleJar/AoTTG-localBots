@@ -2,7 +2,7 @@
 
 ## Scope and evidence
 
-The current bridge connects the read-only BepInEx IL2CPP adapter to the existing Python FlightRecorderWriter. Unity/game APIs are accessed only on the injected Unity callback thread; copied primitive JSON payloads are enqueued for the background named-pipe producer. The receiver calls the existing writer and preserves the aicadets.flight.v1 frame/event/lifecycle format and hashed chunk manifest.
+The current bridge connects the read-only BepInEx IL2CPP adapter to the existing Python FlightRecorderWriter. Unity/game APIs are accessed only on the injected Unity callback thread. Version 0.1.6 hands a copied primitive DTO to the producer, which serializes it once into a bounded UTF-8 protocol envelope; the background worker performs pipe I/O. The receiver calls the existing writer and preserves the `aicadets.flight.v1` frame/event/lifecycle format and hashed chunk manifest. This removes an intermediate JSON string plus parse/reserialize pass; the performance improvement still needs measurement in an installed-game mission.
 
 An earlier 0.1.5 build from the same adapter source passed an installed main-menu smoke with 1,982 ordered frames, one verified chunk, 8 events, zero loss, a graceful stop, and no game entities. The first health window reported a 103.9691 ms capture-work maximum; later windows ranged from 6.9426 to 12.7446 ms. The final deterministic 0.1.5 package also started and wrote 5,717 ordered menu frames and 23 events to a SHA-256-verified chunk with no entities, drops, or analyzer anomalies, but the run was explicitly marked incomplete (`receiver_interrupted`) after the game and BepInEx console were closed together. This is Level 2 startup/transport evidence, not a clean-shutdown pass, and it does not establish actor coverage or gameplay collision callbacks. See [the adapter audit](FLIGHT_RECORDER_ADAPTER_PLAN.md) and [REC-I card](REC_I_VALIDATION_BLOCKER.md).
 
@@ -20,11 +20,11 @@ Producer defaults are 512 queue slots and 4 MiB, with reserved capacity for cont
 
 ## Windows pipe security and operation
 
-The receiver uses a duplex Windows named pipe, a protected DACL granting the current Windows user, and PIPE_REJECT_REMOTE_CLIENTS. It does not bind a TCP socket or upload data. The producer uses a background thread for pipe I/O; Unity objects must already have been copied to primitive JSON before enqueue. No transport call waits for pipe availability on the Unity callback thread.
+The receiver uses a duplex Windows named pipe, a protected DACL granting the current Windows user, and PIPE_REJECT_REMOTE_CLIENTS. It does not bind a TCP socket or upload data. The producer uses a background thread for pipe I/O; the frame DTO contains copied primitive values and no Unity object references. No transport call waits for pipe availability on the Unity callback thread. Queued `ReadOnlyMemory<byte>` is backed by an immutable-per-message `ArrayBufferWriter<byte>` retained until acknowledgement.
 
 Copy configs/flight-recorder-transport.example.json to a local private config, select a new empty output directory, and set recording_enabled=true only for an opted-in private capture. The package includes Python 3.14.10 x64 embeddable plus a launcher; this does not change PATH or install a system-wide Python. Start the receiver from the extracted package:
 
-    .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.5" -ConfigPath "C:\Local\Path\flight-recorder-transport.json"
+    .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.6" -ConfigPath "C:\Local\Path\flight-recorder-transport.json"
 
 The launcher starts the receiver hidden, waits until the local pipe is ready, and writes stdout/stderr logs beside the config. After a run, use the package runtime to inspect the output:
 
@@ -35,9 +35,9 @@ The config and output path are local. Do not include installation paths, proprie
 ## Current status and tests
 
 - The .NET producer and Unity plugin build locally; the Unity plugin compiles against interop generated from the exact installed x64 Unity 2023.1.22f1 build.
-- Python protocol/writer suite: 107 tests pass.
-- Windows pipe-to-writer smoke passes with both the task-local Python 3.14.10 runtime and the final package's embedded runtime.
-- Package receiver launcher smoke passes: it became ready, accepted hello/frame/event/stop messages, wrote a verified chunk, and exited cleanly.
-- Installed-runtime package 0.1.5 menu smoke passed. It confirms BepInEx/plugin startup, Unity FixedUpdate calls, local handshake, frame writing/hash integrity, health reporting and graceful shutdown. There were no entities because no lobby or mission was entered.
+- Python protocol/writer/analyzer suite: 115 tests pass on the current implementation.
+- The ordered pipe/backpressure smoke and Windows pipe-to-writer recovery smoke pass with the workspace Python runtime; confirm the 0.1.6 embedded runtime after packaging.
+- The earlier package receiver launcher smoke was on 0.1.5; no 0.1.6 startup result is claimed here.
+- Installed-runtime package 0.1.5 menu smoke passed. It confirms BepInEx/plugin startup, Unity FixedUpdate calls, local handshake, frame writing/hash integrity, health reporting and graceful shutdown. There were no entities because no lobby or mission was entered. The 0.1.6 direct-serialization path awaits a new installed-game performance measurement.
 
-No gameplay movement, Human/Titan/Hook sampling, or collision callback firing is claimed. REC-I Level 3 remains pending the owner's private calibration.
+The supplied 0.1.5 gameplay capture did observe Humans, Titans, Hooks, and Human collision callbacks. It suggests a cadet kill without direct damage attribution. REC-I Level 3 remains pending a new private 0.1.6 performance and phase calibration.

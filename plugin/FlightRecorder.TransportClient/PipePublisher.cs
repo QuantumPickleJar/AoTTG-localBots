@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -20,7 +21,7 @@ public sealed class PipePublisher : IAsyncDisposable
     private readonly int _controlReserveSlots;
     private readonly int _controlReserveBytes;
     private readonly object _gate = new();
-    private readonly Queue<byte[]> _queue = new();
+    private readonly Queue<ReadOnlyMemory<byte>> _queue = new();
     private readonly SemaphoreSlim _available = new(0);
     private readonly CancellationTokenSource _cancel = new();
     private readonly Task _worker;
@@ -90,6 +91,31 @@ public sealed class PipePublisher : IAsyncDisposable
             if (!FlushPendingFrameGapLocked(payloadJson)) return DropFrameLocked(step, "gap_marker_queue_full");
             var sequence = _nextSequence++;
             if (TryEnqueueLocked("frame", payloadJson, isControl: false, sequence)) return true;
+            return DropFrameAtSequenceLocked(sequence, step, "frame_queue_full");
+        }
+    }
+
+    /// <summary>
+    /// Serialize a trusted frame DTO directly inside its protocol envelope.
+    /// This avoids a UTF-16 JSON string followed by parse-and-reserialize work
+    /// on Unity's FixedUpdate thread. The DTO must contain only copied primitive
+    /// data and must not reference Unity/game objects.
+    /// </summary>
+    public bool TryPublishFrame<T>(T payload, long step, double reportedAt,
+        JsonSerializerOptions? serializerOptions = null, int initialCapacityHint = 4096)
+    {
+        if (step < 0) throw new ArgumentOutOfRangeException(nameof(step));
+        if (!double.IsFinite(reportedAt)) throw new ArgumentOutOfRangeException(nameof(reportedAt));
+        if (payload is null) throw new ArgumentNullException(nameof(payload));
+        if (initialCapacityHint < 256 || initialCapacityHint > MaxEnvelopeBytes)
+            throw new ArgumentOutOfRangeException(nameof(initialCapacityHint));
+        lock (_gate)
+        {
+            if (!_accepting || _failure is not null) return false;
+            if (!FlushPendingFrameGapLocked(reportedAt, step)) return DropFrameLocked(step, "gap_marker_queue_full");
+            var sequence = _nextSequence++;
+            if (TryEnqueueObjectLocked("frame", payload, isControl: false, sequence,
+                    serializerOptions, initialCapacityHint)) return true;
             return DropFrameAtSequenceLocked(sequence, step, "frame_queue_full");
         }
     }
@@ -199,6 +225,13 @@ public sealed class PipePublisher : IAsyncDisposable
             return false;
         }
 
+        return FlushPendingFrameGapLocked(reportedAt, reportedStep);
+    }
+
+    private bool FlushPendingFrameGapLocked(double? reportedAt, long? reportedStep)
+    {
+        if (_droppedFrames == 0) return true;
+
         var payload = new Dictionary<string, object?>
         {
             ["first_sequence"] = _firstDroppedSequence,
@@ -222,14 +255,13 @@ public sealed class PipePublisher : IAsyncDisposable
 
     private bool TryEnqueueLocked(string kind, string payloadJson, bool isControl, long sequence)
     {
-        byte[] line;
+        var encoded = new ArrayBufferWriter<byte>(256);
         try
         {
             using var payload = JsonDocument.Parse(payloadJson, new JsonDocumentOptions { MaxDepth = 32 });
             if (payload.RootElement.ValueKind != JsonValueKind.Object) return false;
             ValidateNoDuplicateMembers(payload.RootElement);
-            using var stream = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(stream))
+            using (var writer = new Utf8JsonWriter(encoded))
             {
                 writer.WriteStartObject();
                 writer.WriteString("protocol", Protocol);
@@ -240,14 +272,51 @@ public sealed class PipePublisher : IAsyncDisposable
                 payload.RootElement.WriteTo(writer);
                 writer.WriteEndObject();
             }
-            stream.WriteByte((byte)'\n');
-            line = stream.ToArray();
+            AppendNewline(encoded);
         }
         catch (JsonException)
         {
             _failure ??= "invalid_payload_json";
             return false;
         }
+        return TryQueueLineLocked(encoded.WrittenMemory, isControl);
+    }
+
+    private bool TryEnqueueObjectLocked<T>(string kind, T payload, bool isControl, long sequence,
+        JsonSerializerOptions? serializerOptions, int initialCapacityHint)
+    {
+        var encoded = new ArrayBufferWriter<byte>(initialCapacityHint);
+        try
+        {
+            using (var writer = new Utf8JsonWriter(encoded))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("protocol", Protocol);
+                writer.WriteString("run_id", _runId);
+                writer.WriteNumber("sequence", sequence);
+                writer.WriteString("kind", kind);
+                writer.WritePropertyName("payload");
+                JsonSerializer.Serialize(writer, payload, serializerOptions);
+                writer.WriteEndObject();
+            }
+            AppendNewline(encoded);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+        {
+            _failure ??= $"frame_serialization_failed: {ex.GetType().Name}";
+            return false;
+        }
+        return TryQueueLineLocked(encoded.WrittenMemory, isControl);
+    }
+
+    private static void AppendNewline(ArrayBufferWriter<byte> encoded)
+    {
+        encoded.GetSpan(1)[0] = (byte)'\n';
+        encoded.Advance(1);
+    }
+
+    private bool TryQueueLineLocked(ReadOnlyMemory<byte> line, bool isControl)
+    {
         if (line.Length > MaxEnvelopeBytes) return false;
         var itemLimit = isControl ? _queueCapacity : _queueCapacity - _controlReserveSlots;
         var byteLimit = isControl ? _maxQueueBytes : _maxQueueBytes - _controlReserveBytes;
@@ -285,19 +354,21 @@ public sealed class PipePublisher : IAsyncDisposable
         {
             while (!_cancel.IsCancellationRequested)
             {
-                byte[]? head;
+                ReadOnlyMemory<byte> head = default;
+                bool hasHead;
                 bool completed;
                 lock (_gate)
                 {
-                    head = _queue.Count == 0 ? null : _queue.Peek();
+                    hasHead = _queue.Count != 0;
+                    if (hasHead) head = _queue.Peek();
                     completed = _completed;
                 }
-                if (head is null && completed)
+                if (!hasHead && completed)
                 {
                     _drained.TrySetResult();
                     return;
                 }
-                if (head is null)
+                if (!hasHead)
                 {
                     await _available.WaitAsync(_cancel.Token).ConfigureAwait(false);
                     continue;
@@ -344,7 +415,7 @@ public sealed class PipePublisher : IAsyncDisposable
                     }
                     lock (_gate)
                     {
-                        if (_queue.Count > 0 && ReferenceEquals(_queue.Peek(), head))
+                        if (_queue.Count > 0 && _queue.Peek().Equals(head))
                         {
                             _queue.Dequeue();
                             _queuedBytes -= head.Length;

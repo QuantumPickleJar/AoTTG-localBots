@@ -1,46 +1,44 @@
-# REC-I status: partial gameplay capture; calibration not accepted
+# REC-I status: capture attribution improved; performance gate remains open
 
-**Status:** The writer and transport completed a 19m09s gameplay-length run: 56,970 ordered frames, 779 events, 54 lifecycle records, 35/35 hash-verified chunks, `capture_complete=true`, and zero declared drops or incomplete reasons. Human, Hook, and Titan samples plus actual Human.OnCollisionEnter callbacks were observed. REC-I is still partial and not accepted: sample phase is unverified; the analyzer reports 277 `unexplained_velocity_change` anomalies; and a later health window reached 1.8008 ms p95 against the 1.0 ms criterion at 20 ms fixedDeltaTime. The 53.6163 ms window maximum is below the 60 ms limit. The archive does not identify map/mode, and no video was supplied to calibrate timing or motion. The package default remains disabled; the local plugin was opted in for this run.
+## Current evidence
 
-## What is ready
+The owner-supplied 0.1.5 gameplay recording completed cleanly through the writer and transport: 56,970 ordered frame markers, 779 events, 54 lifecycle records, 35/35 SHA-256-verified chunks, 27 entity IDs, no reported frame or entity drops, and `capture_complete=true`. It contains Humans, Titans, Hooks, 209 observed Human collision callbacks, and 340 sampled Hook state transitions.
 
-- Exact installation: x64 IL2CPP, Unity 2023.1.22f1, IL2CPP metadata 29.1.
-- Loader: BepInEx 6.0.0-be.791 started on this installation and generated interop for the installed game.
-- Adapter: BepInEx plugin compiled against that local interop. It is passive and opt-in.
-- Local writer path: adapter → bounded local named pipe → Python receiver → existing FlightRecorderWriter → hashed aicadets.flight.v1 chunks.
-- Level 2 earlier 0.1.5 main-menu smoke (same adapter source, before deterministic-build project properties): 1,982 ordered frames, one verified hashed chunk, `capture_complete=true`, zero drops, zero analyzer anomalies, graceful stop, and zero entities. Eight events comprised seven producer-health samples and one sampled scene change. At fixedDeltaTime about 20 ms, the first five-second health window reported p95 capture work 0.7254 ms and maximum 103.9691 ms; later windows reported p95 0.1726–0.5526 ms and maxima 6.9426–12.7446 ms. These are menu/startup measurements with no actor load and do not establish mission performance.
-- Final deterministic package 0.1.5 menu retry: 5,717 frames and 23 events; its chunk verified, but the run ended `receiver_interrupted` and `capture_complete=false` when the game and BepInEx console closed together.
-- Supplied gameplay-length trace: 27 entity IDs (6 Titans, 3 Humans, 18 ODM Hooks), 209 observed collision records, 340 sampled hook-state transitions, zero declared drops, zero missing frame markers, and 100% manifest frame coverage.
-- One Titan changed from sampled health 1/dead false to health 0/dead true with `Dead` / `die.front`, then was observed destroyed. An AI-controlled Human had 13 observed collision callbacks against that Titan in the preceding 3.56 seconds and was in `Attack` / `attack1_hook_r2` near the death sample. This strongly suggests a cadet kill, but no damage-source or correlated death event was recorded, so attribution is not proven.
-- The supplied trace passes the integrity/drop and basic Human/Hook/Titan visibility gates and can support exploratory trajectory/contact review. Calibration still needs a short video cross-check, phase review, and resolution of the p95/anomaly findings.
+The updated analyzer now writes `kill_attributions.json`. Reanalysis finds one **strong inferred candidate** for a sampled Titan death at t=894.299683, step 44,716: Titan health changed 1→0 and its dead flag/state/death animation changed; an AI-controlled Human had 13 observed collision callbacks with that Titan from t=890.3597 to 893.9197 and an attack state/animation sampled near the death. The trace contains no direct damage-source or correlated death callback, so the recorder reports inference, not proven causality.
 
-The H3VR BepInEx 5 Mono files were not copied. AoTTG2 uses its separately installed IL2CPP loader. The recorder package excludes game, loader, and generated interop binaries.
+The prior analyzer counted 277 `unexplained_velocity_change` findings because it did not resolve the adapter's flattened actor/target fields. The corrected correlation links 103 of those velocity changes to observed contact callbacks within one adapter step. **174 remain unresolved** and stay visible in the report; they are not re-labeled as collisions or explained by assumption.
+
+The same 0.1.5 capture's later health window reached 1.8008 ms capture-work p95 at a 20 ms fixed step, above the 1.0 ms criterion; maximum was 53.6163 ms, below the 60 ms limit. The adapter's 0.1.6 candidate now serializes frame DTOs directly into one UTF-8 protocol envelope and queues its backing bytes without the former stringify/parse/reserialize path. This is an optimization to validate; **no 0.1.6 gameplay performance result exists yet**. Sample phase remains `fixed_update_pre_physics_order_unspecified`, map/mode is unknown, and no video was included.
+
+## Current implementation state
+
+- PR #15 is merged into `main`; PR #16 targets `main` and retains the adapter-only diff.
+- The offline analyzer emits `kill_attributions.json` and a report section. It uses sampled alive→dead transitions, observed target-specific collisions, sampled AI/attack state, and explicitly correlated direct events when present. It preserves the provenance of each signal and labels contact-based attribution as inference.
+- The Unity adapter and writer schema remain unchanged by the analyzer output. No M2 gameplay code or installed game file is changed by this work.
+- The candidate package version is 0.1.6. Keep game recording disabled except during the deliberately opted-in private validation session.
 
 ## REC-I validation card
 
-    SESSION: REC-I short passive capture
-    SOURCE: codex/flight-recorder-il2cpp-adapter; adapter/build commit 94e033699b0f67387d030e810e35fa422b81dd55
-    PACKAGE: AoTTG2 Flight Recorder 0.1.5, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
-    GAME CONFIG: BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg; Enabled=true only for this capture, then restore false
-    RECEIVER: Copy the example JSON to a new local config, set recording_enabled=true and a new empty output directory; start scripts/start_flight_recorder_receiver.ps1 with that config and verify the pipe is listening
-    ADD-ONS: BepInEx Flight Recorder only. Disable AICadetsWaveCadet, CommandPanel, M2Watcher, Probe, Traversal, all other experimental .cl add-ons, and unrelated plugins
-    SESSION PRIVACY: Offline/solo if available, otherwise a private master-host lobby with no other participants. Never use a public lobby or capture other players' data
-    MODE / MAP: City 1 / Training / Waves with vanilla mission logic; create at least one Titan if this mode supports local/private play. Do not enable M2 AI gameplay code
-    SAFE ACTION: From a safe spawn, record 30–60 seconds: stand and rotate briefly; make one short walk/run in open space; launch one ODM hook at static architecture, hold/reattach briefly, then release. Avoid combat for this first movement pass
-    WARM-UP: Capture at the main menu for at least 10 simulation seconds (two health windows) before entering the private session. Keep the first window as startup data; evaluate later windows as steady state
-    LAUNCH ORDER: (1) confirm game is closed and Enabled=false; (2) set receiver recording_enabled=true and start receiver; (3) set only game Enabled=true; (4) launch AoTTG2; (5) verify plugin/run/pipe handshake at menu; (6) enter only the private vanilla session
-    FIRST 30–60 SECONDS: Check frames at measured fixed interval; active scene change has sampled-poll evidence; local Human ID is stable; Hook appears after census and its state/anchor fields change; Titan appears if spawned and owned by local master; collision event appears only if Human.OnCollisionEnter fires; no controls or physics are altered
-    EXPECTED DATA: About 50 adapter callbacks per simulation second when fixedDeltaTime is about 0.02 seconds. Coverage is limited to allowed Humans, local-master AI Titans, owner-linked Hooks, and allowed projectiles. First-seen spawn is inferred by census; sampled Hook/scene transitions are not direct callback events
-    PERFORMANCE: Require zero transport/frame/control drops, zero unexplained step gaps, verified chunk hashes, capture_complete=true, and no unresolved analyzer anomalies. Health events report capture_work_ms_p95/max over the latest 256 callbacks. After the first startup health window, require steady-state p95 <= 5% of fixedDeltaTime and max <= 3x fixedDeltaTime. Preserve the first window separately. The latest 20 ms-step gameplay run had later-window p95 up to 1.8008 ms (above the 1.0 ms limit) and maximum up to 53.6163 ms (below the 60 ms limit); it also had 277 unexplained_velocity_change anomalies requiring review. These are callback-work values, not full frame time. Treat threshold breaches or visible sustained stutter/control delay as stop-and-review, not a pass.
-    VIDEO: No video accompanied the latest trace. A short screen recording remains needed to compare direction, stopping, hook timing, and observation phase.
-    TRACE REVIEW: Run runtime/python.exe tools/analyze_flight.py on the run directory or ZIP. Check run metadata, chunk_manifest.json hashes, ordered steps, gaps/drop counters, IDs/lifecycle evidence, phase, sampled scene/hook-transition evidence, health p95/max, and capture_complete
-    STOP / ROLLBACK: Stop receiver cleanly; set Enabled=false after the game closes. If controls/stutter/loader errors appear, stop the session, preserve logs and incomplete trace, then run remove_flight_recorder.ps1. It removes only unchanged manifest-listed recorder DLLs and leaves BepInEx/interop untouched
-    RETURN: Zip the run folder (chunk JSONL, chunk_manifest.json, metadata.json, writer_state.json), analysis output, BepInEx/LogOutput.log, receiver log, exact config with local paths redacted, short motion video, package SHA-256, and observed performance notes. Do not include game binaries or other players' data
+    SESSION: REC-I short passive capture and performance check
+    SOURCE: PR #16 branch codex/flight-recorder-il2cpp-adapter; use the commit recorded in package-manifest.json
+    PACKAGE: AoTTG2 Flight Recorder 0.1.6 candidate, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
+    DEPLOY: Extract the reviewed 0.1.6 package; install only with its guarded install_flight_recorder.ps1. Do not overwrite the existing install; remove the old recorder with its matching guarded removal script first, after closing the game, or use a fresh reversible game copy.
+    GAME CONFIG: BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg; set Enabled=true only for this capture and restore false afterward
+    RECEIVER: Copy configs/flight-recorder-transport.example.json to a private local config, set recording_enabled=true and a new empty output folder; start the package receiver and verify its pipe-ready message before launching the game
+    ADD-ONS: Flight Recorder only. Disable AICadetsWaveCadet, CommandPanel, M2Watcher, Probe, Traversal, all other experimental .cl add-ons, and unrelated plugins
+    SESSION PRIVACY: Offline/solo if available; otherwise a private master-host lobby with no other participants. Never use a public lobby or capture other players' data
+    MODE / MAP: City 1 / Training / Waves with vanilla mission logic, if the installed game permits a private session. Do not enable M2 AI gameplay code
+    LAUNCH ORDER: (1) close game and verify recorder Enabled=false; (2) start receiver on its new output folder; (3) set only recorder Enabled=true; (4) launch AoTTG2; (5) verify plugin version, run ID, and pipe handshake; (6) enter the private vanilla session
+    FIRST 30–60 SECONDS: Confirm ordered frame markers at the measured fixed interval, scene-change evidence, local Human ID, Hook appearance and sampled state/anchor changes, and Titan visibility if one is locally owned or local-master AI. Stand/rotate, walk briefly, and make one safe ODM hook/release. Do not alter controls or physics for the recorder test.
+    PERFORMANCE: Preserve the first startup health window separately. At steady state require capture_work_ms_p95 <= 5% of fixedDeltaTime (1.0 ms at 20 ms) and maximum <= 3x fixedDeltaTime (60 ms at 20 ms), zero transport/frame/control drops, no unexplained step gaps, valid chunk hashes, and `capture_complete=true`. Stop and review if sustained stutter or control delay appears. This is callback work, not total Unity frame time.
+    TRACE REVIEW: Run `runtime/python.exe tools/analyze_flight.py <run-folder-or-zip> --out <analysis-folder>`. Review manifest/hash integrity, frame order, drops/gaps, identity/lifecycle coverage, phase, collision and Hook evidence, health p95/max, unresolved velocity changes, and `kill_attributions.json`. A contact-based candidate remains inferred.
+    STOP / ROLLBACK: Close the game before stopping the receiver; restore Enabled=false. Preserve incomplete output on failure. If the plugin causes errors or visible performance trouble, close the game and use the matching guarded remove script; it removes only unchanged manifest-listed recorder DLLs and receipt.
+    RETURN: Run ZIP, analysis folder including `kill_attributions.json`, BepInEx/LogOutput.log, receiver stdout/stderr logs, redacted recorder config, short video showing the calibration motion, package ZIP SHA-256, and observed performance notes. Do not include game binaries or other players' data.
 
-### Acceptance boundaries
+## Acceptance boundary
 
-The supplied trace passes integrity/drop and basic Human/Hook/Titan visibility checks and can support exploratory physical-trajectory/contact review. It does not validate M2 decisions or prove damage attribution. Do not treat REC-I as passed until observation phase, video cross-check, performance thresholds, and unexplained motion anomalies are resolved. An absent damage event remains absent evidence; a velocity change is not promoted to a collision.
+The supplied 0.1.5 recording establishes successful writer/transport operation and gives strong, non-causal evidence consistent with a cadet kill. It does not establish direct damage attribution, calibrated physics phase, REC-I performance acceptance, or M2 decision quality. The new 0.1.6 serialization path must be measured in the installed game before the performance gate is called resolved. The 174 unmatched velocity changes remain explicit review findings.
 
-## Rollback and current machine state
+## Installed-machine handling
 
-The plugin is installed only under BepInEx/plugins/AoTTG2FlightRecorder, with an install manifest hashing the two plugin DLLs. The local game config is currently Enabled = true after this capture; set it false when not recording. The receiver is stopped after the run's graceful stop, so start it before the next game launch. To remove the plugin, close the game and run the package's remove_flight_recorder.ps1 against the same GameRoot; it refuses modified or unlisted files. BepInEx and generated interop are separate loader dependencies and are not removed by that plugin rollback script.
+No installed-game file was changed while preparing the 0.1.6 candidate. Use the guarded package install/remove scripts for any later deployment; leave BepInEx and generated interop intact during rollback.

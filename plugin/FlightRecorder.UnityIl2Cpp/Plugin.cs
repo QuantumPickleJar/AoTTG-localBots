@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.5";
+    public const string PluginVersion = "0.1.6";
     private const string RequiredUnityVersion = "2023.1.22f1";
     private const string CapturePhase = "fixed_update_pre_physics_order_unspecified";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -352,8 +352,9 @@ public sealed class FlightRecorderDriver : MonoBehaviour
             if (!plugin.IsCapturing) return;
             var frame = _registry.CaptureFrame(plugin.FixedStep, plugin.NowSeconds(), Time.fixedDeltaTime,
                 plugin.MonotonicElapsedSeconds());
-            var payload = JsonSerializer.Serialize(frame, FlightRecorderPlugin.SerializerOptions);
-            if (plugin.Publisher?.TryPublishFrame(payload, plugin.FixedStep) != true)
+            var frameCapacityHint = Math.Clamp(2048 + frame.Samples.Length * 1024, 4096, 256 * 1024);
+            if (plugin.Publisher?.TryPublishFrame(frame, plugin.FixedStep, frame.T,
+                    FlightRecorderPlugin.SerializerOptions, frameCapacityHint) != true)
                 plugin.CheckTransportHealth();
             foreach (var observation in _registry.DrainObservationEvents())
             {

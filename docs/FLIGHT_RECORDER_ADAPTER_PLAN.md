@@ -1,6 +1,6 @@
 # Flight Recorder adapter and installed-build audit
 
-**State:** The read-only Unity IL2CPP adapter, local named-pipe producer, and Python writer bridge are implemented in draft PR #16, based on the runtime-independent PR #15 integration branch. M2 gameplay is unchanged. The adapter is opt-in; it is not yet validated as an M2 sensor.
+**State:** The read-only Unity IL2CPP adapter, local named-pipe producer, and Python writer bridge are implemented in PR #16, now based on `main` after PR #15 merged. The current work adds offline Titan-death attribution candidates and reduces serialization work in the Unity callback. M2 gameplay is unchanged. The adapter is opt-in and not yet accepted as an M2 sensor; a fresh 0.1.6 private performance/phase capture is still required.
 
 ## Installed build findings
 
@@ -9,10 +9,10 @@
 | Runtime backend | GameAssembly.dll, global-metadata.dat, and UnityPlayer.dll are present; Mono managed game assemblies are absent. BepInEx generated IL2CPP interop from this exact installation. | High: local preflight and loader log. |
 | Architecture and Unity version | x64; Unity 2023.1.22f1. | High: PE inspection and BepInEx runtime log. |
 | IL2CPP metadata | Metadata version 29.1 was read during interop generation. | High for this installed copy. |
-| Loader | BepInEx 6.0.0-be.791 started successfully and generated interop. Recorder plugin initialized in a main-menu smoke. | High for startup; gameplay compatibility remains untested. |
+| Loader | BepInEx 6.0.0-be.791 started successfully and generated interop. The recorder initialized in a main-menu smoke and produced the supplied partial gameplay trace. | High for startup and observed partial capture; full coverage/performance remains unverified. |
 | Generated game surface | Interop exposes Characters.Human, BaseCharacter, BaseTitan, Hook/HookUseable, CharacterSpawner, and Projectiles.BaseProjectile plus sampled properties. The plugin compiles against these assemblies. | High for metadata and compilation; gameplay field values are not yet verified. |
 | Sampling phase | Injected MonoBehaviour.FixedUpdate ran in the main-menu smoke. Unity documents FixedUpdate as preceding physics; relative order among AoTTG2 scripts is unknown. | High for callback startup and generic Unity phase; gameplay ordering uncalibrated. |
-| Collision callback | Human.OnCollisionEnter(Collision) is present in generated interop and Harmony-patched. | High for signature and patch compilation; gameplay invocation unverified. |
+| Collision callback | Human.OnCollisionEnter(Collision) is present in generated interop and Harmony-patched; 209 callbacks were observed in the supplied gameplay capture. | High for callback execution in that run; coverage and causal damage meaning remain unverified. |
 
 The H3VR BepInEx 5 Mono profile was not copied. AoTTG2 uses a separate BepInEx IL2CPP build. No game binary was modified or included in the package. Generated interop stays local and is not committed.
 
@@ -20,7 +20,7 @@ The H3VR BepInEx 5 Mono profile was not copied. AoTTG2 uses a separate BepInEx I
 
 Use BepInEx IL2CPP with an injected MonoBehaviour sampled from FixedUpdate. This route is supported by the successful BepInEx 6.0.0-be.791 start and interop generation on this exact IL2CPP build. Capture refuses any runtime other than x64 Unity 2023.1.22f1.
 
-The adapter copies Unity/game values to primitive JSON-compatible data on Unity's callback thread. A bounded .NET producer sends the data over a local Windows named pipe; the existing Python receiver calls tools/flight_writer.py. The pipe worker never calls Unity APIs. Messages use aicadets.flight.v1 and its existing hashed chunk manifest. No transforms, physics properties, inputs, game state, or controller decisions are written or changed by the plugin.
+The adapter copies Unity/game values to primitive JSON-compatible data on Unity's callback thread. Version 0.1.6 serializes the frame DTO once into a bounded UTF-8 envelope; a bounded .NET producer sends it over a local Windows named pipe, and the existing Python receiver calls tools/flight_writer.py. The pipe worker never calls Unity APIs. Messages use aicadets.flight.v1 and its existing hashed chunk manifest. No transforms, physics properties, inputs, game state, or controller decisions are written or changed by the plugin. The optimization requires a new installed-game performance measurement.
 
 ## Current capture coverage
 
@@ -38,7 +38,7 @@ The registry is refreshed by a whole-scene census every configured 0.5 seconds, 
 
 ## Explicitly unavailable or unverified
 
-Moving environment geometry; Titan collision callbacks; direct attack/damage/death/rescue events; structured M2 commands/personality decisions; gameplay firing of Human.OnCollisionEnter; actor coverage in a mission; relative script order; and mission performance/REC-I calibration. Health and dead fields are sampled and are not promoted to event callbacks. Existing M2 key/value logs are not fabricated into complete decisions. Private/local-host testing is required.
+Moving environment geometry; Titan collision callbacks; direct attack/damage/death/rescue events; structured M2 commands/personality decisions; complete actor coverage; relative script order; and 0.1.6 mission performance/REC-I calibration. Health and dead fields are sampled and are not promoted to event callbacks. Existing M2 key/value logs are not fabricated into complete decisions. Private/local-host testing is required.
 
 ## Build and transport
 
@@ -52,9 +52,9 @@ Package install/rollback details are in [FLIGHT_RECORDER_IL2CPP_PACKAGE_README.m
 
 | Level | Result | Establishes |
 |---|---|---|
-| 1 — Offline | Python protocol/writer tests, .NET build against installed interop, PowerShell parser checks, and Windows pipe/writer smoke pass locally. | Compilation and synthetic data through hashed writer chunks. |
-| 2 — Installed-runtime smoke | Final package 0.1.5 passed at the main menu: loader/plugin initialization, FixedUpdate frames, pipe handshake, hashed chunks, health, sampled active-scene change and graceful stop. 1,982 ordered frames, one verified chunk, 8 events (7 health plus one scene poll), zero drops/anomalies, zero entities. No lobby/mission was entered. | Startup/transport/writer and active-scene poll only; not actor, hook, or collision coverage. |
-| 3 — REC-I gameplay calibration | Pending the owner's short private session. At fixedDeltaTime about 20 ms, the first five-second health window reported capture-work p95 0.7254 ms and maximum 103.9691 ms; later windows reported p95 0.1726–0.5526 ms and maxima 6.9426–12.7446 ms. There were no entities, so these are menu/startup measurements only. | Actual local Human/Titan/Hook samples, callback evidence, motion cross-check, drops and gameplay overhead. Treat the first health window as startup/warm-up data; evaluate steady-state windows separately and return both. |
+| 1 — Offline | 115 Python tests pass; transport builds for .NET 6 and .NET 8; ordered-pipe/backpressure smoke and Windows pipe-to-writer recovery smoke pass; the Unity plug-in builds with zero warnings/errors against the installed interop. | Compilation and synthetic data through hashed writer chunks; no game-performance claim. |
+| 2 — Installed-runtime smoke | 0.1.5 passed a main-menu smoke. The supplied 0.1.5 gameplay trace also has 56,970 ordered frames, verified chunks, 209 collision callbacks, and a complete writer stop. | Startup and gameplay data visibility are established for 0.1.5. The 0.1.6 fast path still needs loader/handshake/shutdown smoke. |
+| 3 — REC-I gameplay calibration | 0.1.5 later-window p95 was 1.8008 ms at 20 ms fixedDeltaTime, above the 1.0 ms limit. The updated analyzer leaves 174 velocity changes unresolved. 0.1.6 is not yet measured in-game. | Requires a new private session, p95/max measurement, zero transport losses, verified chunks, motion cross-check, and phase/coverage review. Preserve startup and steady-state health windows separately. |
 
 ## References
 

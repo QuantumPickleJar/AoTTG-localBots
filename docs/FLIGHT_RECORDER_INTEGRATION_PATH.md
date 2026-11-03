@@ -1,30 +1,31 @@
-# Flight Recorder integration and PR path
+# Flight Recorder integration and PR disposition
 
-PR #15 contains the runtime-independent Python Flight Recorder writer and its prerequisites on a clean branch based on main. It excludes the unvalidated M2 gameplay branch. PR #16 is the separate Unity IL2CPP adapter implementation, based on the PR #15 branch. Neither PR has been merged by this work.
+PR #15 merged into `main` at merge commit `f0f3b2448c2042db8490cf5c640617a256667ae4`. PR #16 was retargeted to `main`; its merge base is the already merged offline foundation, so its review diff contains the IL2CPP adapter follow-on rather than a duplicate writer stack. M2 gameplay remains separate and unchanged.
 
 ## PR disposition
 
-| PR | Current action | Follow-on |
+| PR | Current GitHub state | Action |
 |---|---|---|
-| #6 | Leave draft and untouched. | M2 gameplay remains a separate live-validation track. |
-| #10 | Leave draft; do not retarget its stacked branch. | After #15 is accepted, close as superseded by #15. |
-| #11 | Leave draft and untouched. | Independent PRIM-I probe; not a recorder prerequisite. |
-| #12 | Leave draft; do not retarget its stacked branch. | After #15 is accepted, close as superseded by #15. |
-| #13 | Leave draft; do not retarget its stacked branch. | After #15 is accepted, close as superseded by #15. |
-| #14 | Leave draft; do not retarget its stacked branch. | Its writer is consolidated into #15; after #15 is accepted, close as superseded by #15. |
-| #15 | Keep open as the offline foundation and current base branch for #16. | Review/integrate separately. Do not merge automatically as part of #16. |
-| #16 | Keep draft and based on the PR #15 branch. It contains only the adapter/transport/runtime audit follow-on. | After #15 is accepted into main, retarget #16 to main so its diff contains only the adapter follow-on, then recheck CI and scope. |
+| #6 | Open, draft; `feat/m2-exploration-and-orders` | Leave untouched. Use recorder evidence for M2 diagnosis only after calibration; do not merge with #16. |
+| #10 | Closed, not merged | Superseded by the offline analyzer and audit integrated through #15. Leave closed. |
+| #11 | Open, draft; independent PRIM-I branch | Keep draft and separate. It is not a recorder prerequisite; defer its gameplay check until REC-I is calibrated. |
+| #12 | Open, draft; stacked on #11 | Superseded by the offline policy/replay content integrated through #15. Close as superseded; do not retarget or merge its stacked branch. |
+| #13 | Open, draft; stacked combined branch | Superseded by the offline replay/conformance content integrated through #15. Close as superseded; do not retarget or merge its stacked branch. |
+| #14 | Open, draft; stacked on #10–#13 | Its Python writer is integrated through #15. Close as superseded; do not merge its M2-bearing ancestry or retarget it. |
+| #15 | Merged | Offline writer, analyzer, replay adapter, recovery, tests, and documentation are now on `main`. |
+| #16 | Open, ready for review, base `main` | Keep separate from M2. Update review text and CI after the current adapter/attribution/performance-path commit. Do not merge until the 0.1.6 private capture measures the performance gate and the remaining review gates are resolved. |
 
-Do not merge PR #6 or change its branch. Do not retarget #10, #12, or #13 to main: their ancestry contains the M2 feature history. Do not merge PR #14 first; its ancestry is stacked through earlier branches. PR #15 is the clean consolidated offline base. PR #16 depends on it and does not duplicate its writer implementation.
+The recommended cleanup is to close #12–#14 as superseded by #15, while leaving #6 and #11 draft. No branch retargeting is needed for those stacked drafts. PR #16 is the only recorder adapter integration candidate.
 
-## Scope boundaries
+## Scope boundary
 
-PR #15 provides the offline reader/analyzer, replay support, writer, recovery, benchmark, and tests. It contains no M2 gameplay source changes.
+PR #15 supplies the runtime-independent Python writer and offline toolchain. PR #16 adds the BepInEx IL2CPP adapter and local named-pipe transport, and now adds conservative kill-attribution analysis output plus the direct frame-envelope serialization path. It does not modify M2 controller, watcher, or mission logic and does not make native recorder readiness or REC-I calibration claims.
 
-PR #16 adds the BepInEx IL2CPP adapter compiled against the installed build's generated interop, producer-health/coverage metadata, sampled scene/hook observations, Windows packaging and rollback scripts, and adapter-shaped protocol tests. It consumes the existing Python writer through the local named-pipe receiver; it does not create a competing file format. It changes no M2 controller or watcher files.
+## Validation gates before merging #16
 
-## Validation boundary
+1. The PR head must pass static-smoke, Windows named-pipe transport checks, Python regression tests, and installed-interop plugin build.
+2. A guarded 0.1.6 package must include its source commit and manifest hashes, exclude proprietary game binaries/interop, and remain reversible.
+3. A fresh private installed-game capture must meet the steady-state capture-work p95/max limits with zero unaccounted drops, valid chunks, and no visible control/stutter issue. The prior 0.1.5 p95 breach is historical and cannot be cleared by offline tests.
+4. Keep the callback phase and coverage limits explicit; review the 174 remaining velocity-change findings and use the short video only to calibrate motion/phase. Contact-based kill attribution stays inferred absent a direct damage/death event.
 
-The installed-runtime main-menu smoke proves loader/plugin startup and local writer transport only. It did not enter a lobby or mission and saw no game entities. REC-I is the first private gameplay calibration; it must establish actor coverage, hook samples, collision callback behavior if fired, motion cross-check, drops, and measured capture cost before the recorder is used to diagnose M2.
-
-PR #16 remains draft and review-only. Keep both PRs unmerged until their owners review the exact diff and checks.
+After these checks pass, the owner can review the updated #16 diff and CI and merge #16 into `main`. Do not merge #6 or start the next gameplay milestone in the same integration. Use the first calibrated recording to select one narrowly scoped M2 stabilization behavior, prepare its own validation card, and keep it on the M2 branch for separate review.

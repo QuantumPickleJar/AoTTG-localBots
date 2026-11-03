@@ -23,6 +23,7 @@ import math
 from pathlib import Path
 from pathlib import PurePosixPath
 import zipfile
+from flight_attribution import KillAttributionCollector
 
 SCHEMA = "aicadets.flight.v1"
 CHUNK_INDEX_SCHEMA = "aicadets.flight.chunk-index.v1"
@@ -243,7 +244,8 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
         last = {}
         track_stats = defaultdict(lambda: {"samples": 0, "path": 0., "max_speed": 0., "gaps": 0,
                                            "first_t": None, "last_t": None, "kind": "unknown", "first": None, "last": None})
-        contacts = defaultdict(lambda: deque(maxlen=64))
+        contacts = defaultdict(lambda: deque(maxlen=512))
+        attribution = KillAttributionCollector()
         actions = {}
         latest_step = None
         latest_time = None
@@ -387,13 +389,26 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                                 evidence = str(rec.get("evidence", "unknown"))
                                 correlation_id = rec.get("correlation_id")
                                 correlation_id = (str(correlation_id) if correlation_id not in (None, "") else None)
+                                event_ids = rec.get("ids")
+                                event_ids = event_ids if isinstance(event_ids, list) else []
                                 event_rows.append([t, step, typ, entity, name_of_event, evidence,
                                                    correlation_id or "", rec.get("actor", ""),
-                                                   json.dumps(rec.get("ids", []), separators=(",", ":"))])
+                                                   json.dumps(event_ids, separators=(",", ":"))])
                                 counters["event_" + name_of_event] += 1
-                                involved = list(rec.get("ids", [])) + ([entity] if entity else [])
-                                if name_of_event in ("collision", "contact") and evidence == "observed":
-                                    for target in involved:
+                                attribution.observe_event(rec)
+                                involved = list(event_ids) + ([entity] if entity else [])
+                                actor_id = rec.get("actor")
+                                if isinstance(actor_id, str) and actor_id:
+                                    involved.append(actor_id)
+                                nested_fields = rec.get("fields")
+                                nested_fields = nested_fields if isinstance(nested_fields, dict) else {}
+                                for key in ("other_character_id", "target_id", "victim_id", "other_entity_id"):
+                                    value = rec.get(key, nested_fields.get(key))
+                                    if isinstance(value, str) and value:
+                                        involved.append(value)
+                                if (name_of_event in ("collision", "contact") and evidence == "observed"
+                                        and isinstance(step, int) and not isinstance(step, bool)):
+                                    for target in dict.fromkeys(value for value in involved if isinstance(value, str)):
                                         contacts[str(target)].append(step)
                                 if name_of_event in ("damage", "death") and evidence == "observed":
                                     actor = str(rec.get("actor", ""))
@@ -432,6 +447,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                             except ValueError as exc:
                                 anomaly("invalid_sample", t, entity, f"{name}:{line_no}: {exc}", "confirmed")
                                 continue
+                            attribution.observe_sample(rec)
                             stat = track_stats[entity]
                             stat["samples"] += 1
                             stat["kind"] = str(rec.get("kind", stat["kind"]))
@@ -526,6 +542,8 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                         "confirmed")
         if observed_frame_steps == 0:
             anomaly("no_frame_markers", latest_time, "", "cannot certify global physics-step coverage", "confirmed")
+        kill_attributions = attribution.deaths
+        attribution_counts = Counter(item["attribution_status"] for item in kill_attributions)
         build_name = metadata.get("game_build")
         if not isinstance(build_name, str) or not build_name.strip() or build_name == "unknown":
             fingerprint = metadata.get("installed_build_fingerprint", {})
@@ -566,16 +584,19 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                    "missing_per_entity_sample_steps": missing_track_steps,
                    "parse_errors": parse_errors, "anomaly_total": sum(v for k, v in counters.items() if k.startswith("anomaly_")),
                    "anomalies_returned": len(anomalies), "focus_samples": focus_count,
+                   "sampled_titan_death_transitions": len(kill_attributions),
+                   "kill_attribution_status_counts": dict(attribution_counts),
                    "capture_complete": bool(metadata.get("capture_complete", False)),
                    "evidence_limitations": [
                        "Trajectory and command telemetry are not full deterministic Unity physics replay.",
-                       "Unexplained velocity changes are not confirmed contacts.",
-                       "No automatic attribution of damage/death or rescue without explicit evidence.",
+                       "Velocity-change anomalies are not confirmed contacts; observed collision records are correlated by actor and target where IDs are available.",
+                       "Kill attribution from sampled state, contacts, and attack state is heuristic; direct causality requires a correlated damage/death event.",
                        "Entity step gaps can be expected only if a declared lower-rate sampling policy applies.",
                        "A no-frame-marker or uncalibrated capture cannot prove per-physics-step completeness.",
                    ]}
         (out / "coverage.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         (out / "anomalies.json").write_text(json.dumps(anomalies, indent=2) + "\n", encoding="utf-8")
+        (out / "kill_attributions.json").write_text(json.dumps(kill_attributions, indent=2) + "\n", encoding="utf-8")
         top = Counter(a["kind"] for a in anomalies)
         rows = ["# AoTTG AI Cadets — flight recorder analysis (reference format)", "",
                 f"- Run: `{summary['run_id']}`", f"- Tier: `{summary['capture_tier']}`",
@@ -592,6 +613,20 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                 f"- Step source: `{summary['step_source']}`",
                 "", "## Anomalies (bounded sample)", ""]
         rows += [f"- `{k}`: {v}" for k, v in top.most_common()] or ["- None flagged"]
+        rows += ["", "## Sampled Titan deaths and attribution candidates", ""]
+        if kill_attributions:
+            for death in kill_attributions:
+                rows.append(f"- `{death['target_id']}` at t={death['t']:.3f}s, step {death['step']}: "
+                            f"{death['attribution_status']} ({', '.join(death['death_signals'])}).")
+                for candidate in death["candidates"]:
+                    rows.append(f"  - Candidate `{candidate['actor_id']}`: {candidate['evidence_classification']}; "
+                                f"AI={candidate['ai_controlled_near_death']}; "
+                                f"observed target collisions={candidate['observed_target_collision_count']}; "
+                                f"sampled attack={candidate['attack_state_sampled']}; "
+                                f"distance at death={candidate['distance_at_death_units']} units.")
+                rows.append("  - Contact and sampled attack state support inference; they do not prove damage causality.")
+        else:
+            rows.append("- No sampled Titan alive-to-dead transition was found.")
         if summary["incomplete_reasons"]:
             rows += ["", "## Incomplete capture reasons", ""]
             rows += [f"- `{item['reason']}` (count: {item.get('count', 1)})"

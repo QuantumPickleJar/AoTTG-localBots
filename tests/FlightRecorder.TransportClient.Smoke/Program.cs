@@ -52,9 +52,12 @@ static async Task SendToPythonReceiverAsync(string pipeName, string runId)
     if (!publisher.TryPublishControl("lifecycle", "{\"action\":\"spawn\",\"id\":\"human:test:1\"," +
             "\"kind\":\"human\",\"t\":0.02,\"step\":0,\"evidence\":\"observed\"}"))
         throw new InvalidOperationException("lifecycle message was not queued");
-    if (!publisher.TryPublishFrame("{\"step\":0,\"t\":0.02,\"phase\":\"fixture\"," +
-            "\"fixed_delta_time\":0.02,\"samples\":[{\"id\":\"human:test:1\",\"kind\":\"human\"," +
-            "\"pos\":[0,0,0],\"vel\":[1,0,0]}]}", 0))
+    var framePayload = new
+    {
+        step = 0, t = 0.02, phase = "fixture", fixed_delta_time = 0.02,
+        samples = new[] { new { id = "human:test:1", kind = "human", pos = new[] { 0, 0, 0 }, vel = new[] { 1, 0, 0 } } },
+    };
+    if (!publisher.TryPublishFrame(framePayload, 0, 0.02))
         throw new InvalidOperationException("frame message was not queued");
     if (!publisher.TryPublishControl("event", "{\"event\":\"fixture_command\",\"t\":0.02," +
             "\"id\":\"human:test:1\",\"evidence\":\"observed\",\"fields\":{\"command\":\"fixture\"}}"))
@@ -80,7 +83,12 @@ static async Task SendTwoSessionsToPythonReceiverAsync(string pipeName, string f
     }
 
     await using var second = new PipePublisher(pipeName, secondRunId, hello);
-    if (!second.TryPublishFrame(FramePayload(0), 0))
+    var typedFrame = new
+    {
+        step = 0, t = 0.02, phase = "fixture", fixed_delta_time = 0.02,
+        samples = new[] { new { id = "human:session-2:1", kind = "human", pos = new[] { 0, 0, 0 } } },
+    };
+    if (!second.TryPublishFrame(typedFrame, 0, 0.02))
         throw new InvalidOperationException("second-session frame was not queued");
     if (!second.TryPublishControl("stop", "{\"graceful\":true,\"reason\":\"fixture_stop\"," +
             "\"dropped_frames\":0,\"dropped_control_messages\":0}"))

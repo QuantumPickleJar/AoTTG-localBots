@@ -14,7 +14,7 @@ $source = Join-Path $package "plugin"
 $packageManifestPath = Join-Path $package "package-manifest.json"
 if (-not (Test-Path -LiteralPath $packageManifestPath -PathType Leaf)) { throw "Package manifest is missing: $packageManifestPath" }
 $packageManifest = Get-Content -LiteralPath $packageManifestPath -Raw | ConvertFrom-Json
-if ($packageManifest.schema -ne "aicadets.flight.package.v1" -or $packageManifest.plugin_version -ne "0.1.5") {
+if ($packageManifest.schema -ne "aicadets.flight.package.v1" -or $packageManifest.plugin_version -ne "0.1.6") {
     throw "Package manifest schema or plugin version is not supported."
 }
 foreach ($file in $packageManifest.files) {
@@ -66,7 +66,7 @@ try {
     }
     $manifest = [ordered]@{
         schema = "aicadets.flight.plugin-install.v1"
-        plugin_version = "0.1.5"
+        plugin_version = "0.1.6"
         install_root_relative = "BepInEx/plugins/AoTTG2FlightRecorder"
         files = $records
     }
