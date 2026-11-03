@@ -1246,4 +1246,3 @@ def recover_run(run_dir: str | Path, *, expected_last_step: int | None = None) -
 
 class RecoveryError(WriterError):
     pass
-
