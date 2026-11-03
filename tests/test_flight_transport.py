@@ -122,6 +122,134 @@ class FlightTransportTests(unittest.TestCase):
         self.assertTrue(any(item["reason"] == "transport_message_sequence_gap"
                             for item in metadata["incomplete_reasons"]))
 
+    def test_partial_il2cpp_capture_payload_keeps_provenance_and_optional_fields(self):
+        hello_payload = {
+            "producer": "AoTTG2 Flight Recorder",
+            "producer_version": "0.1.5",
+            "writer_schema": "aicadets.flight.v1",
+            "capture_tier": "partial_il2cpp_periodic_discovery_v1",
+            "runtime_observation_phase": "fixed_update_pre_physics_order_unspecified",
+            "timestamp_clock": "UnityEngine.Time.fixedTimeAsDouble",
+            "step_source": "adapter FixedUpdate callback ordinal",
+            "discovery_interval_seconds": 0.5,
+            "declared_coverage": {
+                "entity_classes": ["human_local_or_ai", "titan_local_or_ai", "odm_hook", "projectile"],
+                "entity_lifecycle": {
+                    "first_seen": "inferred_first_seen_by_periodic_census",
+                    "destroyed": "observed_unity_object_destroyed",
+                    "transient_between_censuses": "may_be_missed",
+                },
+            },
+        }
+        self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 1, "hello", hello_payload)))
+        self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 2, "lifecycle", {
+            "action": "spawn", "id": "human:instance-21:1", "kind": "human",
+            "t": 0.02, "step": 1, "evidence": "inferred_first_seen_by_periodic_census",
+        })))
+        frame_payload = {
+            "step": 1,
+            "t": 0.02,
+            "phase": "fixed_update_pre_physics_order_unspecified",
+            "fixed_delta_time": 0.02,
+            "samples": [
+                {
+                    "id": "human:instance-21:1", "kind": "human", "pos": [1, 2, 3],
+                    "rot": [0, 0, 0, 1], "vel": [0.1, 0.2, 0.3], "ang_vel": [0, 0, 0],
+                    "state": "Running", "extra": {
+                        "ai_controlled": True, "current_gas_game_property": 87.5,
+                        "velocity_source": "UnityEngine.Rigidbody.velocity",
+                        "motion_mode": "root_rigidbody_dynamic",
+                    },
+                },
+                {
+                    "id": "odm_hook:instance-29:1", "kind": "odm_hook", "pos": [4, 5, 6],
+                    "rot": [0, 0, 0, 1], "state": "Hooked", "extra": {
+                        "owner_id": "human:instance-21:1",
+                        "hook_point_game_method": [4, 5, 6],
+                        "anchor_transform_position": [7, 8, 9],
+                    },
+                },
+                {
+                    "id": "titan:instance-34:1", "kind": "titan", "pos": [9, 8, 7],
+                    "extra": {"motion_mode": "root_transform_no_rigidbody",
+                              "velocity_unavailable_reason": "no root Rigidbody component found"},
+                },
+                {
+                    "id": "projectile:instance-42:1", "kind": "projectile", "pos": [3, 2, 1],
+                    "extra": {"projectile_velocity_game_property": [5, 0, 0],
+                              "projectile_velocity_provenance": "game field; not Rigidbody velocity"},
+                },
+            ],
+        }
+        self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 3, "frame", frame_payload)))
+        self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 4, "event", {
+            "event": "collision", "t": 0.021, "step": 1,
+            "actor": "human:instance-21:1", "evidence": "observed",
+            "fields": {"callback_type": "UnityEngine.Collision",
+                       "callback_source": "Characters.Human.OnCollisionEnter(UnityEngine.Collision); Harmony postfix",
+                       "actor_source_instance_id": 21,
+                       "contact_count": 1,
+                       "relative_velocity": [0, -2, 0], "impulse": [0, 1, 0]},
+        })))
+        self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 5, "health", {
+            "t": 0.03, "step": 1, "evidence": "observed",
+            "health_source": "local PipePublisher counters", "queue_depth": 1,
+            "queue_bytes": 256, "dropped_frames": 0,
+            "capture_work_ms_last": 0.1, "capture_work_ms_p95": 0.25,
+            "capture_work_ms_maximum": 1.2, "capture_work_sample_count": 256,
+        })))
+        self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 6, "event", {
+            "event": "hook_state_sampled_change", "t": 0.04, "step": 2,
+            "actor": "odm_hook:instance-29:1",
+            "evidence": "sampled_Hook.State_difference_between_adjacent_FixedUpdate_callbacks",
+            "fields": {"previous_state": "Launched", "current_state": "Hooked",
+                       "observation_mode": "sampled_game_field_transition; not a direct hook callback"},
+        })))
+        self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 7, "event", {
+            "event": "active_scene_sampled_change", "t": 0.041, "step": 2,
+            "evidence": "sampled_active_scene_change_between_fixed_update_callbacks",
+            "fields": {"previous_scene_name": "Menu", "active_scene_name": "City",
+                       "observation_mode": "active_scene_poll_at_adapter_fixed_update"},
+        })))
+        self.assertFalse(self.receiver.accept_line(envelope(self.run_id, 8, "stop", {
+            "graceful": True, "reason": "test_complete", "dropped_frames": 0,
+            "dropped_control_messages": 0,
+        })))
+
+        run_dir = self.root / "recordings" / f"run-{self.run_id}"
+        report = analyze(run_dir, self.root / "adapter-report")
+        self.assertEqual(report["integrity_status"], "verified")
+        metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["schema_version"], "aicadets.flight.v1")
+        self.assertEqual(metadata["capture_tier"], "partial_il2cpp_periodic_discovery_v1")
+        self.assertEqual(metadata["timestamp_clock"], "UnityEngine.Time.fixedTimeAsDouble")
+        self.assertEqual(metadata["step_source"], "adapter FixedUpdate callback ordinal")
+        self.assertEqual(metadata["discovery_interval_seconds"], 0.5)
+        self.assertEqual(metadata["declared_coverage"]["entity_lifecycle"]["first_seen"],
+                         "inferred_first_seen_by_periodic_census")
+        records = [json.loads(line) for chunk in run_dir.glob("*.jsonl")
+                   for line in chunk.read_text(encoding="utf-8").splitlines()]
+        hook = next(row for row in records if row.get("type") == "frame")["samples"][1]
+        transform_only = next(row for row in records if row.get("type") == "frame")["samples"][2]
+        self.assertEqual(hook["state"], "Hooked")
+        self.assertNotIn("vel", hook)
+        self.assertNotIn("vel", transform_only)
+        collision = next(row for row in records if row.get("event") == "collision")
+        self.assertEqual(collision["evidence"], "observed")
+        self.assertIn("Human.OnCollisionEnter", collision["callback_source"])
+        self.assertEqual(collision["actor_source_instance_id"], 21)
+        hook_change = next(row for row in records if row.get("event") == "hook_state_sampled_change")
+        self.assertIn("sampled_", hook_change["evidence"])
+        self.assertNotEqual(hook_change["evidence"], "observed")
+        scene_change = next(row for row in records if row.get("event") == "active_scene_sampled_change")
+        self.assertIn("sampled_", scene_change["evidence"])
+        health = next(row for row in records if row.get("event") == "producer_health")
+        self.assertEqual(health["health_source"], "local PipePublisher counters")
+        self.assertEqual(health["capture_work_ms_p95"], 0.25)
+        self.assertEqual(health["capture_work_ms_maximum"], 1.2)
+        self.assertEqual(health["capture_work_sample_count"], 256)
+        self.assertFalse(any("decision" in row.get("event", "") for row in records))
+
 
 if __name__ == "__main__":
     unittest.main()

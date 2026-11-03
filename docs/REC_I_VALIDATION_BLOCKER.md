@@ -1,89 +1,43 @@
-# REC-I status: game-side capture adapter not built
+# REC-I status: ready for private gameplay calibration
 
-**Status: BLOCKED before installed-runtime testing.** The bounded Windows
-transport and Python writer bridge are implemented and pass synthetic
-end-to-end checks. There is no Unity capture component, no installed-build
-interop set, and no installable recorder package. No game load or REC-I
-gameplay result is claimed.
+**Status:** The Unity-side adapter is compiled and packaged; the installed plugin is opt-in and currently configured with Enabled = false. Package 0.1.5 passed a main-menu runtime smoke. REC-I gameplay calibration itself remains unrun.
 
-## Evidence available
+## What is ready
 
-The exact local AoTTG2 installation was inspected read-only. It reports an
-x64 IL2CPP layout (`GameAssembly.dll`, `global-metadata.dat`, and
-`UnityPlayer.dll`; no Mono assemblies). File sizes and SHA-256 values match
-the owner's supplied preflight. The `globalgamemanagers` header contains the
-candidate Unity version `2023.1.22f1`; verify it against a loader log before
-choosing an IL2CPP loader. The report stays in the local temp directory; no
-game binaries, hashes, or installation path are committed. No BepInEx or
-MelonLoader files are installed in AoTTG2, and generated interop assemblies
-are still unavailable. Do not treat another public release as a match.
+- Exact installation: x64 IL2CPP, Unity 2023.1.22f1, IL2CPP metadata 29.1.
+- Loader: BepInEx 6.0.0-be.791 started on this installation and generated interop for the installed game.
+- Adapter: BepInEx plugin compiled against that local interop. It is passive and opt-in.
+- Local writer path: adapter → bounded local named pipe → Python receiver → existing FlightRecorderWriter → hashed aicadets.flight.v1 chunks.
+- Level 2 final package 0.1.5 smoke: 1,982 ordered frames, one verified hashed chunk, capture_complete=true, zero drops, zero analyzer anomalies, graceful stop, and zero entities at the main menu. Eight events comprised seven producer-health samples and one sampled scene change. At fixedDeltaTime about 20 ms, the first five-second health window reported p95 capture work 0.7254 ms and maximum 103.9691 ms; later windows reported p95 0.1726–0.5526 ms and maxima 6.9426–12.7446 ms. These are menu/startup measurements with no actor load and do not establish mission performance.
+- Level 3 needs the owner's short private session and the small local artifacts listed below.
 
-The H3VR Thunderstore profile contains BepInEx 5.4.17.0 and its log reports
-Unity 5.6.7 with Mono CLR 2.0 and managed `Assembly-CSharp.dll`. This is not
-the IL2CPP loader package for AoTTG2; do not copy its files into the AoTTG2
-folder.
+The H3VR BepInEx 5 Mono files were not copied. AoTTG2 uses its separately installed IL2CPP loader. The recorder package excludes game, loader, and generated interop binaries.
 
-The read-only [installed-build probe](../scripts/inspect_unity_install.py)
-reports common layout indicators, hashes, PE architecture, possible Unity
-version text from the `globalgamemanagers` header, and pre-existing loader
-directories. Architecture and version are hints; the probe cannot establish
-loader permission or compatibility.
+## REC-I validation card
 
-## Work ready offline
+    SESSION: REC-I short passive capture
+    SOURCE: codex/flight-recorder-il2cpp-adapter, final PR #16 head; use the exact adapter source commit recorded in the final PR description
+    PACKAGE: AoTTG2 Flight Recorder 0.1.5, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
+    GAME CONFIG: BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg; Enabled=true only for this capture, then restore false
+    RECEIVER: Copy the example JSON to a new local config, set recording_enabled=true and a new empty output directory; start scripts/start_flight_recorder_receiver.ps1 with that config and verify the pipe is listening
+    ADD-ONS: BepInEx Flight Recorder only. Disable AICadetsWaveCadet, CommandPanel, M2Watcher, Probe, Traversal, all other experimental .cl add-ons, and unrelated plugins
+    SESSION PRIVACY: Offline/solo if available, otherwise a private master-host lobby with no other participants. Never use a public lobby or capture other players' data
+    MODE / MAP: City 1 / Training / Waves with vanilla mission logic; create at least one Titan if this mode supports local/private play. Do not enable M2 AI gameplay code
+    SAFE ACTION: From a safe spawn, record 30–60 seconds: stand and rotate briefly; make one short walk/run in open space; launch one ODM hook at static architecture, hold/reattach briefly, then release. Avoid combat for this first movement pass
+    WARM-UP: Capture at the main menu for at least 10 simulation seconds (two health windows) before entering the private session. Keep the first window as startup data; evaluate later windows as steady state
+    LAUNCH ORDER: (1) confirm game is closed and Enabled=false; (2) set receiver recording_enabled=true and start receiver; (3) set only game Enabled=true; (4) launch AoTTG2; (5) verify plugin/run/pipe handshake at menu; (6) enter only the private vanilla session
+    FIRST 30–60 SECONDS: Check frames at measured fixed interval; active scene change has sampled-poll evidence; local Human ID is stable; Hook appears after census and its state/anchor fields change; Titan appears if spawned and owned by local master; collision event appears only if Human.OnCollisionEnter fires; no controls or physics are altered
+    EXPECTED DATA: About 50 adapter callbacks per simulation second when fixedDeltaTime is about 0.02 seconds. Coverage is limited to allowed Humans, local-master AI Titans, owner-linked Hooks, and allowed projectiles. First-seen spawn is inferred by census; sampled Hook/scene transitions are not direct callback events
+    PERFORMANCE: Require zero transport/frame/control drops, zero unexplained step gaps, verified chunk hashes, capture_complete=true, and no analyzer anomalies. Health events report capture_work_ms_p95/max over the latest 256 callbacks. After the first startup health window, require steady-state p95 <= 5% of fixedDeltaTime and max <= 3x fixedDeltaTime. Preserve and report the first window separately. The final menu smoke's first window was p95 0.7254 ms / max 103.9691 ms; later windows were p95 0.1726–0.5526 ms / max 6.9426–12.7446 ms at about 20 ms fixedDeltaTime, with no entities. These callback-work values are not full frame-time measurements. Treat a steady-state threshold breach or visible sustained stutter/control delay during REC-I as stop-and-review, not a pass
+    VIDEO: One short screen recording of the safe movement/hook sequence is enough to compare direction, stopping, and hook-state timing
+    TRACE REVIEW: Run runtime/python.exe tools/analyze_flight.py on the run directory. Check run metadata, chunk_manifest.json hashes, ordered steps, gaps/drop counters, IDs/lifecycle evidence, phase, sampled scene/hook-transition evidence, health p95/max, and capture_complete
+    STOP / ROLLBACK: Stop receiver cleanly; set Enabled=false after the game closes. If controls/stutter/loader errors appear, stop the session, preserve logs and incomplete trace, then run remove_flight_recorder.ps1. It removes only unchanged manifest-listed recorder DLLs and leaves BepInEx/interop untouched
+    RETURN: Zip the run folder (chunk JSONL, chunk_manifest.json, metadata.json, writer_state.json), analysis output, BepInEx/LogOutput.log, receiver log, exact config with local paths redacted, short motion video, package SHA-256, and observed performance notes. Do not include game binaries or other players' data
 
-- `tools/flight_writer.py` writes bounded `aicadets.flight.v1` frames, events,
-  lifecycle records, and hashed chunks; recovery and analysis remain available.
-- `plugin/FlightRecorder.TransportClient` builds for .NET 6 and .NET 8 and
-  sends bounded, sequenced messages with acknowledgments over a local pipe.
-- `tools/flight_transport.py` receives the Windows named pipe, enforces
-  current-user pipe access and local-only clients, and forwards primitive
-  records to the existing Python writer.
-- Python tests exercise protocol parsing, retries/duplicates, sequence and
-  frame-step loss, lifecycle/event mapping, incomplete metadata, and analyzer
-  integrity. The Windows smoke script sends fixture data through the actual
-  named pipe and verifies its hashed writer output.
+### Acceptance boundaries
 
-These are Level 1 checks with synthetic records. They do not verify a Unity
-callback, game actor class, `Rigidbody` semantics, collision provenance,
-runtime overhead, or AoTTG2 compatibility. No M2 or Custom Logic gameplay file
-is changed by this branch.
+The first REC-I pass validates motion and passive snapshots. It does not validate M2 controller decisions, Titan damage, rescue behavior, or every collision type. An absent callback remains absent evidence; a velocity change is not promoted to a collision. Do not proceed to M2 diagnosis until integrity/drop checks pass and local Human/Hook/Titan coverage is visible.
 
-## Exact prerequisites for the next adapter build
+## Rollback and current machine state
 
-1. Confirmation that native IL2CPP plugin loading is permitted for this
-   installation.
-2. One specific BepInEx IL2CPP release checked against the x64 build and
-   candidate Unity 2023.1.22f1 version, plus a reviewed file-level
-   backup/rollback before installation.
-3. After the approved loader's first run, its generated interop assemblies
-   and startup log, needed to map actual Humans, Titans, hooks, projectiles,
-   and event callback types.
-4. A compiled Unity component using the selected pre-physics `FixedUpdate`
-   phase, explicit actor coverage, stable per-spawn IDs, and a read-only
-   provider connected to the tested transport.
-
-Do not request a gameplay capture until that component is compiled, the
-installed-runtime smoke passes, and the deployment/rollback files have been
-reviewed.
-
-## REC-I validation card (blocked; not runnable)
-
-```text
-SESSION ID: REC-I
-STATUS: BLOCKED — no game-side adapter or deployable package exists yet.
-SOURCE BRANCH: codex/flight-recorder-il2cpp-adapter, based on PR #15; use the final PR head after CI passes.
-FILES TO COPY / LOADER PATH: None. The .NET transport library and Python receiver are not a game plugin.
-LAUNCHER ORDER: Not applicable until an adapter and approved loader package exist.
-ENABLED: No gameplay test. For the later calibration, enable only the approved passive recorder alongside the agreed M2 test add-ons.
-DISABLED: All unrelated experimental probes and all other players' telemetry collection.
-MODE / MAP / HOST: Later private master-host, City 1 / Training / Waves; no session before Level 2.
-FIRST 30–60 SECONDS: Not requested yet. When unblocked, first confirm plugin load, receiver handshake, fixed-step counter advance, stable actor IDs, clean shutdown, and no control/physics mutation.
-EXPECTED COVERAGE: Only classes that the compiled adapter explicitly declares and the installed-runtime audit confirms. Collision, decisions, gas, hooks, and moving geometry stay unavailable until their source callbacks/fields are verified.
-TRACE CHECKS: Run tools/analyze_flight.py against the local run; verify chunk hashes, exact frame-step gaps, IDs across lifecycle, phase label, per-field provenance, queue/drop counters, and capture_complete.
-ACCEPTANCE: No unaccounted loss; valid hashes; phase and class coverage match direct video/runtime checks; measured CPU/frame-time/storage stay within pre-agreed limits; safe shutdown and rollback.
-FAILURE / ROLLBACK: Stop the run, preserve local logs and the incomplete trace, disable/remove only manifest-listed recorder files, and restore the reviewed backup. Do not change M2 gameplay code.
-ARCHIVE TO RETURN: After the adapter exists, return the recorder's local run folder (chunks, chunk_manifest.json, metadata.json, state.json), receiver and loader logs, the short motion cross-check video, and performance/drop summary. Do not include game binaries or other players' data.
-```
-
-Keep the current video-first M2 validation path unchanged until REC-I can be
-run with a compiled, passive adapter.
+The plugin is installed only under BepInEx/plugins/AoTTG2FlightRecorder, with an install manifest hashing the two plugin DLLs. The game config is restored to Enabled = false. To disable, leave it false. To remove the plugin, close the game and run the package's remove_flight_recorder.ps1 against the same GameRoot; it refuses modified or unlisted files. BepInEx and generated interop are separate loader dependencies and are not removed by that plugin rollback script.

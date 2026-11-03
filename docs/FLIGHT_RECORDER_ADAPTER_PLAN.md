@@ -1,161 +1,68 @@
 # Flight Recorder adapter and installed-build audit
 
-**State:** the local transport and Python writer bridge are implemented and
-tested with synthetic records. The Unity-side capture adapter is not built.
-PR #15's offline writer work is the parent; M2 gameplay remains on its own
-branch and is not changed here.
+**State:** The read-only Unity IL2CPP adapter, local named-pipe producer, and Python writer bridge are implemented in draft PR #16, based on the runtime-independent PR #15 integration branch. M2 gameplay is unchanged. The adapter is opt-in; it is not yet validated as an M2 sensor.
 
-## Runtime findings
+## Installed build findings
 
 | Question | Finding | Confidence |
 |---|---|---|
-| Mono or IL2CPP | Read-only inspection of the exact supplied installation found `GameAssembly.dll`, `global-metadata.dat`, and `UnityPlayer.dll`, with no Mono managed assemblies. File sizes and SHA-256 values matched the supplied preflight. | High for this installed copy. |
-| Unity version and executable architecture | PE header reports x64. The first 4096 bytes of `globalgamemanagers` contain candidate version string `2023.1.22f1`. | High for x64; medium for the Unity version because this is a string hint, not runtime confirmation. |
-| Loader compatibility or permission | No loader directory is present in AoTTG2. The H3VR Thunderstore profile has BepInEx 5.4.17.0, Unity 5.6.7, Mono CLR 2.0, and `Assembly-CSharp.dll`; that is a Mono-era setup, not a file set to copy into this IL2CPP installation. No AoTTG2 loader permission or compatible IL2CPP package is established. | High for the inspected H3VR profile and AoTTG2 filesystem; AoTTG2 loader compatibility and permission unknown. |
-| Physics observation point | Unity's `MonoBehaviour.FixedUpdate()` runs on the fixed interval and the physics calculations follow the callback. This is a documented **pre-physics** seam, not post-physics state. The actual callback ordering and runtime invocation still need calibration on this game build. | Generic Unity behavior: high; AoTTG2 runtime calibration: absent. |
-| Game classes, hooks, projectiles, collisions, resources | No AoTTG2 IL2CPP interop assemblies or live process were available. No class mapping or event/collision callback is claimed. | Unknown. |
+| Runtime backend | GameAssembly.dll, global-metadata.dat, and UnityPlayer.dll are present; Mono managed game assemblies are absent. BepInEx generated IL2CPP interop from this exact installation. | High: local preflight and loader log. |
+| Architecture and Unity version | x64; Unity 2023.1.22f1. | High: PE inspection and BepInEx runtime log. |
+| IL2CPP metadata | Metadata version 29.1 was read during interop generation. | High for this installed copy. |
+| Loader | BepInEx 6.0.0-be.791 started successfully and generated interop. Recorder plugin initialized in a main-menu smoke. | High for startup; gameplay compatibility remains untested. |
+| Generated game surface | Interop exposes Characters.Human, BaseCharacter, BaseTitan, Hook/HookUseable, CharacterSpawner, and Projectiles.BaseProjectile plus sampled properties. The plugin compiles against these assemblies. | High for metadata and compilation; gameplay field values are not yet verified. |
+| Sampling phase | Injected MonoBehaviour.FixedUpdate ran in the main-menu smoke. Unity documents FixedUpdate as preceding physics; relative order among AoTTG2 scripts is unknown. | High for callback startup and generic Unity phase; gameplay ordering uncalibrated. |
+| Collision callback | Human.OnCollisionEnter(Collision) is present in generated interop and Harmony-patched. | High for signature and patch compilation; gameplay invocation unverified. |
 
-The read-only probe was run against the exact local AoTTG2 installation. Its
-sizes and hashes matched the owner's supplied preflight. The JSON report is
-kept in the local temporary directory; do not commit proprietary hashes or
-the owner's installation path.
+The H3VR BepInEx 5 Mono profile was not copied. AoTTG2 uses a separate BepInEx IL2CPP build. No game binary was modified or included in the package. Generated interop stays local and is not committed.
 
-## Selected implementation route
+## Selected implementation
 
-If the installed build and its use policy allow a local plugin, the first
-native prototype will use **BepInEx IL2CPP** with an injected Unity
-`MonoBehaviour` sampling in `FixedUpdate`. This is the selected development
-route because the official BepInEx guide provides an IL2CPP plugin template
-whose entry point is `public override void Load()`, and the official
-Il2CppInterop class-injection guide documents
-`ClassInjector.RegisterTypeInIl2Cpp<T>()` followed by
-`gameObject.AddComponent<T>()`. The BepInEx IL2CPP install guide says this
-path currently uses bleeding-edge builds. These sources support a prototype
-route; they do not establish a compatible version, permission, or successful
-load in AoTTG2. The detected Unity version is a candidate string from the
-installed files; verify it against a loader log before selecting a package.
+Use BepInEx IL2CPP with an injected MonoBehaviour sampled from FixedUpdate. This route is supported by the successful BepInEx 6.0.0-be.791 start and interop generation on this exact IL2CPP build. Capture refuses any runtime other than x64 Unity 2023.1.22f1.
 
-MelonLoader also documents IL2CPP support and a .NET 6 runtime requirement.
-It is not selected for this branch: its generic documentation offers no
-AoTTG2-specific compatibility evidence, and it uses a proxy DLL installation
-at the game root. No loader has been downloaded, installed, or run against the
-game. The H3VR BepInEx 5.4.17 Mono profile must not be copied into AoTTG2.
-Before installing anything, verify a specific BepInEx IL2CPP release against
-the installed x64 Unity 2023.1.22f1 candidate and obtain explicit approval for
-native loader use. No loader has been installed in AoTTG2.
+The adapter copies Unity/game values to primitive JSON-compatible data on Unity's callback thread. A bounded .NET producer sends the data over a local Windows named pipe; the existing Python receiver calls tools/flight_writer.py. The pipe worker never calls Unity APIs. Messages use aicadets.flight.v1 and its existing hashed chunk manifest. No transforms, physics properties, inputs, game state, or controller decisions are written or changed by the plugin.
 
-References:
+## Current capture coverage
 
-- [BepInEx IL2CPP installation](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)
-- [BepInEx plugin template and `public override void Load()`](https://docs.bepinex.dev/master/articles/dev_guide/plugin_tutorial/2_plugin_start.html)
-- [Il2CppInterop class injection and `ClassInjector.RegisterTypeInIl2Cpp<T>()`](https://github.com/BepInEx/Il2CppInterop/blob/master/Documentation/Class-Injection.md)
-- [Unity `MonoBehaviour.FixedUpdate()`](https://docs.unity3d.com/ja/current/ScriptReference/MonoBehaviour.FixedUpdate.html)
-- [MelonLoader IL2CPP requirements and install/uninstall instructions](https://github.com/LavaGang/MelonLoader)
+- Photon-owned Humans; AI Humans/Titans only on the local Photon master. Non-local player-controlled characters and AI on non-master clients are excluded.
+- Human-linked Hook components from left/right HookUseable.Hooks. Hook state, transform, hook point, and anchor are sampled. State changes between samples are observations, not direct hook callbacks.
+- Projectiles sampled only when their owner passes the same local ownership filter. Their game velocity field is kept separate from Rigidbody velocity.
+- Position/rotation from Transform. Linear/angular velocity only from a non-kinematic root Rigidbody. Kinematic, child-body, or transform-only objects are not mislabeled as dynamic Rigidbody samples.
+- Human/Titan state, AI flag, team, health, dead/grounded flags, current speed and animation; Human gas; Titan/Hook state; projectile game velocity.
+- Human.OnCollisionEnter Harmony postfix events include callback provenance, relative velocity, impulse, contact count, and collider identity. Character collisions require both actors to pass the ownership filter. No gameplay invocation has been observed yet.
+- Active scene name/handle changes detected by comparing SceneManager.GetActiveScene at FixedUpdate boundaries. Timestamp is detection time; very short transitions may be missed.
+- First-seen lifecycle is inferred from the 0.5-second census. Despawn is recorded when Unity's object-null state is observed. IDs combine per-kind Unity instance ID and reuse generation, stable only within one run.
+- Capture-work last, p95, and maximum milliseconds over the latest 256 callbacks are emitted about every five simulation seconds. The measurement covers discovery/sampling/serialization/queue submission, not whole-game frame time.
+
+The registry is refreshed by a whole-scene census every configured 0.5 seconds, then sampled each FixedUpdate. Short-lived objects between censuses may be missed. Exceeding the entity cap stops capture as incomplete instead of silently skipping entities.
+
+## Explicitly unavailable or unverified
+
+Moving environment geometry; Titan collision callbacks; direct attack/damage/death/rescue events; structured M2 commands/personality decisions; gameplay firing of Human.OnCollisionEnter; actor coverage in a mission; relative script order; and mission performance/REC-I calibration. Health and dead fields are sampled and are not promoted to event callbacks. Existing M2 key/value logs are not fabricated into complete decisions. Private/local-host testing is required.
+
+## Build and transport
+
+The plugin builds against interop generated from x64 Unity 2023.1.22f1 with BepInEx 6.0.0-be.791. The package contains plugin/transport DLLs, receiver/writer/analyzer, a portable Python 3.14.10 x64 runtime and license, launcher/install/rollback scripts, example config, and manifest; no game, loader, or proprietary interop binaries. Recording defaults disabled.
+
+The producer queue is bounded by count and bytes, sequences messages with acknowledgments, retries pipe disconnections, and accounts for dropped frames/control messages. Accounting failure stops the capture as incomplete. The receiver uses a current-user-only named pipe and writes via the existing Python writer. Offline protocol tests cover adapter-shaped frames, events, lifecycle and health metadata; they do not emulate Unity.
+
+Package install/rollback details are in [FLIGHT_RECORDER_IL2CPP_PACKAGE_README.md](FLIGHT_RECORDER_IL2CPP_PACKAGE_README.md). The private gameplay validation card is in [REC_I_VALIDATION_BLOCKER.md](REC_I_VALIDATION_BLOCKER.md).
+
+## Validation levels
+
+| Level | Result | Establishes |
+|---|---|---|
+| 1 — Offline | Python protocol/writer tests, .NET build against installed interop, PowerShell parser checks, and Windows pipe/writer smoke pass locally. | Compilation and synthetic data through hashed writer chunks. |
+| 2 — Installed-runtime smoke | Final package 0.1.5 passed at the main menu: loader/plugin initialization, FixedUpdate frames, pipe handshake, hashed chunks, health, sampled active-scene change and graceful stop. 1,982 ordered frames, one verified chunk, 8 events (7 health plus one scene poll), zero drops/anomalies, zero entities. No lobby/mission was entered. | Startup/transport/writer and active-scene poll only; not actor, hook, or collision coverage. |
+| 3 — REC-I gameplay calibration | Pending the owner's short private session. At fixedDeltaTime about 20 ms, the first five-second health window reported capture-work p95 0.7254 ms and maximum 103.9691 ms; later windows reported p95 0.1726–0.5526 ms and maxima 6.9426–12.7446 ms. There were no entities, so these are menu/startup measurements only. | Actual local Human/Titan/Hook samples, callback evidence, motion cross-check, drops and gameplay overhead. Treat the first health window as startup/warm-up data; evaluate steady-state windows separately and return both. |
+
+## References
+
+- [BepInEx IL2CPP installation guide](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)
+- [BepInEx plugin template](https://docs.bepinex.dev/master/articles/dev_guide/plugin_tutorial/2_plugin_start.html)
+- [Il2CppInterop class injection](https://github.com/BepInEx/Il2CppInterop/blob/master/Documentation/Class-Injection.md)
+- [Unity MonoBehaviour.FixedUpdate](https://docs.unity3d.com/ja/current/ScriptReference/MonoBehaviour.FixedUpdate.html)
 - [AoTTG2 Custom Logic API documentation](https://github.com/AoTTG-2/CustomLogicDocumentation)
 - [AoTTG2 example content](https://github.com/AoTTG-2/AoTTG2-Example-Content)
 
-The Unity callback is declared in the adapter as `void FixedUpdate()`; Unity
-documents it as part of the fixed physics loop, with physics calculations
-following that callback. See the linked Unity API reference above.
-
-AoTTG2 Custom Logic remains its own scripting language. Its published API and
-examples are the source of truth for `.cl` code, but they do not create a
-native C# or named-pipe API. No mission logic or Custom Logic add-on is changed
-in this adapter branch.
-
-## Planned game-side capture boundary
-
-The first Unity implementation will use a persistent injected component and
-copy only primitive values inside the Unity callback. It will use an
-adapter-owned monotonic step counter, a monotonic timestamp, the measured
-`Time.fixedDeltaTime`, and phase `fixed_update_pre_physics`. It will not call
-Unity APIs from the transport thread. Any change to the callback or state
-sampling phase must be captured as provenance, not silently normalized.
-
-Once the exact generated interop assemblies are available:
-
-1. Map the actual Human, Titan, ODM hook, projectile, and relevant world types
-   from the installed `GameAssembly.dll` and metadata. Do not infer C# classes
-   from Custom Logic names.
-2. Identify a spawn/despawn registry or an observed lifecycle source. Assign
-   IDs from a source handle plus spawn generation. If an entity is only first
-   discovered by a census, label that evidence as discovery, not observed spawn.
-3. For each actor, record transform pose; capture velocity only when a real
-   Rigidbody or game-owned velocity field is available. Include whether the
-   Rigidbody is kinematic. Transform-only motion must not be presented as
-   Rigidbody simulation.
-4. Inspect the relevant gas, hook, animation, and state fields in interop. Omit
-   inaccessible values and preserve field provenance.
-5. Identify actual collision/attack/damage/death/rescue callbacks. A velocity
-   change is not a collision. Controller key/value logs are not complete
-   structured decisions; never synthesize replay inputs from them.
-6. Avoid per-step whole-scene scans. Prefer verified actor registration;
-   use any low-rate census only for discovery, with its cadence and coverage
-   marked explicitly.
-
-No capture-provider source is included yet because the class names and
-assemblies that it must compile against are missing. The transport library is
-not an empty game plugin and must not be deployed into AoTTG2 by itself.
-
-## Implemented transport and writer connection
-
-`plugin/FlightRecorder.TransportClient` is a bounded .NET 6/.NET 8 named-pipe
-producer. It accepts only immutable JSON primitive payloads, uses a persistent
-local pipe connection with per-message acknowledgments, retries after
-disconnect, reserves queue capacity for control messages, and emits explicit
-frame-loss envelopes. The Windows Python receiver uses a current-user DACL,
-rejects remote pipe clients, validates ordering and size, and calls the
-existing `FlightRecorderWriter` API. Full details and the opt-in config are in
-[FLIGHT_RECORDER_TRANSPORT.md](FLIGHT_RECORDER_TRANSPORT.md).
-
-Transport or source loss calls `FlightRecorderWriter.mark_incomplete(...)`.
-The writer keeps the normal `aicadets.flight.v1` frame/event format and adds a
-bounded `incomplete_reasons` summary to final metadata. It never labels a
-missing step as a sampled frame. The test-only C# producer and Windows smoke
-test emit synthetic fixture data only.
-
-## Installed-build audit and next prerequisites
-
-The exact installed root has now been inspected read-only. To reproduce the
-probe on this machine:
-
-```powershell
-py -3 scripts/inspect_unity_install.py "C:\Path\To\AoTTG2" --out "$env:TEMP\aottg2_build_preflight.json"
-```
-
-Keep the output local. It hashes the top-level executable/DLLs and relevant
-metadata, reports PE architecture and searches only the first 4096 bytes of
-`globalgamemanagers` for a Unity version string. The architecture and version
-are hints, not ABI or compatibility proof. No game files were changed. The
-remaining pre-install audit needs:
-
-- confirmation that native IL2CPP plugin loading is permitted for this copy;
-- one specific BepInEx IL2CPP release documented for the detected architecture
-  and Unity version; and
-- a reviewed backup and exact rollback list before any loader files are added.
-
-If those conditions are met, a controlled first loader run can generate
-`BepInEx/interop` assemblies and a loader log. These are still required to map
-game types and compile the capture component. Do not copy the H3VR profile,
-install multiple loaders, or start the game to probe compatibility. First
-prepare and review the exact loader package, backup, and rollback list.
-
-## Validation boundary
-
-| Level | Current state | What it establishes |
-|---|---|---|
-| Offline | Passed locally; CI is added in this branch. | .NET transport build, protocol tests, Windows named pipe to Python writer, hashed chunk analysis. Uses synthetic data. |
-| Installed-runtime smoke | Not run. | Requires exact game root, permitted compatible loader, and a compiled Unity capture component. |
-| REC-I gameplay calibration | Not runnable. | Requires the owner's private game session after Level 2 passes. |
-
-The current branch does not establish game load, physics phase, entity
-coverage, collisions, or runtime overhead. It does not claim a native recorder
-is ready.
-
-## Rollback
-
-This branch only adds source, tests, docs, and local receiver tooling. It has
-not changed the game installation or M2 gameplay files. Future deployment must
-include a pre-install copy and a precise manifest of only the files added; its
-rollback removes those recorder/loader files and restores any backed-up file
-that the chosen loader replaces.
+AoTTG2 Custom Logic remains its own language. No .cl source or mission logic is changed by this PR.

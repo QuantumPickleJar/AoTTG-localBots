@@ -25,7 +25,7 @@ The writer uses one bounded count-and-memory-accounted queue and a background ch
 
 Gap `unit` values distinguish `frames` from `entity_samples`; the analyzer reports the two quantities separately. Legacy untyped gap counts remain in `reported_dropped_samples` for compatibility. A rejected/timeout control event is surfaced to the caller and reflected in `capture_complete=false` if the writer itself observed it. The adapter must not ignore submission errors.
 
-This Python core is an offline reference implementation. No Unity-to-writer IPC service, native library, loader integration or callback is included. See [the deployment connection specification](FLIGHT_RECORDER_WRITER_SPEC.md).
+This Python core remains runtime-independent. The separate adapter follow-on supplies a BepInEx IL2CPP component, bounded .NET producer, and Windows named-pipe receiver that writes through this core. Offline tests do not verify Unity callbacks or gameplay coverage; see [the installed-build audit](FLIGHT_RECORDER_ADAPTER_PLAN.md).
 
 ## Existing M2 source trace bridge
 

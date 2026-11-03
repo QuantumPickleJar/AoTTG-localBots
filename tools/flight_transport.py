@@ -12,6 +12,7 @@ from ctypes import wintypes
 from collections import OrderedDict
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -187,6 +188,17 @@ class FlightTransportReceiver:
                     capture_tier = payload.get("capture_tier", "transport_only")
                     if not isinstance(capture_tier, str) or not capture_tier or len(capture_tier) > 128:
                         raise TransportProtocolError("hello.capture_tier must be a short string")
+                    timestamp_clock = payload.get("timestamp_clock")
+                    step_source = payload.get("step_source")
+                    discovery_interval = payload.get("discovery_interval_seconds")
+                    if timestamp_clock is not None and (not isinstance(timestamp_clock, str) or not timestamp_clock or len(timestamp_clock) > 256):
+                        raise TransportProtocolError("hello.timestamp_clock must be a short string when supplied")
+                    if step_source is not None and (not isinstance(step_source, str) or not step_source or len(step_source) > 256):
+                        raise TransportProtocolError("hello.step_source must be a short string when supplied")
+                    if discovery_interval is not None and (
+                            isinstance(discovery_interval, bool) or not isinstance(discovery_interval, (int, float))
+                            or not math.isfinite(discovery_interval) or discovery_interval <= 0):
+                        raise TransportProtocolError("hello.discovery_interval_seconds must be a positive finite number")
                     metadata = {
                         "transport_protocol": PROTOCOL,
                         "producer": producer,
@@ -197,6 +209,12 @@ class FlightTransportReceiver:
                         "local_transport": "windows_named_pipe",
                         "capture_tier_declared_by_producer": capture_tier,
                     }
+                    if timestamp_clock is not None:
+                        metadata["timestamp_clock"] = timestamp_clock
+                    if step_source is not None:
+                        metadata["step_source"] = step_source
+                    if discovery_interval is not None:
+                        metadata["discovery_interval_seconds"] = discovery_interval
                     opts = dict(self.writer_options)
                     opts.setdefault("capture_tier", capture_tier)
                     opts.setdefault("metadata", metadata)
