@@ -1,6 +1,6 @@
-# Flight trace reader and offline evidence contract
+# Flight trace reader, writer core and offline evidence contract
 
-**Scope:** offline analyzer and synthetic fixtures only. This is a reader for a reference format, not a game-side recorder. A passing parser test does not show that a trace came from AoTTG2 or that its samples are complete.
+**Scope:** Python standard-library reader, runtime-independent writer core and synthetic fixtures. The writer accepts copied primitive snapshots; it has no Unity imports and is not a Unity plug-in or game-side recorder. Passing offline checks does not show that a trace came from AoTTG2 or that its samples are complete.
 
 ## Run the analyzer
 
@@ -16,6 +16,16 @@ The flight analyzer writes `coverage.json`, `anomalies.json`, `timeline.csv`, `t
 Runs declare `schema_version: "aicadets.flight.v1"` in `metadata.json` and contain ordered JSONL chunks. A `frame` record carries `step`, game-time `t`, `phase`, optional `fixed_delta_time`, and a `samples` array. A sample should carry a stable per-spawn `id`, `kind`, position, velocity when available, and explicit state. Events are separate records; command intent, observed outcomes and evidence provenance should not be merged into a single “success” flag.
 
 The optional `chunk_manifest.json` uses `manifest_schema: "aicadets.flight.chunk-index.v1"`. Each entry identifies a chunk by relative `file`, exact stored-byte `bytes`, SHA-256, `frame_count`, and optional first/last step. Hash and size checks run before parsing. Corrupt or missing chunks are reported and rejected while independent valid chunks can still be analyzed. Unindexed chunks are reported. Without this manifest, integrity is `not_provided`; it is not described as verified.
+
+## Runtime-independent writer core
+
+`tools/flight_writer.py` exposes immutable `FrameSnapshot`, `EntitySample`, `RecorderEvent` and `EntityLifecycleRecord` values plus `FlightRecorderWriter`. It copies nested JSON-compatible fields into frozen values before producer handoff, rejects non-finite numbers and duplicate IDs in a frame, and writes the reader's frame/event/entity/gap records. `StableEntityRegistry` creates per-spawn generation IDs; a reused source handle gets a new ID after despawn.
+
+The writer uses one bounded count-and-memory-accounted queue and a background chunk worker. Configurable item/byte capacity is reserved for event and lifecycle control records, preserving FIFO order while protecting control submission from frame saturation. Frame queue submission never waits for the disk worker: saturation creates an explicit gap; if the bounded gap ledger itself cannot accept an account within the configured timeout, `RecorderOverloadError` is raised and that frame was not accepted. Events and lifecycle records wait only for the configured timeout, then raise visibly so the caller can retain/retry them. Storage limits stop ordinary writes, count affected frames/samples and rejected controls, and use reserved room for final loss-accounting gaps and control files. Each finalized chunk is flushed, atomically renamed and SHA-256 indexed; `writer_state.json` records checkpointed submitted progress, durable progress and whether the final state was committed. `recover_run()` verifies indexed chunks, reindexes complete chunks whose manifest update was interrupted, salvages complete JSONL records from partial chunks, and emits exact missing-step gaps only when the known bounds support that statement. A checkpoint is not treated as the final crash step; without a final state or externally known expected last step, recovery marks the tail unknown. Truncated tails with unknowable steps remain identified as unknown.
+
+Gap `unit` values distinguish `frames` from `entity_samples`; the analyzer reports the two quantities separately. Legacy untyped gap counts remain in `reported_dropped_samples` for compatibility. A rejected/timeout control event is surfaced to the caller and reflected in `capture_complete=false` if the writer itself observed it. The adapter must not ignore submission errors.
+
+This Python core is an offline reference implementation. No Unity-to-writer IPC service, native library, loader integration or callback is included. See [the deployment connection specification](FLIGHT_RECORDER_WRITER_SPEC.md).
 
 ## Existing M2 source trace bridge
 
@@ -45,4 +55,4 @@ The source-based M2 tests in `tests/test_wave_m2.py` execute functions from `AIC
 
 ## Local checks
 
-The fixture suite validates parsing, bounded reports, manifest integrity, frame coverage, event correlation and decision replay on synthetic data. It also checks that source-harness M2 observations remain unreplayable when required state is absent. See [REC-I status](REC_I_VALIDATION_BLOCKER.md) for the separate installed-game blocker. Until REC-I has a real calibrated pass, routine gameplay evidence remains video-first per the validation harness.
+The offline suite also exercises writer bounds, snapshot immutability, stable per-spawn IDs, source gaps, queue saturation, storage caps, incomplete decision inputs, corruption and interrupted-write recovery. The synthetic benchmark covers paced 50/100 Hz sessions with 30/50/100 entities; its rates, memory and bytes are not Unity overhead measurements. See [REC-I status](REC_I_VALIDATION_BLOCKER.md) for the separate installed-game blocker. Until REC-I has a real calibrated pass, routine gameplay evidence remains video-first per the validation harness.
