@@ -1,0 +1,9 @@
+{
+  "schema_version":"aicadets.flight.v1",
+  "run_id":"SYNTHETIC-DEMO-NOT-GAMEPLAY",
+  "capture_tier":"synthetic",
+  "game_build":"none",
+  "capture_complete":true,
+  "fixed_delta_time":0.02,
+  "source":"Synthetic demonstration only. NOT captured from AoTTG2."
+}

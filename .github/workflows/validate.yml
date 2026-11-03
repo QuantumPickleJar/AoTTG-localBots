@@ -20,7 +20,7 @@ jobs:
           python scripts/check_traversal.py
           python scripts/check_traversal_reliable.py
           python scripts/check_wave_m2.py
-          python tools/recovery_preflight.py
+          python tools/recovery_preflight.py --addons addons --persistent /tmp/empty_aottg_persistent
       - name: Test M1 control flow with mocked engine observations
         run: python -m unittest discover -s tests -v
       - name: Check whitespace
