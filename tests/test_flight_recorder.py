@@ -58,6 +58,36 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(result["parse_errors"], 1)
         self.assertFalse(result["capture_complete"])
 
+    def test_installed_build_provenance_and_incomplete_reason_are_reported(self):
+        src = self.root / "adapter_run"
+        src.mkdir()
+        (src / "metadata.json").write_text(json.dumps({
+            "schema_version": "aicadets.flight.v1",
+            "run_id": "adapter-run",
+            "capture_tier": "partial_il2cpp_periodic_discovery_v1",
+            "capture_complete": False,
+            "installed_build_fingerprint": {"unity_version": "2023.1.22f1", "architecture": "x64"},
+            "runtime_observation_phase": "fixed_update_pre_physics_order_unspecified",
+            "sample_phase_verified": False,
+            "step_source": "adapter FixedUpdate callback ordinal",
+            "timestamp_clock": "UnityEngine.Time.fixedTimeAsDouble",
+            "discovery_interval_seconds": 0.5,
+            "incomplete_reasons": [{"reason": "receiver_interrupted", "count": 1}],
+        }))
+        (src / "000001.jsonl").write_text(json.dumps({
+            "type": "frame", "step": 1, "t": 0.02, "phase": "pre_physics",
+            "samples": [],
+        }) + "\n")
+
+        result = analyze(src, self.root / "adapter_report")
+        report = (self.root / "adapter_report/report.md").read_text()
+        self.assertEqual(result["game_build"], "2023.1.22f1 / x64")
+        self.assertFalse(result["sample_phase_verified"])
+        self.assertEqual(result["runtime_observation_phase"], "fixed_update_pre_physics_order_unspecified")
+        self.assertEqual(result["incomplete_reasons"][0]["reason"], "receiver_interrupted")
+        self.assertIn("receiver_interrupted", report)
+        self.assertNotIn("has not yet been installed", report)
+
     def test_nonfinite_vectors_rejected(self):
         with self.assertRaises(ValueError):
             vec([float("nan"), 0, 1])

@@ -1,6 +1,6 @@
 # REC-I status: ready for private gameplay calibration
 
-**Status:** The Unity-side adapter is compiled and packaged; the installed plugin is opt-in and currently configured with Enabled = false. Package 0.1.5 passed a main-menu runtime smoke. REC-I gameplay calibration itself remains unrun.
+**Status:** The Unity-side adapter is compiled and packaged; the installed plugin is opt-in and currently configured with Enabled = false. A prior 0.1.5 build passed a main-menu smoke. The final deterministic 0.1.5 package started and produced a verified menu trace, but its retry ended with `capture_complete=false` after the game and BepInEx console were closed together. REC-I gameplay calibration itself remains unrun.
 
 ## What is ready
 
@@ -8,7 +8,8 @@
 - Loader: BepInEx 6.0.0-be.791 started on this installation and generated interop for the installed game.
 - Adapter: BepInEx plugin compiled against that local interop. It is passive and opt-in.
 - Local writer path: adapter → bounded local named pipe → Python receiver → existing FlightRecorderWriter → hashed aicadets.flight.v1 chunks.
-- Level 2 final package 0.1.5 smoke: 1,982 ordered frames, one verified hashed chunk, capture_complete=true, zero drops, zero analyzer anomalies, graceful stop, and zero entities at the main menu. Eight events comprised seven producer-health samples and one sampled scene change. At fixedDeltaTime about 20 ms, the first five-second health window reported p95 capture work 0.7254 ms and maximum 103.9691 ms; later windows reported p95 0.1726–0.5526 ms and maxima 6.9426–12.7446 ms. These are menu/startup measurements with no actor load and do not establish mission performance.
+- Level 2 earlier 0.1.5 main-menu smoke (same adapter source, before deterministic-build project properties): 1,982 ordered frames, one verified hashed chunk, `capture_complete=true`, zero drops, zero analyzer anomalies, graceful stop, and zero entities. Eight events comprised seven producer-health samples and one sampled scene change. At fixedDeltaTime about 20 ms, the first five-second health window reported p95 capture work 0.7254 ms and maximum 103.9691 ms; later windows reported p95 0.1726–0.5526 ms and maxima 6.9426–12.7446 ms. These are menu/startup measurements with no actor load and do not establish mission performance.
+- Final deterministic package 0.1.5 retry: the installed plugin completed startup and delivered 5,717 ordered menu frames and 23 events. One chunk passed SHA-256 integrity; dropped-frame and analyzer-anomaly counts were zero; no entities were present at the menu. The game and BepInEx console were closed together before the plugin's stop message, so the receiver recorded `receiver_interrupted` and `capture_complete=false`. This verifies startup and recoverable trace output for the exact packaged DLLs, but is not a clean-shutdown pass and is not gameplay evidence.
 - Level 3 needs the owner's short private session and the small local artifacts listed below.
 
 The H3VR BepInEx 5 Mono files were not copied. AoTTG2 uses its separately installed IL2CPP loader. The recorder package excludes game, loader, and generated interop binaries.

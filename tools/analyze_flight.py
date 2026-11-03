@@ -500,9 +500,31 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                         "confirmed")
         if observed_frame_steps == 0:
             anomaly("no_frame_markers", latest_time, "", "cannot certify global physics-step coverage", "confirmed")
+        build_name = metadata.get("game_build")
+        if not isinstance(build_name, str) or not build_name.strip() or build_name == "unknown":
+            fingerprint = metadata.get("installed_build_fingerprint", {})
+            if isinstance(fingerprint, dict):
+                unity = fingerprint.get("unity_version")
+                architecture = fingerprint.get("architecture")
+                build_parts = [str(value) for value in (unity, architecture)
+                               if isinstance(value, str) and value.strip()]
+                build_name = " / ".join(build_parts) if build_parts else "unknown"
+            else:
+                build_name = "unknown"
+        incomplete_reasons = metadata.get("incomplete_reasons", [])
+        if not isinstance(incomplete_reasons, list):
+            incomplete_reasons = []
+        incomplete_reasons = [item for item in incomplete_reasons
+                              if isinstance(item, dict) and isinstance(item.get("reason"), str)]
         summary = {"schema_version": SCHEMA, "run_id": metadata.get("run_id", "unknown"),
                    "capture_tier": metadata.get("capture_tier", "unverified"),
-                   "game_build": metadata.get("game_build", "unknown"),
+                   "game_build": build_name,
+                   "runtime_observation_phase": metadata.get("runtime_observation_phase", "unknown"),
+                   "sample_phase_verified": bool(metadata.get("sample_phase_verified", False)),
+                   "step_source": metadata.get("step_source", "unknown"),
+                   "timestamp_clock": metadata.get("timestamp_clock", "unknown"),
+                   "discovery_interval_seconds": metadata.get("discovery_interval_seconds"),
+                   "incomplete_reasons": incomplete_reasons,
                    "files": len(all_files), "valid_chunks": len(files), "frames": observed_frame_steps,
                    "frame_coverage_ratio": frame_coverage,
                    "expected_frames_from_manifest": expected_frames,
@@ -540,12 +562,18 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                 f"- Declared dropped entity samples: {dropped_entity_samples + dropped}",
                 f"- Missing per-entity steps (raw): {missing_track_steps}",
                 f"- Malformed records: {parse_errors}", f"- Capture complete flag: {summary['capture_complete']}",
+                f"- Observation phase: `{summary['runtime_observation_phase']}` (verified: {summary['sample_phase_verified']})",
+                f"- Step source: `{summary['step_source']}`",
                 "", "## Anomalies (bounded sample)", ""]
         rows += [f"- `{k}`: {v}" for k, v in top.most_common()] or ["- None flagged"]
+        if summary["incomplete_reasons"]:
+            rows += ["", "## Incomplete capture reasons", ""]
+            rows += [f"- `{item['reason']}` (count: {item.get('count', 1)})"
+                     for item in summary["incomplete_reasons"]]
         rows += ["", "## Interpretation", "", "This analyzer is an independently tested offline prototype."
-                 " A complete, calibrated engine-side recorder has not yet been installed or verified.",
+                 " A verified chunk establishes trace integrity, not complete or calibrated engine capture.",
                  "Collision estimates and absent damage do not establish causes."
-                 " Video is optional only after engine capture passes calibration.", ""]
+                 " Calibrate observation phase, entity coverage, callbacks, and performance before drawing gameplay conclusions.", ""]
         (out / "report.md").write_text("\n".join(rows), encoding="utf-8")
         return summary
     finally:
