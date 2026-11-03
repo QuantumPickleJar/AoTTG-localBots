@@ -65,5 +65,5 @@
 
 ## Current blocker status
 
-No hard API blocker found for: target acquisition, approach attempts, attack issuing, damage/death observation, and basic mission-state observation.  
+No hard API blocker found for: target acquisition, approach attempts, attack issuing, damage/death observation, and basic mission-state observation.
 Remaining blockers are validation blockers (gameplay confirmation), not interface absence.
