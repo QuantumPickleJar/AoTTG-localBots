@@ -8,13 +8,20 @@ gameplay result is claimed.
 
 ## Evidence available
 
-The owner-supplied preflight reports an IL2CPP layout (`GameAssembly.dll`,
-`global-metadata.dat`, and `UnityPlayer.dll`; no Mono assemblies) for the
-installed build. Those binary hashes and sizes were not verified in this
-workspace because the inspected AoTTG2 folder contained user data only. The
-exact game root, executable, `globalgamemanagers`, and generated interop
-assemblies are absent here. Do not treat another public release as a match for
-the installed copy.
+The exact local AoTTG2 installation was inspected read-only. It reports an
+x64 IL2CPP layout (`GameAssembly.dll`, `global-metadata.dat`, and
+`UnityPlayer.dll`; no Mono assemblies). File sizes and SHA-256 values match
+the owner's supplied preflight. The `globalgamemanagers` header contains the
+candidate Unity version `2023.1.22f1`; verify it against a loader log before
+choosing an IL2CPP loader. The report stays in the local temp directory; no
+game binaries, hashes, or installation path are committed. No BepInEx or
+MelonLoader files are installed in AoTTG2, and generated interop assemblies
+are still unavailable. Do not treat another public release as a match.
+
+The H3VR Thunderstore profile contains BepInEx 5.4.17.0 and its log reports
+Unity 5.6.7 with Mono CLR 2.0 and managed `Assembly-CSharp.dll`. This is not
+the IL2CPP loader package for AoTTG2; do not copy its files into the AoTTG2
+folder.
 
 The read-only [installed-build probe](../scripts/inspect_unity_install.py)
 reports common layout indicators, hashes, PE architecture, possible Unity
@@ -43,16 +50,15 @@ is changed by this branch.
 
 ## Exact prerequisites for the next adapter build
 
-1. Read-only access to the exact root containing `Aottg2.exe` and
-   `Aottg2_Data`, including `globalgamemanagers`, `GameAssembly.dll`,
-   `UnityPlayer.dll`, and `il2cpp_data/Metadata/global-metadata.dat`.
-2. The local probe output, executable file/product version, and confirmation
-   that a local plugin loader is allowed for this installation.
-3. If allowed, one reviewed loader choice and a file-level backup/rollback
-   before first-run generation of its IL2CPP interop assemblies.
-4. The generated interop assemblies and loader startup log, needed to map the
-   actual Humans, Titans, hooks, projectiles, and event callback types.
-5. A compiled Unity component using the selected pre-physics `FixedUpdate`
+1. Confirmation that native IL2CPP plugin loading is permitted for this
+   installation.
+2. One specific BepInEx IL2CPP release checked against the x64 build and
+   candidate Unity 2023.1.22f1 version, plus a reviewed file-level
+   backup/rollback before installation.
+3. After the approved loader's first run, its generated interop assemblies
+   and startup log, needed to map actual Humans, Titans, hooks, projectiles,
+   and event callback types.
+4. A compiled Unity component using the selected pre-physics `FixedUpdate`
    phase, explicit actor coverage, stable per-spawn IDs, and a read-only
    provider connected to the tested transport.
 

@@ -9,16 +9,16 @@ branch and is not changed here.
 
 | Question | Finding | Confidence |
 |---|---|---|
-| Mono or IL2CPP | The supplied preflight reports `GameAssembly.dll`, `global-metadata.dat`, and `UnityPlayer.dll`, with no Mono assemblies. | High for the supplied installation record; not re-read from game files here. |
-| Unity version and executable architecture | Not established. The game executable and `Aottg2_Data/globalgamemanagers` were not available in the inspected workspace. The read-only probe now reports PE architecture and a Unity version-string hint when present. | Unknown for this installed copy. |
-| Loader compatibility or permission | No loader is installed or validated for this build. BepInEx and MelonLoader both document generic IL2CPP support, but neither establishes AoTTG2 compatibility or permission. | Unknown. |
+| Mono or IL2CPP | Read-only inspection of the exact supplied installation found `GameAssembly.dll`, `global-metadata.dat`, and `UnityPlayer.dll`, with no Mono managed assemblies. File sizes and SHA-256 values matched the supplied preflight. | High for this installed copy. |
+| Unity version and executable architecture | PE header reports x64. The first 4096 bytes of `globalgamemanagers` contain candidate version string `2023.1.22f1`. | High for x64; medium for the Unity version because this is a string hint, not runtime confirmation. |
+| Loader compatibility or permission | No loader directory is present in AoTTG2. The H3VR Thunderstore profile has BepInEx 5.4.17.0, Unity 5.6.7, Mono CLR 2.0, and `Assembly-CSharp.dll`; that is a Mono-era setup, not a file set to copy into this IL2CPP installation. No AoTTG2 loader permission or compatible IL2CPP package is established. | High for the inspected H3VR profile and AoTTG2 filesystem; AoTTG2 loader compatibility and permission unknown. |
 | Physics observation point | Unity's `MonoBehaviour.FixedUpdate()` runs on the fixed interval and the physics calculations follow the callback. This is a documented **pre-physics** seam, not post-physics state. The actual callback ordering and runtime invocation still need calibration on this game build. | Generic Unity behavior: high; AoTTG2 runtime calibration: absent. |
 | Game classes, hooks, projectiles, collisions, resources | No AoTTG2 IL2CPP interop assemblies or live process were available. No class mapping or event/collision callback is claimed. | Unknown. |
 
-The owner-provided preflight includes hashes and sizes for game binaries; they
-were not independently verified because those files were absent here. Keep
-the local preflight JSON private and do not commit proprietary files or the
-owner's installation path.
+The read-only probe was run against the exact local AoTTG2 installation. Its
+sizes and hashes matched the owner's supplied preflight. The JSON report is
+kept in the local temporary directory; do not commit proprietary hashes or
+the owner's installation path.
 
 ## Selected implementation route
 
@@ -32,14 +32,17 @@ Il2CppInterop class-injection guide documents
 `gameObject.AddComponent<T>()`. The BepInEx IL2CPP install guide says this
 path currently uses bleeding-edge builds. These sources support a prototype
 route; they do not establish a compatible version, permission, or successful
-load in AoTTG2.
+load in AoTTG2. The detected Unity version is a candidate string from the
+installed files; verify it against a loader log before selecting a package.
 
 MelonLoader also documents IL2CPP support and a .NET 6 runtime requirement.
 It is not selected for this branch: its generic documentation offers no
 AoTTG2-specific compatibility evidence, and it uses a proxy DLL installation
 at the game root. No loader has been downloaded, installed, or run against the
-game. The candidate must be re-evaluated after obtaining the installed
-executable and Unity version.
+game. The H3VR BepInEx 5.4.17 Mono profile must not be copied into AoTTG2.
+Before installing anything, verify a specific BepInEx IL2CPP release against
+the installed x64 Unity 2023.1.22f1 candidate and obtain explicit approval for
+native loader use. No loader has been installed in AoTTG2.
 
 References:
 
@@ -111,10 +114,10 @@ bounded `incomplete_reasons` summary to final metadata. It never labels a
 missing step as a sampled frame. The test-only C# producer and Windows smoke
 test emit synthetic fixture data only.
 
-## Installed-build audit prerequisites
+## Installed-build audit and next prerequisites
 
-The audit can resume when the exact installed game root is available. First
-run the read-only probe:
+The exact installed root has now been inspected read-only. To reproduce the
+probe on this machine:
 
 ```powershell
 py -3 scripts/inspect_unity_install.py "C:\Path\To\AoTTG2" --out "$env:TEMP\aottg2_build_preflight.json"
@@ -123,22 +126,19 @@ py -3 scripts/inspect_unity_install.py "C:\Path\To\AoTTG2" --out "$env:TEMP\aott
 Keep the output local. It hashes the top-level executable/DLLs and relevant
 metadata, reports PE architecture and searches only the first 4096 bytes of
 `globalgamemanagers` for a Unity version string. The architecture and version
-are hints, not ABI or compatibility proof. Also record, locally:
+are hints, not ABI or compatibility proof. No game files were changed. The
+remaining pre-install audit needs:
 
-- the exact `Aottg2.exe` file/product version and architecture;
-- Unity version from `globalgamemanagers` and from any loader startup log;
-- `GameAssembly.dll`, `global-metadata.dat`, `UnityPlayer.dll`, and
-  `globalgamemanagers` hashes;
-- any pre-existing BepInEx/MelonLoader files and versions;
-- whether local plugin loading is permitted for this installation; and
+- confirmation that native IL2CPP plugin loading is permitted for this copy;
+- one specific BepInEx IL2CPP release documented for the detected architecture
+  and Unity version; and
 - a reviewed backup and exact rollback list before any loader files are added.
 
-If BepInEx is allowed and the audited architecture/version is compatible, a
-controlled first loader run would generate `BepInEx/interop` assemblies and a
-loader log. These files are the required compile inputs for the game type
-mapping. Do not install a loader or start the game merely to generate them
-without a backed-up, reviewed game-root package and rollback. Do not install
-multiple loaders to probe compatibility.
+If those conditions are met, a controlled first loader run can generate
+`BepInEx/interop` assemblies and a loader log. These are still required to map
+game types and compile the capture component. Do not copy the H3VR profile,
+install multiple loaders, or start the game to probe compatibility. First
+prepare and review the exact loader package, backup, and rollback list.
 
 ## Validation boundary
 
