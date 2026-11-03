@@ -5,7 +5,17 @@ Recorder work from the stacked draft PRs. It is intentionally separate from
 the unvalidated M2 gameplay branch and does not claim that AoTTG2 can load a
 recorder.
 
-## Current branch decision
+## Follow-on adapter branch
+
+`codex/flight-recorder-il2cpp-adapter` starts from PR #15's integration branch.
+It adds a bounded .NET named-pipe producer, a Windows Python receiver wired to
+the existing writer, writer-side incomplete-capture accounting, and offline
+transport tests. The Windows smoke test uses synthetic fixtures. This
+follow-on still contains no Unity observation component and does not establish
+an installed-game recorder. PR #15 is not merged by this work; PR #6 and the
+M2 branch remain untouched.
+
+## PR #15 base branch decision
 
 The clean integration branch is based on `main` at `39857d9`, not on
 `feat/m2-exploration-and-orders`. It contains the offline dependency closure

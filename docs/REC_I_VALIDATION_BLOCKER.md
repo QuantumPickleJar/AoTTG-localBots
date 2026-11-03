@@ -1,56 +1,83 @@
-# REC-I status: blocked on installed-game audit
+# REC-I status: game-side capture adapter not built
 
-**Status: BLOCKED — no current installed AoTTG2 files or game process are available in this workspace.** No Unity adapter or native recorder has been built, copied, or loaded, and no REC-I pass is claimed. Prompts 1 and 2 remain completed and analyzed; post-Prompt-2 M2 stabilization continues separately.
+**Status: BLOCKED before installed-runtime testing.** The bounded Windows
+transport and Python writer bridge are implemented and pass synthetic
+end-to-end checks. There is no Unity capture component, no installed-build
+interop set, and no installable recorder package. No game load or REC-I
+gameplay result is claimed.
 
-## What is missing
+## Evidence available
 
-The installation needed to establish the actual Unity version, Mono/IL2CPP backend, permitted mod-loading path, plugin compatibility, and accessible physics callbacks was not available for inspection. The October 31 Custom Logic documentation is evidence about its published API surface, not the currently installed executable. Without that audit, a native plugin or a purported post-physics callback would be guesswork.
+The owner-supplied preflight reports an IL2CPP layout (`GameAssembly.dll`,
+`global-metadata.dat`, and `UnityPlayer.dll`; no Mono assemblies) for the
+installed build. Those binary hashes and sizes were not verified in this
+workspace because the inspected AoTTG2 folder contained user data only. The
+exact game root, executable, `globalgamemanagers`, and generated interop
+assemblies are absent here. Do not treat another public release as a match for
+the installed copy.
 
-The official [AoTTG2 Team itch.io release page](https://aottg2-team.itch.io/aottg2) was reachable for listing inspection. As listed on November 3, 2026, it shows the November 1 release, including a Windows launcher ZIP (50 MB, Version 8) and a Windows Standalone64 ZIP (1 GB, Version 7). Selecting the Standalone64 download in the cloud browser displayed the site's “Thanks for downloading” acknowledgement, but no browser download event or archive path appeared within 30 seconds. The archive could not be inspected in this cloud environment; this does not establish that it is unavailable elsewhere. The listing is not evidence that the release matches the user's installed copy.
+The read-only [installed-build probe](../scripts/inspect_unity_install.py)
+reports common layout indicators, hashes, PE architecture, possible Unity
+version text from the `globalgamemanagers` header, and pre-existing loader
+directories. Architecture and version are hints; the probe cannot establish
+loader permission or compatibility.
 
-`scripts/inspect_unity_install.py` is a read-only layout hint. It can report whether common Mono or IL2CPP files exist and hash selected filenames, but it **cannot** identify the exact Unity version, establish loader compatibility, or validate callbacks. It does not read or upload binary contents. Its result is a preflight input, not a feasibility verdict:
+## Work ready offline
 
-```powershell
-py -3 scripts/inspect_unity_install.py "D:\Games\AoTTG2" --out build_preflight.json
-```
+- `tools/flight_writer.py` writes bounded `aicadets.flight.v1` frames, events,
+  lifecycle records, and hashed chunks; recovery and analysis remain available.
+- `plugin/FlightRecorder.TransportClient` builds for .NET 6 and .NET 8 and
+  sends bounded, sequenced messages with acknowledgments over a local pipe.
+- `tools/flight_transport.py` receives the Windows named pipe, enforces
+  current-user pipe access and local-only clients, and forwards primitive
+  records to the existing Python writer.
+- Python tests exercise protocol parsing, retries/duplicates, sequence and
+  frame-step loss, lifecycle/event mapping, incomplete metadata, and analyzer
+  integrity. The Windows smoke script sends fixture data through the actual
+  named pipe and verifies its hashed writer output.
 
-Run it against the current launcher installation root only if that path is available. Keep the JSON local; it contains installation filenames and hashes.
+These are Level 1 checks with synthetic records. They do not verify a Unity
+callback, game actor class, `Rigidbody` semantics, collision provenance,
+runtime overhead, or AoTTG2 compatibility. No M2 or Custom Logic gameplay file
+is changed by this branch.
 
-## Work that is ready offline
+## Exact prerequisites for the next adapter build
 
-- `tools/analyze_flight.py` accepts the `aicadets.flight.v1` trace format and optional hashed chunk manifest; it reports declared dropped frames and entity samples separately.
-- `tools/flight_writer.py` now provides a Unity-independent bounded writer core, immutable snapshots, structured events, chunk hashing, explicit gap accounting, configurable storage limits, checkpoint state and conservative recovery. Synthetic tests/benchmarks do not establish a supported Unity connection.
-- Synthetic fixtures and tests exercise multi-entity tracking, fixed-step coverage, gaps, integrity failure recovery, event correlation and evidence grades.
-- `tools/replay_decisions.py` extracts serialized planner decisions for deterministic offline policy comparisons. It does not replay Unity physics. Its `python_reference_policy_demo` agreement is separate from M2 controller behavior.
-- `tools/m2_trace_adapter.py` preserves the existing M2 `LogEvent` observations and reports missing decision-replay fields. It does not fabricate M3 profiles, candidate gates, decision IDs, stable spawn IDs, physics steps, or frames.
-- `tests/test_wave_m2.py` executes the actual M2 Custom Logic source through the project's constrained translation harness and mocked APIs. Those source-driven checks are not installed-game parser or physics validation.
-- `addons/AICadetsPrimitiveObserver.cl` is an opt-in, low-rate Custom Logic fallback for an isolated probe. It is not a physics-step recorder, has no verified post-physics phase, and cannot establish full entity/collision coverage.
+1. Read-only access to the exact root containing `Aottg2.exe` and
+   `Aottg2_Data`, including `globalgamemanagers`, `GameAssembly.dll`,
+   `UnityPlayer.dll`, and `il2cpp_data/Metadata/global-metadata.dat`.
+2. The local probe output, executable file/product version, and confirmation
+   that a local plugin loader is allowed for this installation.
+3. If allowed, one reviewed loader choice and a file-level backup/rollback
+   before first-run generation of its IL2CPP interop assemblies.
+4. The generated interop assemblies and loader startup log, needed to map the
+   actual Humans, Titans, hooks, projectiles, and event callback types.
+5. A compiled Unity component using the selected pre-physics `FixedUpdate`
+   phase, explicit actor coverage, stable per-spawn IDs, and a read-only
+   provider connected to the tested transport.
 
-There is still no game-side Unity adapter, callback, inter-process transport, coverage registry tied to game objects, or deployable recorder package. The Python writer queue and storage cap are implemented only within the runtime-independent core. The offline reader cannot certify data that no verified recorder produced.
+Do not request a gameplay capture until that component is compiled, the
+installed-runtime smoke passes, and the deployment/rollback files have been
+reviewed.
 
-## REC-I gate
-
-**Do not deploy or label the Python core as an installed-game recorder.** The game-side test remains blocked until the installed files are available for a feasibility audit, an allowed compatible loader is verified, a passive adapter and transport are reviewed, and exact deployment files and rollback are known.
-
-When those prerequisites are met, REC-I needs a fresh private City 1 / Training / Waves session with the M2 trio and only a compatible passive recorder. Calibrate a short capture against video; compare global physics-step IDs, timestamps/phase, representative dynamic entity classes, collision evidence, drops, queue pressure, disk output, and overhead. Pass only with verified phase and complete coverage for the claimed classes, accounted-for drops, intact chunks, and safe measured overhead. Until that pass, preserve the existing video-first instructions in `docs/GAMEPLAY_VALIDATION_HARNESS.md`.
-
-**Current result:** `BLOCKED` — no installed-game audit, deployment files, or runtime evidence. This is an explicit blocker, not an inconclusive game test.
-
-## REC-I Validation Card (blocked; not runnable)
+## REC-I validation card (blocked; not runnable)
 
 ```text
 SESSION ID: REC-I
-STATUS: BLOCKED — do not start this session from the current artifacts.
-SOURCE: offline reader and runtime-independent writer core only; no game-side adapter or recorder commit exists.
-FILES TO COPY / LOADER PATH: None. No native recorder package or compatible loader has been identified.
-ENABLE: No session. When unblocked, M2 WaveCadet + CommandPanel + a compatible observer/recorder only.
-DISABLE: M0 Probe, M1 Traversal/Reliable/Watcher, and any independent active probe. Keep the M2Watcher only if compatibility is established.
-MAP / MODE / HOST: Private master-host, City 1 / Training / Waves, after the installed-game audit.
-PRECONDITION: Verify the current installation, Unity version/backend, allowed loader and a reviewed passive implementation.
-ACTIONS: None until that precondition is met. Do not use the Custom Logic fallback as a substitute for REC-I.
-ARCHIVE / PATH: No recorder output path exists yet. After implementation, use a local, capped run directory and archive intact chunks plus metadata/manifest.
-EXPECTED EVIDENCE: Verified post-physics phase; complete global step IDs and monotonic timestamps; declared entity-class coverage; observed collision provenance; explicit gap/drop ranges; queue, disk and overhead metrics.
-PASS: All claimed physics steps are present or every loss is accounted for; no silent drops; hashes and recovery validate; measured overhead and storage remain within reviewed limits.
-FAIL / PARTIAL / INCONCLUSIVE: Any step loss, unaccounted coverage, invalid phase, unreadable chunks, unsafe overhead, or unavailable class is reported explicitly.
-ROLLBACK: No files are currently installed. If a future build is tested, disable/remove only its exact recorder files and restore the pre-test Addons folder copy.
+STATUS: BLOCKED — no game-side adapter or deployable package exists yet.
+SOURCE BRANCH: codex/flight-recorder-il2cpp-adapter, based on PR #15; use the final PR head after CI passes.
+FILES TO COPY / LOADER PATH: None. The .NET transport library and Python receiver are not a game plugin.
+LAUNCHER ORDER: Not applicable until an adapter and approved loader package exist.
+ENABLED: No gameplay test. For the later calibration, enable only the approved passive recorder alongside the agreed M2 test add-ons.
+DISABLED: All unrelated experimental probes and all other players' telemetry collection.
+MODE / MAP / HOST: Later private master-host, City 1 / Training / Waves; no session before Level 2.
+FIRST 30–60 SECONDS: Not requested yet. When unblocked, first confirm plugin load, receiver handshake, fixed-step counter advance, stable actor IDs, clean shutdown, and no control/physics mutation.
+EXPECTED COVERAGE: Only classes that the compiled adapter explicitly declares and the installed-runtime audit confirms. Collision, decisions, gas, hooks, and moving geometry stay unavailable until their source callbacks/fields are verified.
+TRACE CHECKS: Run tools/analyze_flight.py against the local run; verify chunk hashes, exact frame-step gaps, IDs across lifecycle, phase label, per-field provenance, queue/drop counters, and capture_complete.
+ACCEPTANCE: No unaccounted loss; valid hashes; phase and class coverage match direct video/runtime checks; measured CPU/frame-time/storage stay within pre-agreed limits; safe shutdown and rollback.
+FAILURE / ROLLBACK: Stop the run, preserve local logs and the incomplete trace, disable/remove only manifest-listed recorder files, and restore the reviewed backup. Do not change M2 gameplay code.
+ARCHIVE TO RETURN: After the adapter exists, return the recorder's local run folder (chunks, chunk_manifest.json, metadata.json, state.json), receiver and loader logs, the short motion cross-check video, and performance/drop summary. Do not include game binaries or other players' data.
 ```
+
+Keep the current video-first M2 validation path unchanged until REC-I can be
+run with a compiled, passive adapter.

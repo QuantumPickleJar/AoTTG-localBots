@@ -1,20 +1,20 @@
 # Flight Recorder writer deployment connection
 
-**State:** offline core implemented; Unity adapter and local transport are future work after the installed-game audit. This document is a connection specification, not a deployable plug-in or gameplay-validation claim.
+**State:** offline core and bounded Windows local transport are implemented. The Unity adapter remains unbuilt pending the installed-game audit. This document is a connection specification, not a deployable plug-in or gameplay-validation claim.
 
 ## Connection point
 
-`tools/flight_writer.py` is a Python standard-library module. A future Unity-facing adapter must copy engine state into immutable primitive messages on a verified callback, then hand those messages to a local sidecar or a reviewed runtime port. The adapter must never pass Unity object references, `Transform`, `Rigidbody`, `GameObject`, or mutable game collections to the background writer.
+`tools/flight_writer.py` is a Python standard-library module. A Unity-facing adapter must copy engine state into immutable primitive messages on a verified callback, then hand those messages to the local pipe client. The adapter must never pass Unity object references, `Transform`, `Rigidbody`, `GameObject`, or mutable game collections to the background writer.
 
 ```mermaid
 flowchart TD
     A[Verified Unity callback] --> B[Main-thread primitive snapshot]
-    B --> C[Future bounded local transport]
+    B --> C[Bounded .NET named-pipe client]
     C --> D[FlightRecorderWriter API]
     D --> E[Hashed JSONL chunks]
 ```
 
-The transport box is intentionally not implemented. Once the installed-game audit selects a compatible loader/runtime, implement a versioned local named pipe or an equivalent reviewed in-process binding. It must be local-only, authenticated by OS access control, and have its own bounded queue and explicit acknowledgement/error path. Do not add cloud upload or a network service.
+The implemented bridge is `plugin/FlightRecorder.TransportClient` plus `tools/flight_transport.py`; it uses a current-user Windows pipe DACL, rejects remote clients, bounds messages/queues, and acknowledges accepted messages. See [FLIGHT_RECORDER_TRANSPORT.md](FLIGHT_RECORDER_TRANSPORT.md). This bridge has only synthetic end-to-end evidence and does not provide a game-side observer.
 
 ## Writer API mapping
 
@@ -23,6 +23,7 @@ The transport box is intentionally not implemented. Once the installed-game audi
 | One global physics callback | `submit_frame(FrameSnapshot(...))` | One monotonically increasing source step; one time and phase for all samples; copy primitive pose/velocity/state fields. Never synthesize a missing step. |
 | Entity spawn/despawn | `submit_lifecycle(EntityLifecycleRecord(...))` | Stable per-spawn ID; emit despawn only when observed. A reused source handle increments its generation. |
 | Decision, command or outcome | `submit_event(RecorderEvent(...))` | Preserve source event name, timestamp, step if observed, entity/correlation IDs, evidence grade and exact structured fields. Missing values remain absent. |
+| External source or transport loss | `mark_incomplete(reason, details=...)` | Bounded reason ledger; final `capture_complete` is false and metadata preserves first/last bounded details. Do not synthesize a frame for a missing step. |
 | Stop/health reporting | `stats()` then `close()` | Surface queue loss, storage exhaustion, rejected events, incomplete capture and final chunk/manifest state to the local operator. |
 
 Stable IDs should use the source actor handle plus a spawn generation, for example `human:73:2`. IDs must not use a reusable display name alone. Entity-kind and source-handle normalization belongs in the adapter; the recorder does not infer identity from position or names.
@@ -51,7 +52,7 @@ For a decision input, the adapter may pass the complete, actually observed repla
 
 ### Requires actual gameplay
 
-- Calibrate callback ordering and timestamps against a short local video; verify the phase is truly post-physics.
+- Calibrate callback ordering and timestamps against a short local video; verify and preserve the actual phase label (`fixed_update_pre_physics` if that seam is selected).
 - Measure per-step global coverage across representative actors, spawn/despawn and scene transitions; validate explicit gap/drop reporting.
 - Exercise decision, command, damage and rescue event provenance in a private master-host session; prove correlation without inferring outcomes.
 - Measure game frame time, CPU, memory, queue pressure, storage and shutdown behavior at representative load. Confirm no gameplay mutations and no material performance regression.

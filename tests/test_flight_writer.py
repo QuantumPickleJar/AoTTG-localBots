@@ -342,6 +342,25 @@ class FlightWriterTests(unittest.TestCase):
         self.assertEqual(stats["source_missing_frames"], 1)
         self.assertEqual(stats["enqueued_frames"], 2)
 
+    def test_external_incomplete_reason_survives_graceful_writer_close(self):
+        writer = self.make_writer("incomplete")
+        writer.submit_frame(frame(1, count=1))
+        writer.mark_incomplete("transport_message_sequence_gap", details={
+            "first_missing_sequence": 4, "last_missing_sequence": 5,
+        })
+        writer.mark_incomplete("transport_message_sequence_gap", details={
+            "first_missing_sequence": 9, "last_missing_sequence": 9,
+        })
+        writer.close()
+
+        metadata = json.loads((self.root / "incomplete" / "metadata.json").read_text())
+        self.assertFalse(metadata["capture_complete"])
+        self.assertEqual(metadata["incomplete_reasons"], [{
+            "reason": "transport_message_sequence_gap", "count": 2,
+            "first_details": {"first_missing_sequence": 4, "last_missing_sequence": 5},
+            "last_details": {"first_missing_sequence": 9, "last_missing_sequence": 9},
+        }])
+
 
 if __name__ == "__main__":
     unittest.main()
