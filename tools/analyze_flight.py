@@ -49,8 +49,15 @@ class Reader:
     def __init__(self, source):
         self.source = Path(source)
         self.archive = None
+        self.archive_root = PurePosixPath(".")
+        self.archive_manifest_name = None
         if self.source.is_file() and self.source.suffix.lower() == ".zip":
             self.archive = zipfile.ZipFile(self.source)
+            manifest_names = [n for n in self.archive.namelist()
+                              if PurePosixPath(n).name == CHUNK_INDEX_NAME]
+            if len(manifest_names) == 1:
+                self.archive_manifest_name = manifest_names[0]
+                self.archive_root = PurePosixPath(manifest_names[0]).parent
         elif not self.source.exists():
             raise FileNotFoundError(self.source)
 
@@ -58,10 +65,27 @@ class Reader:
         if self.archive:
             self.archive.close()
 
+    def _archive_name(self, name):
+        return (self.archive_root / PurePosixPath(name)).as_posix()
+
     def files(self):
         if self.archive:
+            # Resolve chunk names relative to the manifest, allowing a run ZIP to
+            # contain one enclosing directory without changing manifest paths.
+            files = []
+            for archive_name in self.archive.namelist():
+                path = PurePosixPath(archive_name)
+                if self.archive_manifest_name:
+                    try:
+                        name = path.relative_to(self.archive_root).as_posix()
+                    except ValueError:
+                        continue
+                else:
+                    name = archive_name
+                if name.endswith((".jsonl", ".jsonl.gz")):
+                    files.append(name)
             # The writer must name chunks monotonically (e.g. 000001.jsonl).
-            return sorted(n for n in self.archive.namelist() if n.endswith((".jsonl", ".jsonl.gz")))
+            return sorted(files)
         if self.source.is_dir():
             return sorted(p.relative_to(self.source).as_posix() for p in self.source.rglob("*")
                           if p.is_file() and str(p).endswith((".jsonl", ".jsonl.gz")))
@@ -72,13 +96,15 @@ class Reader:
             names = [n for n in self.archive.namelist() if n.endswith("metadata.json")]
             if not names:
                 return {}
-            return json.loads(self.archive.read(sorted(names, key=lambda n: (n.count("/"), n))[0]))
+            preferred = (self.archive_root / "metadata.json").as_posix()
+            name = preferred if preferred in names else sorted(names, key=lambda n: (n.count("/"), n))[0]
+            return json.loads(self.archive.read(name))
         path = self.source / "metadata.json" if self.source.is_dir() else self.source.parent / "metadata.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
     def read_bytes(self, name):
         if self.archive:
-            return self.archive.read(name)
+            return self.archive.read(self._archive_name(name))
         path = self.source / name if self.source.is_dir() else self.source
         return path.read_bytes()
 
@@ -102,7 +128,7 @@ class Reader:
     @contextlib.contextmanager
     def open(self, name):
         if self.archive:
-            with self.archive.open(name) as raw:
+            with self.archive.open(self._archive_name(name)) as raw:
                 if name.endswith(".gz"):
                     with gzip.GzipFile(fileobj=raw) as zf:
                         with io.TextIOWrapper(zf, encoding="utf-8-sig", errors="replace") as f:

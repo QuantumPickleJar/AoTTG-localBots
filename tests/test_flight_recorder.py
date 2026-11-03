@@ -46,6 +46,29 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(result["frames"], 5)
         self.assertEqual(result["entities"], 2)
 
+    def test_zip_bundle_with_manifest_and_enclosing_directory(self):
+        frame = {"type": "frame", "step": 1, "t": 0.02, "phase": "post_physics", "samples": [
+            {"id": "human:1:1", "kind": "human", "pos": [0, 0, 0], "vel": [0, 0, 0]}]}
+        payload = (json.dumps(frame) + "\n").encode("utf-8")
+        metadata = {"schema_version": "aicadets.flight.v1", "run_id": "nested-zip",
+                    "capture_complete": True}
+        manifest = {"manifest_schema": "aicadets.flight.chunk-index.v1", "chunks": [{
+            "file": "chunk-000001.jsonl", "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(), "frame_count": 1,
+            "first_step": 1, "last_step": 1}]}
+        bundle = self.root / "nested-run.zip"
+        with zipfile.ZipFile(bundle, "w") as zf:
+            zf.writestr("nested-run/metadata.json", json.dumps(metadata))
+            zf.writestr("nested-run/chunk_manifest.json", json.dumps(manifest))
+            zf.writestr("nested-run/chunk-000001.jsonl", payload)
+
+        result = analyze(bundle, self.root / "nested_zip_report")
+        self.assertEqual(result["frames"], 1)
+        self.assertEqual(result["entities"], 1)
+        self.assertEqual(result["valid_chunks"], 1)
+        self.assertEqual(result["integrity_status"], "verified")
+        self.assertEqual(result["unindexed_chunks"], 0)
+
     def test_incomplete_capture_and_bad_record(self):
         src = self.root / "bad"
         src.mkdir()
