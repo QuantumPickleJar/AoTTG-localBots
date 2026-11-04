@@ -5,6 +5,12 @@ addon AICadetsM2Watcher
     _scout = null;
     _trace = "";
     _file = "";
+    _previousFile = "";
+    _fileIndex = -1;
+    _segment = 0;
+    _maxTraceChars = 16000;
+    _maxEventChars = 4096;
+    _saveInterval = 5.0;
     _started = false;
     _finished = false;
     _nextSample = 0.0;
@@ -35,26 +41,17 @@ addon AICadetsM2Watcher
             return;
         }
         # Never overwrite an existing diagnostic. Bounded search, 100 files.
-        for (i in Range(0, 100, 1))
-        {
-            candidate = "AICadetsM2Watch" + Convert.ToString(i);
-            if (!PersistentData.FileExists(candidate))
-            {
-                self._file = candidate;
-                break;
-            }
-        }
-        if (self._file == "")
+        if (!self.FindFreeFile(0))
         {
             self._finished = true;
             Game.Print("[AI Cadets M2 Watch] No free file slot; archive old watch files.");
             return;
         }
         self._start = Time.GameTime;
-        self._trace = "AICadetsM2Watcher v3 combat-arc-5; times=GameTime; moving=0.2s; idle=2s; max_records=2000; max=300s after discovery\n";
+        self._trace = self.SegmentHeader();
         self.Record("watch_started");
         self.Flush();
-        Game.Print("[AI Cadets M2 Watch] Recording to PersistentData/" + self._file);
+        Game.Print("[AI Cadets M2 Watch] Recording to PersistentData/" + self._file + " (numbered segments)");
     }
 
     function OnTick()
@@ -207,22 +204,85 @@ addon AICadetsM2Watcher
 
     function Record(event)
     {
-        if (self._records >= 2000)
+        if (self._finished || self._records >= 2000)
         {
             return;
         }
-        self._records = self._records + 1;
-        self._dirty = true;
-        if (self._records == 2000)
+        recordLimit = self._records >= 1999;
+        if (recordLimit)
         {
             event = "record_limit_reached";
-            self._finished = true;
         }
-        self._trace = self._trace + Convert.ToString(Time.GameTime) + " " + event + "\n";
-        if (self._finished)
+        if (String.Length(event) > self._maxEventChars)
         {
+            event = String.SubstringWithLength(event, 0, self._maxEventChars - 16) + "...[truncated]";
+        }
+        line = Convert.ToString(Time.GameTime) + " " + event + "\n";
+        if (String.Length(self._trace) + String.Length(line) > self._maxTraceChars)
+        {
+            if (!self.StartNextSegment())
+            {
+                return;
+            }
+        }
+        self._trace = self._trace + line;
+        self._records = self._records + 1;
+        self._dirty = true;
+        if (recordLimit)
+        {
+            self._finished = true;
             self.Flush();
         }
+    }
+
+    function FindFreeFile(startIndex)
+    {
+        for (i in Range(startIndex, 100, 1))
+        {
+            candidate = "AICadetsM2Watch" + Convert.ToString(i);
+            if (!PersistentData.FileExists(candidate))
+            {
+                self._file = candidate;
+                self._fileIndex = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function SegmentHeader()
+    {
+        previous = "none";
+        if (self._previousFile != "")
+        {
+            previous = self._previousFile;
+        }
+        return "AICadetsM2Watcher v4 combat-arc-5; segment=" + Convert.ToString(self._segment) + "; file=" + self._file + "; previous=" + previous + "; times=GameTime; moving=0.2s; idle=2s; max_segment_chars=16000; max_records=2000; max=300s after discovery\n";
+    }
+
+    function StartNextSegment()
+    {
+        oldFile = self._file;
+        self.Flush();
+        if (!self.FindFreeFile(self._fileIndex + 1))
+        {
+            marker = Convert.ToString(Time.GameTime) + " watch_stopped_no_free_segment_slots\n";
+            if (String.Length(self._trace) + String.Length(marker) <= self._maxTraceChars)
+            {
+                self._trace = self._trace + marker;
+                self._dirty = true;
+            }
+            self._finished = true;
+            self.Flush();
+            Game.Print("[AI Cadets M2 Watch] No free segment slot; saved data remains in " + oldFile);
+            return false;
+        }
+        self._previousFile = oldFile;
+        self._segment = self._segment + 1;
+        self._trace = self.SegmentHeader();
+        self._dirty = true;
+        self.Flush();
+        return true;
     }
 
     function Snapshot(kind)
@@ -240,7 +300,7 @@ addon AICadetsM2Watcher
         # Do not Clear(): PersistentData is shared with other scripts.
         PersistentData.SetProperty("AICadetsM2WatchTrace", self._trace);
         PersistentData.SaveToFile(self._file, false);
-        self._nextSave = Time.GameTime + 1.0;
+        self._nextSave = Time.GameTime + self._saveInterval;
         self._dirty = false;
     }
 }
