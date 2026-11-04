@@ -41,7 +41,8 @@ for (var index = 0; index < lines.Count; index++)
 }
 Console.WriteLine("transport pipe smoke passed: ordered hello/event/stop envelopes");
 await RunBackpressureSmokeAsync();
-await RunFinalGapAccountingSmokeAsync();
+await RunCriticalReserveAccountingSmokeAsync();
+await RunCriticalByteReserveAccountingSmokeAsync();
 
 static async Task SendToPythonReceiverAsync(string pipeName, string runId)
 {
@@ -133,7 +134,8 @@ static async Task RunBackpressureSmokeAsync()
     var runId = Guid.NewGuid().ToString("N");
     await using var client = new PipePublisher(pipeName, runId,
         "{\"writer_schema\":\"aicadets.flight.v1\",\"producer\":\"pressure-smoke\"}",
-        queueCapacity: 4, maxQueueBytes: 8192, controlReserveSlots: 1, controlReserveBytes: 1024);
+        queueCapacity: 5, maxQueueBytes: 8192, controlReserveSlots: 2, controlReserveBytes: 2048,
+        criticalReserveSlots: 1, criticalReserveBytes: 1024);
     await Task.Delay(50); // Keep the local pipe absent while the bounded queue fills.
 
     if (!client.TryPublishFrame(FramePayload(0), 0) || !client.TryPublishFrame(FramePayload(1), 1))
@@ -174,57 +176,102 @@ static async Task RunBackpressureSmokeAsync()
     Console.WriteLine("transport backpressure smoke passed: bounded queue emitted explicit frame gaps");
 }
 
-static async Task RunFinalGapAccountingSmokeAsync()
+static async Task RunCriticalReserveAccountingSmokeAsync()
 {
-    var pipeName = $"aicadets-final-gap-{Guid.NewGuid():N}";
+    var pipeName = $"aicadets-critical-reserve-{Guid.NewGuid():N}";
     var runId = Guid.NewGuid().ToString("N");
     await using var client = new PipePublisher(pipeName, runId,
-        "{\"writer_schema\":\"aicadets.flight.v1\",\"producer\":\"final-gap-smoke\"}",
-        queueCapacity: 2, maxQueueBytes: 8192, controlReserveSlots: 1, controlReserveBytes: 1024);
-    await Task.Delay(50); // Keep the local pipe absent while the control reserve fills.
-    if (!client.TryPublishControl("event", "{\"event\":\"queued\",\"t\":1.0}"))
-        throw new InvalidOperationException("control record did not fit the bounded queue");
-    if (client.TryPublishFrame("{\"step\":0,\"t\":1.0,\"phase\":\"fixture\",\"samples\":[]}", 0))
-        throw new InvalidOperationException("frame unexpectedly fit after the queue reached capacity");
+        "{\"writer_schema\":\"aicadets.flight.v1\",\"producer\":\"critical-reserve-smoke\"}",
+        queueCapacity: 5, maxQueueBytes: 8192, controlReserveSlots: 2, controlReserveBytes: 2048,
+        criticalReserveSlots: 2, criticalReserveBytes: 1024);
+    await Task.Delay(50); // Keep the receiver absent while ordinary controls fill their limit.
+    if (!client.TryPublishControl("event", "{\"event\":\"queued-1\",\"t\":1.0}") ||
+        !client.TryPublishControl("event", "{\"event\":\"queued-2\",\"t\":1.1}"))
+        throw new InvalidOperationException("ordinary controls did not fit before the critical reserve");
+    if (client.TryPublishFrame(FramePayload(0), 0))
+        throw new InvalidOperationException("frame unexpectedly fit after the data queue reached its frame limit");
+    if (client.TryPublishControl("event", "{\"event\":\"triggers-gap\",\"t\":1.2}"))
+        throw new InvalidOperationException("ordinary control unexpectedly consumed the reserved gap/stop capacity");
+    if (client.Failure != "control_queue_full" || client.DroppedFrames != 1 || client.DroppedControlMessages != 1)
+        throw new InvalidOperationException("control overflow did not preserve the frame gap and report the dropped event");
+    if (!client.TryPublishControl("stop", "{\"graceful\":false,\"reason\":\"critical_reserve_smoke\"," +
+            "\"dropped_frames\":1,\"dropped_control_messages\":1}"))
+        throw new InvalidOperationException("stop record could not use critical capacity after a control overflow");
 
-    var drain = client.StopAndDrainAsync(TimeSpan.FromSeconds(5));
-    if (client.Failure != "pending_frame_gap_not_queued_before_stop")
-        throw new InvalidOperationException("shutdown failed to report an unqueued final frame-gap marker");
-    var received = ReadTwoMessagesAsync(pipeName, runId);
+    var received = ReadUntilStopAsync(pipeName, runId);
+    var drain = await client.StopAndDrainAsync(TimeSpan.FromSeconds(10));
+    if (drain || client.QueueDepth != 0)
+        throw new InvalidOperationException("failed capture was reported complete or left queued messages undrained");
     var messages = await received.WaitAsync(TimeSpan.FromSeconds(10));
-    var drainSucceeded = await drain;
-    if (drainSucceeded || client.QueueDepth != 0)
-        throw new InvalidOperationException("shutdown reported success or left queued messages after an unaccounted loss");
-    if (messages.Any(line => JsonDocument.Parse(line).RootElement.GetProperty("kind").GetString() == "gap"))
-        throw new InvalidOperationException("a gap marker was reported despite not fitting in the bounded queue");
-    Console.WriteLine("transport shutdown accounting smoke passed: unqueued final loss marks producer failure");
+    var parsed = messages.Select(line => JsonDocument.Parse(line)).ToList();
+    try
+    {
+        var expectedKinds = new[] { "hello", "event", "event", "gap", "stop" };
+        if (parsed.Count != expectedKinds.Length || parsed.Where((message, index) =>
+                message.RootElement.GetProperty("kind").GetString() != expectedKinds[index]).Any())
+            throw new InvalidOperationException("receiver did not get the queued controls, frame gap, and final stop in order");
+        var gap = parsed.Single(message => message.RootElement.GetProperty("kind").GetString() == "gap");
+        if (gap.RootElement.GetProperty("payload").GetProperty("dropped_frames").GetInt64() != 1)
+            throw new InvalidOperationException("reserved gap did not account for the dropped frame");
+        var stop = parsed.Single(message => message.RootElement.GetProperty("kind").GetString() == "stop");
+        if (stop.RootElement.GetProperty("payload").GetProperty("graceful").GetBoolean() ||
+            stop.RootElement.GetProperty("payload").GetProperty("dropped_control_messages").GetInt64() != 1)
+            throw new InvalidOperationException("final stop did not retain the incomplete status and dropped-control count");
+    }
+    finally
+    {
+        foreach (var message in parsed) message.Dispose();
+    }
+    Console.WriteLine("transport critical-reserve smoke passed: full control queue still records frame gap and incomplete stop");
 }
 
-static async Task<List<string>> ReadTwoMessagesAsync(string pipeName, string runId)
+static async Task RunCriticalByteReserveAccountingSmokeAsync()
 {
-    await using var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
-        PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-    await server.WaitForConnectionAsync().WaitAsync(TimeSpan.FromSeconds(10));
-    using var reader = new StreamReader(server, leaveOpen: true);
-    var lines = new List<string>(2);
-    while (lines.Count < 2)
+    var pipeName = $"aicadets-critical-bytes-{Guid.NewGuid():N}";
+    var runId = Guid.NewGuid().ToString("N");
+    await using var client = new PipePublisher(pipeName, runId,
+        "{\"writer_schema\":\"aicadets.flight.v1\",\"producer\":\"critical-byte-reserve-smoke\"}",
+        queueCapacity: 16, maxQueueBytes: 8192, controlReserveSlots: 4, controlReserveBytes: 4096,
+        criticalReserveSlots: 2, criticalReserveBytes: 2048);
+    await Task.Delay(50); // Keep the receiver absent so the byte limits are deterministic.
+    var bulkPayload = JsonSerializer.Serialize(new
     {
-        var line = await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10));
-        if (line is null) throw new EndOfStreamException("pipe ended before the queued records were acknowledged");
-        lines.Add(line);
-        using var message = JsonDocument.Parse(line);
-        var ack = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            protocol = PipePublisher.Protocol,
-            run_id = runId,
-            ack_sequence = message.RootElement.GetProperty("sequence").GetInt64(),
-            accepted = true,
-        });
-        await server.WriteAsync(ack);
-        await server.WriteAsync(new byte[] { (byte)'\n' });
-        await server.FlushAsync();
+        @event = "bulk_fixture",
+        t = 1.0,
+        blob = new string('x', 5750),
+    });
+    if (!client.TryPublishControl("event", bulkPayload))
+        throw new InvalidOperationException("bulk control did not fit below the ordinary-control byte limit");
+    if (client.TryPublishFrame(FramePayload(0), 0))
+        throw new InvalidOperationException("frame unexpectedly fit after ordinary controls consumed the data-byte budget");
+    if (client.TryPublishControl("event", "{\"event\":\"triggers-byte-gap\",\"t\":1.1}"))
+        throw new InvalidOperationException("ordinary control unexpectedly consumed the reserved gap/stop bytes");
+    if (client.Failure != "control_queue_full" || client.DroppedFrames != 1 || client.DroppedControlMessages != 1)
+        throw new InvalidOperationException("byte overflow did not preserve the frame gap and report the dropped event");
+    if (!client.TryPublishControl("stop", "{\"graceful\":false,\"reason\":\"critical_byte_reserve_smoke\"," +
+            "\"dropped_frames\":1,\"dropped_control_messages\":1}"))
+        throw new InvalidOperationException("stop record could not use critical bytes after a control overflow");
+
+    var received = ReadUntilStopAsync(pipeName, runId);
+    var drain = await client.StopAndDrainAsync(TimeSpan.FromSeconds(10));
+    if (drain || client.QueueDepth != 0)
+        throw new InvalidOperationException("byte-limited failed capture was reported complete or left queued messages undrained");
+    var messages = await received.WaitAsync(TimeSpan.FromSeconds(10));
+    var parsed = messages.Select(line => JsonDocument.Parse(line)).ToList();
+    try
+    {
+        var kinds = parsed.Select(message => message.RootElement.GetProperty("kind").GetString()).ToArray();
+        if (!kinds.SequenceEqual(new[] { "hello", "event", "gap", "stop" }))
+            throw new InvalidOperationException("byte-limited receiver did not get the frame gap and final stop in order");
+        if (parsed[2].RootElement.GetProperty("payload").GetProperty("dropped_frames").GetInt64() != 1 ||
+            parsed[3].RootElement.GetProperty("payload").GetProperty("dropped_control_messages").GetInt64() != 1)
+            throw new InvalidOperationException("byte-reserved gap/stop did not preserve drop accounting");
     }
-    return lines;
+    finally
+    {
+        foreach (var message in parsed) message.Dispose();
+    }
+    Console.WriteLine("transport critical-byte smoke passed: full control bytes still record frame gap and incomplete stop");
 }
 
 static string FramePayload(long step) => JsonSerializer.Serialize(new

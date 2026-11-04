@@ -13,7 +13,7 @@ PR #15 merged into `main` at merge commit `f0f3b2448c2042db8490cf5c640617a256667
 | #13 | Open, draft; stacked combined branch | Superseded by the offline replay/conformance content integrated through #15. Close as superseded; do not retarget or merge its stacked branch. |
 | #14 | Open, draft; stacked on #10–#13 | Its Python writer is integrated through #15. Close as superseded; do not merge its M2-bearing ancestry or retarget it. |
 | #15 | Merged | Offline writer, analyzer, replay adapter, recovery, tests, and documentation are now on `main`. |
-| #16 | Open, ready for review, base `main` | Keep separate from M2. Update review text and CI after the current adapter/attribution/performance-path commit. Do not merge until the 0.1.6 private capture measures the performance gate and the remaining review gates are resolved. |
+| #16 | Open, ready for review, base `main` | Keep separate from M2. Update review text and CI after the adapter/attribution/performance and critical-queue-reserve fix. Do not merge until a 0.1.7 private capture measures the performance gate and the remaining review gates are resolved. |
 
 The recommended cleanup is to close #12–#14 as superseded by #15, while leaving #6 and #11 draft. No branch retargeting is needed for those stacked drafts. PR #16 is the only recorder adapter integration candidate.
 
@@ -24,8 +24,8 @@ PR #15 supplies the runtime-independent Python writer and offline toolchain. PR 
 ## Validation gates before merging #16
 
 1. The PR head must pass static-smoke, Windows named-pipe transport checks, Python regression tests, and installed-interop plugin build.
-2. A guarded 0.1.6 package must include its source commit and manifest hashes, exclude proprietary game binaries/interop, and remain reversible.
-3. A fresh private installed-game capture must meet the steady-state capture-work p95/max limits with zero unaccounted drops, valid chunks, and no visible control/stutter issue. The prior 0.1.5 p95 breach is historical and cannot be cleared by offline tests.
+2. A guarded 0.1.7 package must include its source commit and manifest hashes, exclude proprietary game binaries/interop, and remain reversible.
+3. A fresh private installed-game capture must meet the steady-state capture-work p95/max limits with zero unaccounted drops, valid chunks, and no visible control/stutter issue. Any transport/control overflow remains a failed capture even if its gap and incomplete stop are preserved. The prior 0.1.5 p95 breach is historical and cannot be cleared by offline tests.
 4. Keep the callback phase and coverage limits explicit; review the 174 remaining velocity-change findings and use the short video only to calibrate motion/phase. Contact-based kill attribution stays inferred absent a direct damage/death event.
 
 After these checks pass, the owner can review the updated #16 diff and CI and merge #16 into `main`. Do not merge #6 or start the next gameplay milestone in the same integration. Use the first calibrated recording to select one narrowly scoped M2 stabilization behavior, prepare its own validation card, and keep it on the M2 branch for separate review.

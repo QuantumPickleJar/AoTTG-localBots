@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.6";
+    public const string PluginVersion = "0.1.7";
     private const string RequiredUnityVersion = "2023.1.22f1";
     private const string CapturePhase = "fixed_update_pre_physics_order_unspecified";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -235,16 +235,25 @@ public sealed class FlightRecorderPlugin : BasePlugin
     {
         if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0) return;
         _captureFailed = true;
-        Log.LogError($"Capture stopped and will be marked incomplete: {reason}: {exception.GetType().Name}: {exception.Message}");
+        var publisher = _publisher;
+        Log.LogError($"Capture stopped and will be marked incomplete: {reason}: {exception.GetType().Name}: {exception.Message}; " +
+            $"dropped_frames={publisher?.DroppedFrames ?? 0}, dropped_control_messages={publisher?.DroppedControlMessages ?? 0}, " +
+            $"queue_depth={publisher?.QueueDepth ?? 0}, queue_bytes={publisher?.QueueBytes ?? 0}, " +
+            $"queue_high_water_depth={publisher?.MaxQueueDepth ?? 0}, queue_high_water_bytes={publisher?.MaxQueueBytes ?? 0}");
         var payload = JsonSerializer.Serialize(new StopPayload
         {
             Graceful = false,
             Reason = reason,
-            DroppedFrames = _publisher?.DroppedFrames ?? 0,
-            DroppedControlMessages = _publisher?.DroppedControlMessages ?? 0,
+            DroppedFrames = publisher?.DroppedFrames ?? 0,
+            DroppedControlMessages = publisher?.DroppedControlMessages ?? 0,
+            TransportFailure = publisher?.Failure,
+            QueueDepth = publisher?.QueueDepth ?? 0,
+            QueueBytes = publisher?.QueueBytes ?? 0,
+            QueueHighWaterDepth = publisher?.MaxQueueDepth ?? 0,
+            QueueHighWaterBytes = publisher?.MaxQueueBytes ?? 0,
         }, JsonOptions);
-        _publisher?.TryPublishControl("stop", payload);
-        if (_publisher is { } publisher)
+        publisher?.TryPublishControl("stop", payload);
+        if (publisher is not null)
             _ = Task.Run(async () => await publisher.DisposeAsync().ConfigureAwait(false));
     }
 
@@ -259,6 +268,11 @@ public sealed class FlightRecorderPlugin : BasePlugin
             Reason = reason,
             DroppedFrames = publisher.DroppedFrames,
             DroppedControlMessages = publisher.DroppedControlMessages,
+            TransportFailure = publisher.Failure,
+            QueueDepth = publisher.QueueDepth,
+            QueueBytes = publisher.QueueBytes,
+            QueueHighWaterDepth = publisher.MaxQueueDepth,
+            QueueHighWaterBytes = publisher.MaxQueueBytes,
         }, JsonOptions);
         if (!publisher.TryPublishControl("stop", payload))
         {
@@ -809,6 +823,11 @@ internal sealed class StopPayload
     [JsonPropertyName("reason")] public string Reason { get; init; } = "";
     [JsonPropertyName("dropped_frames")] public long DroppedFrames { get; init; }
     [JsonPropertyName("dropped_control_messages")] public long DroppedControlMessages { get; init; }
+    [JsonPropertyName("transport_failure")] public string? TransportFailure { get; init; }
+    [JsonPropertyName("queue_depth")] public int QueueDepth { get; init; }
+    [JsonPropertyName("queue_bytes")] public int QueueBytes { get; init; }
+    [JsonPropertyName("queue_high_water_depth")] public int QueueHighWaterDepth { get; init; }
+    [JsonPropertyName("queue_high_water_bytes")] public int QueueHighWaterBytes { get; init; }
 }
 
 internal sealed class HealthPayload

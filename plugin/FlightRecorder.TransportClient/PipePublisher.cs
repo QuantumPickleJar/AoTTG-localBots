@@ -20,6 +20,8 @@ public sealed class PipePublisher : IAsyncDisposable
     private readonly int _maxQueueBytes;
     private readonly int _controlReserveSlots;
     private readonly int _controlReserveBytes;
+    private readonly int _criticalReserveSlots;
+    private readonly int _criticalReserveBytes;
     private readonly object _gate = new();
     private readonly Queue<ReadOnlyMemory<byte>> _queue = new();
     private readonly SemaphoreSlim _available = new(0);
@@ -46,7 +48,8 @@ public sealed class PipePublisher : IAsyncDisposable
 
     public PipePublisher(string pipeName, string runId, string helloPayloadJson,
         int queueCapacity = 512, int maxQueueBytes = 4 * 1024 * 1024,
-        int controlReserveSlots = 32, int controlReserveBytes = 256 * 1024)
+        int controlReserveSlots = 32, int controlReserveBytes = 256 * 1024,
+        int criticalReserveSlots = 2, int criticalReserveBytes = 16 * 1024)
     {
         if (string.IsNullOrWhiteSpace(pipeName) || pipeName.Length > 80 ||
             pipeName.Any(ch => !IsAsciiLetterOrDigit(ch) && ch is not ('_' or '-' or '.')))
@@ -55,7 +58,10 @@ public sealed class PipePublisher : IAsyncDisposable
             throw new ArgumentException("runId must be a UUID in N format", nameof(runId));
         if (queueCapacity < 2 || maxQueueBytes < 4096 || controlReserveSlots < 1 ||
             controlReserveSlots >= queueCapacity || controlReserveBytes < 1024 ||
-            controlReserveBytes >= maxQueueBytes)
+            controlReserveBytes >= maxQueueBytes || criticalReserveSlots < 1 ||
+            criticalReserveSlots > controlReserveSlots || criticalReserveSlots >= queueCapacity ||
+            criticalReserveBytes < 1024 || criticalReserveBytes > controlReserveBytes ||
+            criticalReserveBytes >= maxQueueBytes)
             throw new ArgumentOutOfRangeException(nameof(queueCapacity), "Queue and control reserves are invalid");
 
         _pipeName = pipeName;
@@ -64,6 +70,8 @@ public sealed class PipePublisher : IAsyncDisposable
         _maxQueueBytes = maxQueueBytes;
         _controlReserveSlots = controlReserveSlots;
         _controlReserveBytes = controlReserveBytes;
+        _criticalReserveSlots = criticalReserveSlots;
+        _criticalReserveBytes = criticalReserveBytes;
         if (!TryEnqueueLocked("hello", helloPayloadJson, isControl: true, sequence: _nextSequence++))
             throw new ArgumentException("hello envelope exceeds the configured transport limits", nameof(helloPayloadJson));
         _worker = Task.Run(PumpAsync);
@@ -127,7 +135,9 @@ public sealed class PipePublisher : IAsyncDisposable
             throw new ArgumentException("Unsupported control message kind", nameof(kind));
         lock (_gate)
         {
-            if (!_accepting || _failure is not null) return false;
+            // A failed capture may still send one final stop record. The receiver
+            // uses it to persist the producer failure and incomplete status.
+            if (!_accepting || (_failure is not null && kind != "stop")) return false;
             if (!FlushPendingFrameGapLocked(payloadJson))
             {
                 _droppedControlMessages++;
@@ -135,7 +145,8 @@ public sealed class PipePublisher : IAsyncDisposable
                 return false;
             }
             var sequence = _nextSequence++;
-            if (TryEnqueueLocked(kind, payloadJson, isControl: true, sequence)) return true;
+            if (TryEnqueueLocked(kind, payloadJson, isControl: true, sequence, isCritical: kind == "stop"))
+                return true;
             _droppedControlMessages++;
             _failure ??= "control_queue_full";
             return false;
@@ -245,7 +256,7 @@ public sealed class PipePublisher : IAsyncDisposable
         if (reportedStep is not null) payload["reported_at_step"] = reportedStep.Value;
         var json = JsonSerializer.Serialize(payload);
         var gapSequence = _nextSequence;
-        if (!TryEnqueueLocked("gap", json, isControl: true, gapSequence)) return false;
+        if (!TryEnqueueLocked("gap", json, isControl: true, gapSequence, isCritical: true)) return false;
         _nextSequence++;
         _droppedFrames = 0;
         _firstDroppedSequence = _lastDroppedSequence = 0;
@@ -253,7 +264,8 @@ public sealed class PipePublisher : IAsyncDisposable
         return true;
     }
 
-    private bool TryEnqueueLocked(string kind, string payloadJson, bool isControl, long sequence)
+    private bool TryEnqueueLocked(string kind, string payloadJson, bool isControl, long sequence,
+        bool isCritical = false)
     {
         var encoded = new ArrayBufferWriter<byte>(256);
         try
@@ -279,7 +291,7 @@ public sealed class PipePublisher : IAsyncDisposable
             _failure ??= "invalid_payload_json";
             return false;
         }
-        return TryQueueLineLocked(encoded.WrittenMemory, isControl);
+        return TryQueueLineLocked(encoded.WrittenMemory, isControl, isCritical);
     }
 
     private bool TryEnqueueObjectLocked<T>(string kind, T payload, bool isControl, long sequence,
@@ -306,7 +318,7 @@ public sealed class PipePublisher : IAsyncDisposable
             _failure ??= $"frame_serialization_failed: {ex.GetType().Name}";
             return false;
         }
-        return TryQueueLineLocked(encoded.WrittenMemory, isControl);
+        return TryQueueLineLocked(encoded.WrittenMemory, isControl, isCritical: false);
     }
 
     private static void AppendNewline(ArrayBufferWriter<byte> encoded)
@@ -315,11 +327,13 @@ public sealed class PipePublisher : IAsyncDisposable
         encoded.Advance(1);
     }
 
-    private bool TryQueueLineLocked(ReadOnlyMemory<byte> line, bool isControl)
+    private bool TryQueueLineLocked(ReadOnlyMemory<byte> line, bool isControl, bool isCritical)
     {
         if (line.Length > MaxEnvelopeBytes) return false;
-        var itemLimit = isControl ? _queueCapacity : _queueCapacity - _controlReserveSlots;
-        var byteLimit = isControl ? _maxQueueBytes : _maxQueueBytes - _controlReserveBytes;
+        var itemLimit = isCritical ? _queueCapacity :
+            isControl ? _queueCapacity - _criticalReserveSlots : _queueCapacity - _controlReserveSlots;
+        var byteLimit = isCritical ? _maxQueueBytes :
+            isControl ? _maxQueueBytes - _criticalReserveBytes : _maxQueueBytes - _controlReserveBytes;
         if (_queue.Count >= itemLimit || _queuedBytes + line.Length > byteLimit) return false;
         _queue.Enqueue(line);
         _queuedBytes += line.Length;
