@@ -43,4 +43,4 @@ The supplied 0.1.5 recording establishes successful writer/transport operation a
 
 ## Installed-machine handling
 
-The guarded installer placed the 0.1.7 DLLs in the inspected game copy and wrote a verified install receipt; the game process that logged zero plugins had already started. The 0.1.9 package has not yet been built or installed. Leave BepInEx and generated interop intact during rollback.
+The inspected game copy now has a receipt-verified 0.1.8 install. Version 0.1.9 was built with its package manifest and hashes verified, and its 0.1.8-to-0.1.9 upgrade/rollback was exercised on a disposable fixture; 0.1.9 has not been installed into the game. Leave BepInEx and generated interop intact during rollback.
