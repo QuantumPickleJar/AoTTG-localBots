@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from analyze_flight import analyze  # noqa: E402
 from flight_transport import (  # noqa: E402
+    DISCONNECT_RECONNECT_GRACE_SECONDS,
     FlightTransportReceiver,
     MAX_ENVELOPE_BYTES,
     PROTOCOL,
@@ -180,6 +181,46 @@ class FlightTransportTests(unittest.TestCase):
         self.assertTrue(second_metadata["capture_complete"])
         self.assertEqual(analyze(second_dir, self.root / "second-run-analysis")["integrity_status"],
                          "verified")
+
+    def test_disconnected_run_finalizes_incomplete_after_reconnect_grace(self):
+        self.receiver.accept_line(hello(self.run_id), new_pipe_connection=True)
+        self.receiver.accept_line(envelope(self.run_id, 2, "frame", frame(1, 0.02, 0.0)))
+        self.receiver.note_client_disconnected(now=100.0)
+
+        self.assertFalse(self.receiver.finalize_disconnected_if_expired(
+            now=100.0 + DISCONNECT_RECONNECT_GRACE_SECONDS - 0.01))
+        self.assertFalse(self.receiver.stopped)
+        self.assertTrue(self.receiver.finalize_disconnected_if_expired(
+            now=100.0 + DISCONNECT_RECONNECT_GRACE_SECONDS))
+        self.assertTrue(self.receiver.stopped)
+
+        run_dir = self.root / "recordings" / f"run-{self.run_id}"
+        metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+        state = json.loads((run_dir / "writer_state.json").read_text(encoding="utf-8"))
+        self.assertFalse(metadata["capture_complete"])
+        self.assertTrue(any(item["reason"] == "producer_disconnected_before_stop"
+                            for item in metadata["incomplete_reasons"]))
+        self.assertTrue(state["is_final"])
+        self.assertEqual(analyze(run_dir, self.root / "disconnected-run-analysis")["integrity_status"],
+                         "verified")
+
+    def test_same_run_reconnect_cancels_disconnect_finalization(self):
+        self.receiver.accept_line(hello(self.run_id), new_pipe_connection=True)
+        self.receiver.accept_line(envelope(self.run_id, 2, "frame", frame(1, 0.02, 0.0)))
+        self.receiver.note_client_disconnected(now=100.0)
+
+        self.assertTrue(self.receiver.accept_line(hello(self.run_id), new_pipe_connection=True))
+        self.assertFalse(self.receiver.finalize_disconnected_if_expired(
+            now=100.0 + DISCONNECT_RECONNECT_GRACE_SECONDS + 1.0))
+        self.assertTrue(self.receiver.accept_line(envelope(
+            self.run_id, 3, "frame", frame(2, 0.04, 1.0))))
+        self.assertFalse(self.receiver.accept_line(envelope(self.run_id, 4, "stop", {
+            "graceful": True, "reason": "game_shutdown", "dropped_frames": 0,
+            "dropped_control_messages": 0,
+        })))
+        run_dir = self.root / "recordings" / f"run-{self.run_id}"
+        metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertTrue(metadata["capture_complete"])
 
     def test_partial_il2cpp_capture_payload_keeps_provenance_and_optional_fields(self):
         hello_payload = {

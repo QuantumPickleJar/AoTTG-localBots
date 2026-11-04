@@ -30,6 +30,7 @@ PROTOCOL = "aicadets.flight.transport.v1"
 FLIGHT_SCHEMA = "aicadets.flight.v1"
 MAX_ENVELOPE_BYTES = 1024 * 1024
 MAX_READ_BYTES = 64 * 1024
+DISCONNECT_RECONNECT_GRACE_SECONDS = 5.0
 MAX_SEQUENCE = 2**63 - 1
 KINDS = {"hello", "frame", "event", "lifecycle", "gap", "health", "stop"}
 _PIPE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
@@ -137,6 +138,28 @@ class FlightTransportReceiver:
         self.stopped = False
         self._seen: OrderedDict[int, bytes] = OrderedDict()
         self._lock = threading.RLock()
+        self._disconnected_at: float | None = None
+
+    def note_client_disconnected(self, *, now: float | None = None) -> None:
+        """Start a bounded grace period in which the producer may reconnect."""
+        with self._lock:
+            if self.writer is not None and not self.stopped and self._disconnected_at is None:
+                self._disconnected_at = time.monotonic() if now is None else now
+
+    def finalize_disconnected_if_expired(self, *, now: float | None = None) -> bool:
+        """Finalize an orphaned run after its reconnect window."""
+        with self._lock:
+            if self.writer is None or self.stopped or self._disconnected_at is None:
+                return False
+            current_time = time.monotonic() if now is None else now
+            if current_time - self._disconnected_at < DISCONNECT_RECONNECT_GRACE_SECONDS:
+                return False
+            self._disconnected_at = None
+            self.close_uncleanly("producer_disconnected_before_stop", details={
+                "last_received_sequence": self.last_sequence,
+                "reconnect_grace_seconds": DISCONNECT_RECONNECT_GRACE_SECONDS,
+            })
+            return True
 
     def _mark_incomplete(self, reason: str, details: Mapping[str, Any] | None = None) -> None:
         if self.writer is not None:
@@ -174,6 +197,8 @@ class FlightTransportReceiver:
                 payload = envelope["payload"]
                 if kind == "hello" and payload.get("writer_schema") != FLIGHT_SCHEMA:
                     raise TransportProtocolError("producer does not declare aicadets.flight.v1 compatibility")
+                if new_pipe_connection and kind == "hello":
+                    self._disconnected_at = None
                 if self.run_id is not None and run_id != self.run_id:
                     if not (new_pipe_connection and kind == "hello" and sequence == 1):
                         raise TransportProtocolError("run_id changed within one pipe connection")
@@ -496,9 +521,15 @@ class WindowsNamedPipeServer:
             if not ok:
                 error = ctypes.get_last_error()
                 if error == 232:  # ERROR_NO_DATA: nonblocking pipe has no bytes yet.
+                    if self.receiver.finalize_disconnected_if_expired():
+                        print("Flight Recorder finalized the disconnected run as incomplete after the reconnect grace period.", flush=True)
+                        self.stop()
+                        return
                     self._stopping.wait(0.005)
                     continue
                 if error in (109, 233):  # broken/disconnected client
+                    self.receiver.note_client_disconnected()
+                    print(f"Flight Recorder producer disconnected; waiting {DISCONNECT_RECONNECT_GRACE_SECONDS:.1f}s for reconnect.", flush=True)
                     return
                 raise ctypes.WinError(error)
             if not read_count.value:
@@ -589,6 +620,10 @@ class WindowsNamedPipeServer:
                         connected_to_client = True
                         break
                     if error == 536:  # ERROR_PIPE_LISTENING (PIPE_NOWAIT); retain this instance.
+                        if self.receiver.finalize_disconnected_if_expired():
+                            print("Flight Recorder finalized the disconnected run as incomplete after the reconnect grace period.", flush=True)
+                            self.stop()
+                            break
                         self._stopping.wait(0.01)
                         continue
                     if error == 232:  # Client connected and closed before the server observed it.

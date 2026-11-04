@@ -22,6 +22,12 @@ if ([string]::IsNullOrWhiteSpace([string]$receiverConfig.pipe_name) -or
     [string]::IsNullOrWhiteSpace([string]$receiverConfig.output_dir)) {
     throw "Receiver config must specify pipe_name and output_dir."
 }
+$outputDirectory = [string]$receiverConfig.output_dir
+if (-not [System.IO.Path]::IsPathRooted($outputDirectory)) {
+    $outputDirectory = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $config) $outputDirectory))
+} else {
+    $outputDirectory = [System.IO.Path]::GetFullPath($outputDirectory)
+}
 
 if ([string]::IsNullOrWhiteSpace($PythonExe)) {
     $PythonExe = Join-Path $package "runtime\python.exe"
@@ -63,5 +69,6 @@ catch {
 Write-Output "Receiver is listening on the configured local pipe."
 Write-Output "PID: $($process.Id)"
 Write-Output "Pipe: $($receiverConfig.pipe_name)"
+Write-Output "Output directory: $outputDirectory"
 Write-Output "Stdout: $stdout"
 Write-Output "Stderr: $stderr"
