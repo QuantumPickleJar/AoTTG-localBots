@@ -28,6 +28,7 @@ from urllib.parse import quote
 SCHEMA = "aicadets.flight.v1"
 MANIFEST_SCHEMA = "aicadets.flight.chunk-index.v1"
 WRITER_VERSION = "0.1.0"
+_ATOMIC_REPLACE_RETRY_DELAYS = (0.025, 0.05, 0.1, 0.2, 0.4, 0.8)
 _RESERVED_SAMPLE_KEYS = {"id", "kind", "pos", "vel", "rot", "ang_vel", "state", "ai_state"}
 _RESERVED_EVENT_KEYS = {
     "type", "event", "t", "step", "id", "actor", "ids", "correlation_id",
@@ -534,7 +535,16 @@ class FlightRecorderWriter:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp, path)
+        for attempt in range(len(_ATOMIC_REPLACE_RETRY_DELAYS) + 1):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if attempt >= len(_ATOMIC_REPLACE_RETRY_DELAYS):
+                    raise
+                # Windows scanners and short-lived readers can briefly deny a rename.
+                # Retry on the writer thread only; capture callbacks never block here.
+                time.sleep(_ATOMIC_REPLACE_RETRY_DELAYS[attempt])
 
     def _logical_directory_bytes(self) -> int:
         """Count persisted bytes plus buffered chunk bytes in the current run."""
@@ -1025,6 +1035,12 @@ class FlightRecorderWriter:
                     "control_queue_reserve_slots": self.control_queue_reserve_slots,
                     "control_queue_reserve_bytes": self.control_queue_reserve_bytes,
                     "payload_bytes": self._payload_bytes}
+
+    @property
+    def worker_failed(self) -> bool:
+        """Whether the asynchronous writer worker has entered its fatal path."""
+        with self._lock:
+            return self._worker_error is not None
 
     def close(self, timeout: float | None = 30.0) -> dict[str, Any]:
         with self._lock:

@@ -1,10 +1,12 @@
 """Deterministic fault and format checks for the Unity-independent writer."""
 import json
+import os
 import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -69,6 +71,25 @@ class FlightWriterTests(unittest.TestCase):
         self.assertEqual(report["frames"], 1)
         record = json.loads(next((self.root / "run").glob("chunk-*.jsonl")).read_text().splitlines()[0])
         self.assertEqual(record["samples"][0]["nested"]["trail"], [1, 2])
+
+    def test_atomic_json_replace_retries_transient_permission_error(self):
+        writer = self.make_writer("replace_retry")
+        path = writer.output_dir / "retry-probe.json"
+        real_replace = os.replace
+        calls = {"count": 0}
+
+        def transient_replace(source, destination):
+            calls["count"] += 1
+            if calls["count"] <= 2:
+                raise PermissionError(5, "Access is denied", str(destination))
+            return real_replace(source, destination)
+
+        with patch("flight_writer.os.replace", side_effect=transient_replace):
+            writer._write_json_atomic(path, {"retry": "recovered"})
+
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"retry": "recovered"})
+        writer.close()
 
     def test_stable_ids_change_after_despawn_and_reuse_of_source_handle(self):
         registry = StableEntityRegistry()

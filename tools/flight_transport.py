@@ -23,7 +23,7 @@ import uuid
 from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flight_writer import EntityLifecycleRecord, EntitySample, FlightRecorderWriter, FrameSnapshot, RecorderEvent
+from flight_writer import EntityLifecycleRecord, EntitySample, FlightRecorderWriter, FrameSnapshot, RecorderEvent, WriterError
 
 
 PROTOCOL = "aicadets.flight.transport.v1"
@@ -140,7 +140,13 @@ class FlightTransportReceiver:
 
     def _mark_incomplete(self, reason: str, details: Mapping[str, Any] | None = None) -> None:
         if self.writer is not None:
-            self.writer.mark_incomplete(reason, details=details)
+            try:
+                self.writer.mark_incomplete(reason, details=details)
+            except WriterError:
+                # The worker's fatal path already records writer_error where possible.
+                # Do not mask that first failure with a secondary closing-state error.
+                if not self.writer.worker_failed:
+                    raise
 
     def _record_sequence_gap(self, first: int, last: int, received: int, payload: Mapping[str, Any]) -> None:
         details = {"first_missing_sequence": first, "last_missing_sequence": last,
@@ -356,7 +362,12 @@ class FlightTransportReceiver:
             if self.writer is None or self.stopped:
                 return None
             self._mark_incomplete(reason, details=details)
-            stats = self.writer.close()
+            try:
+                stats = self.writer.close()
+            except WriterError:
+                if not self.writer.worker_failed:
+                    raise
+                stats = self.writer.stats()
             self.stopped = True
             return stats
 

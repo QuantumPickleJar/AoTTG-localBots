@@ -2,6 +2,7 @@
 import json
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -126,6 +127,31 @@ class FlightTransportTests(unittest.TestCase):
         self.assertFalse(metadata["capture_complete"])
         self.assertTrue(any(item["reason"] == "transport_message_sequence_gap"
                             for item in metadata["incomplete_reasons"]))
+
+    def test_worker_failure_is_preserved_without_receiver_cleanup_cascade(self):
+        self.receiver.accept_line(hello(self.run_id))
+        writer = self.receiver.writer
+
+        def fail_checkpoint():
+            raise PermissionError(5, "Access is denied", "writer_state.json")
+
+        writer._checkpoint_durable = fail_checkpoint
+        writer.checkpoint_interval = 0.0
+        self.receiver.accept_line(envelope(self.run_id, 2, "frame", frame(0, 0.0, 0.0)))
+
+        deadline = time.monotonic() + 3.0
+        while not writer.worker_failed and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertTrue(writer.worker_failed, "writer worker did not enter the injected fatal path")
+
+        stats = self.receiver.close_uncleanly("receiver_fatal_error")
+        self.assertTrue(self.receiver.stopped)
+        self.assertIn("PermissionError", stats["fatal_error"])
+        run_dir = self.root / "recordings" / f"run-{self.run_id}"
+        metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertFalse(metadata["capture_complete"])
+        self.assertEqual(metadata["stop_reason"], "writer_error")
+        self.assertIn("PermissionError", metadata["writer_error"])
 
     def test_new_producer_run_finalizes_disconnected_run_before_accepting_hello(self):
         first_run_id = uuid.uuid4().hex
