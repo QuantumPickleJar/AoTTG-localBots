@@ -9,8 +9,16 @@ $pluginsRoot = (Resolve-Path -LiteralPath (Join-Path $root "BepInEx\plugins")).P
 $target = Join-Path $pluginsRoot "AoTTG2FlightRecorder"
 if (-not (Test-Path -LiteralPath $target -PathType Container)) { throw "Recorder plugin folder is not present: $target" }
 $resolvedTarget = (Resolve-Path -LiteralPath $target).Path
-if (-not $resolvedTarget.StartsWith($pluginsRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing removal because the resolved target is outside BepInEx/plugins."
+$expectedTarget = [IO.Path]::GetFullPath((Join-Path $pluginsRoot "AoTTG2FlightRecorder"))
+if (-not [string]::Equals($resolvedTarget, $expectedTarget, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing removal because the resolved target does not match the recorder folder under BepInEx/plugins."
+}
+$gameExecutable = [IO.Path]::GetFullPath((Join-Path $root "Aottg2.exe"))
+$runningGames = @(Get-CimInstance Win32_Process -Filter "Name = 'Aottg2.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and [string]::Equals(
+        [IO.Path]::GetFullPath($_.ExecutablePath), $gameExecutable, [StringComparison]::OrdinalIgnoreCase) })
+if ($runningGames.Count -gt 0) {
+    throw "Close this AoTTG2 game copy before removing the recorder. No files were changed: $gameExecutable"
 }
 
 $manifestPath = Join-Path $resolvedTarget "install-manifest.json"
@@ -19,6 +27,12 @@ $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if ($manifest.schema -ne "aicadets.flight.plugin-install.v1" -or
     $manifest.install_root_relative -ne "BepInEx/plugins/AoTTG2FlightRecorder") {
     throw "Install manifest does not identify this recorder package."
+}
+$requiredNames = @("AoTTG2.FlightRecorder.dll", "FlightRecorder.TransportClient.dll")
+$manifestNames = @($manifest.files | ForEach-Object { [string]$_.path })
+if ($manifestNames.Count -ne $requiredNames.Count -or
+    @($requiredNames | Where-Object { $_ -notin $manifestNames }).Count -ne 0) {
+    throw "Install manifest does not list exactly the two recorder DLLs; refusing removal."
 }
 
 $expected = @{}

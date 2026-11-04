@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.7";
+    public const string PluginVersion = "0.1.8";
     private const string RequiredUnityVersion = "2023.1.22f1";
     private const string CapturePhase = "fixed_update_pre_physics_order_unspecified";
     private static readonly JsonSerializerOptions JsonOptions = new()

@@ -1,6 +1,6 @@
 # Flight Recorder adapter and installed-build audit
 
-**State:** The read-only Unity IL2CPP adapter, local named-pipe producer, and Python writer bridge are implemented in PR #16, now based on `main` after PR #15 merged. Version 0.1.7 retains offline Titan-death attribution and direct frame serialization, and adds protected queue capacity for gap accounting and an incomplete stop record after ordinary control overflow. M2 gameplay is unchanged. The adapter is opt-in and not yet accepted as an M2 sensor; a fresh 0.1.7 private performance/phase capture is still required.
+**State:** The read-only Unity IL2CPP adapter, local named-pipe producer, and Python writer bridge are implemented in PR #16, now based on `main` after PR #15 merged. Version 0.1.8 retains offline Titan-death attribution, direct frame serialization, and protected queue capacity; its installer upgrades prior receipt-verified installations automatically. M2 gameplay is unchanged. The adapter is opt-in and not yet accepted as an M2 sensor; a fresh 0.1.8 private performance/phase capture is still required.
 
 ## Installed build findings
 
@@ -20,7 +20,7 @@ The H3VR BepInEx 5 Mono profile was not copied. AoTTG2 uses a separate BepInEx I
 
 Use BepInEx IL2CPP with an injected MonoBehaviour sampled from FixedUpdate. This route is supported by the successful BepInEx 6.0.0-be.791 start and interop generation on this exact IL2CPP build. Capture refuses any runtime other than x64 Unity 2023.1.22f1.
 
-The adapter copies Unity/game values to primitive JSON-compatible data on Unity's callback thread. Version 0.1.7 serializes the frame DTO once into a bounded UTF-8 envelope; a bounded .NET producer sends it over a local Windows named pipe, and the existing Python receiver calls tools/flight_writer.py. The pipe worker never calls Unity APIs. Ordinary frame and control traffic cannot consume the final two queue slots or 16 KiB reserved for frame-gap accounting and a stop record. If event traffic still overflows, the capture remains incomplete and the stop payload includes the transport failure and queue high-water marks when it can be delivered. Messages use aicadets.flight.v1 and its existing hashed chunk manifest. No transforms, physics properties, inputs, game state, or controller decisions are written or changed by the plugin. The optimization requires a new installed-game performance measurement.
+The adapter copies Unity/game values to primitive JSON-compatible data on Unity's callback thread. Version 0.1.8 serializes the frame DTO once into a bounded UTF-8 envelope; a bounded .NET producer sends it over a local Windows named pipe, and the existing Python receiver calls tools/flight_writer.py. The pipe worker never calls Unity APIs. Ordinary frame and control traffic cannot consume the final two queue slots or 16 KiB reserved for frame-gap accounting and a stop record. If event traffic still overflows, the capture remains incomplete and the stop payload includes the transport failure and queue high-water marks when it can be delivered. The installer replaces a prior receipt-verified installation only after checking its hashes and contents, and refuses to alter an unmanaged or changed folder. Messages use aicadets.flight.v1 and its existing hashed chunk manifest. No transforms, physics properties, inputs, game state, or controller decisions are written or changed by the plugin. The optimization requires a new installed-game performance measurement.
 
 ## Current capture coverage
 
@@ -38,7 +38,7 @@ The registry is refreshed by a whole-scene census every configured 0.5 seconds, 
 
 ## Explicitly unavailable or unverified
 
-Moving environment geometry; Titan collision callbacks; direct attack/damage/death/rescue events; structured M2 commands/personality decisions; complete actor coverage; relative script order; and 0.1.7 mission performance/REC-I calibration. Health and dead fields are sampled and are not promoted to event callbacks. Existing M2 key/value logs are not fabricated into complete decisions. Private/local-host testing is required.
+Moving environment geometry; Titan collision callbacks; direct attack/damage/death/rescue events; structured M2 commands/personality decisions; complete actor coverage; relative script order; and 0.1.8 mission performance/REC-I calibration. Health and dead fields are sampled and are not promoted to event callbacks. Existing M2 key/value logs are not fabricated into complete decisions. Private/local-host testing is required.
 
 ## Build and transport
 
@@ -53,8 +53,8 @@ Package install/rollback details are in [FLIGHT_RECORDER_IL2CPP_PACKAGE_README.m
 | Level | Result | Establishes |
 |---|---|---|
 | 1 — Offline | 115 Python tests pass; transport builds for .NET 6 and .NET 8; ordered-pipe/backpressure smoke covers slot and byte critical-reserve exhaustion; Windows pipe-to-writer recovery smoke passes; the Unity plug-in builds against installed interop. | Compilation and synthetic data through hashed writer chunks; no game-performance claim. |
-| 2 — Installed-runtime smoke | 0.1.5 passed a main-menu smoke. The supplied 0.1.5 gameplay trace has 56,970 ordered frames, verified chunks, 209 collision callbacks, and a complete writer stop. A later 0.1.5 log records `control_reserve_exhausted_before_frame_gap` and is a failed/incomplete attempt. | 0.1.7 has not been installed or smoke-tested; a controlled installed-runtime startup and shutdown remain required. |
-| 3 — REC-I gameplay calibration | 0.1.5 later-window p95 was 1.8008 ms at 20 ms fixedDeltaTime, above the 1.0 ms limit. The updated analyzer leaves 174 velocity changes unresolved. 0.1.7 is not yet measured in-game. | Requires a new private session, p95/max measurement, zero transport losses, verified chunks, motion cross-check, and phase/coverage review. Preserve startup and steady-state health windows separately. |
+| 2 — Installed-runtime smoke | 0.1.5 passed a main-menu smoke. The supplied 0.1.5 gameplay trace has 56,970 ordered frames, verified chunks, 209 collision callbacks, and a complete writer stop. A later 0.1.5 log records `control_reserve_exhausted_before_frame_gap` and is a failed/incomplete attempt. The 0.1.7 files are now installed on disk; the current game process started before installation and logged zero plugins. | 0.1.8 has not been installed or smoke-tested, and runtime loading of the on-disk 0.1.7 DLLs remains unconfirmed until restart. |
+| 3 — REC-I gameplay calibration | 0.1.5 later-window p95 was 1.8008 ms at 20 ms fixedDeltaTime, above the 1.0 ms limit. The updated analyzer leaves 174 velocity changes unresolved. 0.1.8 is not measured in-game. | Requires a new private session, p95/max measurement, zero transport losses, verified chunks, motion cross-check, and phase/coverage review. Preserve startup and steady-state health windows separately. |
 
 ## References
 
