@@ -1,8 +1,8 @@
 # Validation Card — M2 Direct movement and recovery follow-up
 
-SESSION: `M2-DIRECT-RECOVERY-20261105-016`  
-STATUS: Card created before the next gameplay run. No post-patch live result is claimed.  
-SCOPE: Single-cadet M2 `Engage + Direct`, grounded pursuit, bounded opposite-side recovery, Hold interruption, Engine comparison, recorder performance/timing, and watcher rotation. No multi-cadet, rescue, personality, or M3 gameplay.  
+SESSION: `M2-DIRECT-RECOVERY-20261105-016`
+STATUS: Card created before the next gameplay run. No post-patch live result is claimed.
+SCOPE: Single-cadet M2 `Engage + Direct`, grounded pursuit, bounded opposite-side recovery, Hold interruption, Engine comparison, recorder performance/timing, and watcher rotation. No multi-cadet, rescue, personality, or M3 gameplay.
 NON-GOALS: No mission-script or M1 changes, no attack/damage semantics changes, no synthetic movement/physics, no recorder or watcher implementation mixed into the gameplay change.
 
 ## Build and session facts to capture
