@@ -95,11 +95,11 @@ If locomotion reaches an attack window, record attack attempts and observed anim
 - Watcher rotation: **partial**; linked files are below the limit and PersistentData keys are preserved, but the in-game console warning check is unverified.
 - Hold, post-Hold Engage/Explore, Engine comparison, controlled physics calibration, and video: **not run / not captured**.
 - User confirmed the `m2-0` session was private and had only them present; exact active add-ons, map/mode, effective driver, and master-host status remain unobserved.
-- Recorder 0.1.13 diagnostic/performance candidate: **in progress**, pending build/package/install and a fresh actor-loaded run.
+- Recorder 0.1.13 diagnostic/performance candidate: **static/build/package/install pass**; fresh actor-loaded performance and timing-calibration runs remain open.
 
 ## Next user-operated validation card
 
-The separate follow-up card `2026-11-04-M2-opposite-retry-and-recorder-013.md` is created before the next gameplay run. Use the new WaveCadet build tag `M2-locomotion-1-f8combo-5-shorter-opposite-retry` and recorder 0.1.13 only after its package manifest is verified and the guarded install completes with the game closed. The primary gate is the same-target, one opposite-side retry at the W3-style corner; if no safe opposite goal is found, record `reposition_retry_blocked` and verify bounded observation/no third command. Also capture an actor-loaded recorder run. Other required variants remain listed on that card; do not infer unrun results.
+The separate follow-up card `2026-11-04-M2-opposite-retry-and-recorder-013.md` was created before the next gameplay run. WaveCadet build tag `M2-locomotion-1-f8combo-5-shorter-opposite-retry` (commit `a5c0b81f9bbf13b4ce1be05c02c4a6c9f50cf0dc`) is deployed with SHA-256 `866C3BC8B3C9DDA0465633EB85B5B4E7D8C188B79CDD14FA53FA3FFB185C2CA9`. Recorder 0.1.13 package source `e0e216dd518cad9569447cd18e7bccc206d94aac` passed its 50-file manifest and 51-file ZIP checks; ZIP SHA-256 `8C7371859C2EE41F6AECEA34915A8A17B9F603B173A9AE00A2B32675F48021F6`. Installed plugin SHA-256 `E5E331BDFCEF4BDE89CF4A29EA2227998C7A8E503F969B0279A0D74A2B97B314`; transport SHA-256 `DF25B8322B8CCEE6BE6444A8053125C33D49A90DE58128A319511CB14634EF9A`; capture is disabled. The primary gate is the same-target, one opposite-side retry at the W3-style corner; if no safe opposite goal is found, record `reposition_retry_blocked` and verify bounded observation/no third command. Also capture an actor-loaded recorder run. Other required variants remain listed on that card; do not infer unrun results.
 
 ## Rollback
 

@@ -4,7 +4,8 @@ SESSION: `M2-DIRECT-RECOVERY-20261104-FOLLOWUP`
 SCOPE: Single-cadet M2 grounded Direct pursuit, one bounded opposite-side recovery retry, interruption, recorder performance/timing, and watcher rotation. No multi-cadet, rescue, personality, or M3 gameplay.
 GAME: AoTTG2 product build `1.2.3` / Unity `2023.1.22f1` observed in the previous run. Reconfirm the actual build after restart.
 M2: `M2-locomotion-1-f8combo-5-shorter-opposite-retry`; feature commit `a5c0b81f9bbf13b4ce1be05c02c4a6c9f50cf0dc`; record the deployed `.cl` SHA-256 before play.
-RECORDER: 0.1.13 diagnostic candidate; record the source commit, package ZIP SHA-256, manifest verification, installed DLL hashes, and run IDs before play. Capture disabled outside the opted-in private run.
+RECORDER: 0.1.13 installed diagnostic candidate, source commit `e0e216dd518cad9569447cd18e7bccc206d94aac`. Package manifest: 50 files verified; archive: 51 files. ZIP SHA-256 `8C7371859C2EE41F6AECEA34915A8A17B9F603B173A9AE00A2B32675F48021F6`. Installed plugin SHA-256 `E5E331BDFCEF4BDE89CF4A29EA2227998C7A8E503F969B0279A0D74A2B97B314`; transport SHA-256 `DF25B8322B8CCEE6BE6444A8053125C33D49A90DE58128A319511CB14634EF9A`. Capture was disabled after install and remains disabled until the private run.
+DEPLOYED ADD-ONS: WaveCadet `866C3BC8B3C9DDA0465633EB85B5B4E7D8C188B79CDD14FA53FA3FFB185C2CA9`; CommandPanel `8E6EB2B708F6A67BF7C9D5D7E0BD23B9DCBA1418910239CBDAAE6AE96EC1E17C`; M2Watcher `B6BD148511EA59203F6A3ACBFE0C8886E73C32C6CF4E71D08D9DBE15CCC24489`.
 
 ## Preconditions
 
