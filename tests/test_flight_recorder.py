@@ -91,6 +91,7 @@ class FlightTest(unittest.TestCase):
             "capture_complete": False,
             "installed_build_fingerprint": {"unity_version": "2023.1.22f1", "architecture": "x64"},
             "runtime_observation_phase": "fixed_update_pre_physics_order_unspecified",
+            "physics_simulation_mode": "FixedUpdate",
             "sample_phase_verified": False,
             "step_source": "adapter FixedUpdate callback ordinal",
             "timestamp_clock": "UnityEngine.Time.fixedTimeAsDouble",
@@ -107,6 +108,7 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(result["game_build"], "2023.1.22f1 / x64")
         self.assertFalse(result["sample_phase_verified"])
         self.assertEqual(result["runtime_observation_phase"], "fixed_update_pre_physics_order_unspecified")
+        self.assertEqual(result["physics_simulation_mode"], "FixedUpdate")
         self.assertEqual(result["incomplete_reasons"][0]["reason"], "receiver_interrupted")
         self.assertIn("receiver_interrupted", report)
         self.assertNotIn("has not yet been installed", report)
@@ -145,7 +147,10 @@ class FlightTest(unittest.TestCase):
              "capture_work_ms_maximum": 59.9, "queue_depth": 3, "queue_bytes": 768},
             {"type": "event", "event": "producer_health", "step": 3, "t": 0.06,
              "wall_monotonic_elapsed_seconds": 25.0, "capture_work_ms_p95": 1.001,
-             "capture_work_ms_maximum": 60.1, "queue_depth": 4, "queue_bytes": 1024},
+             "capture_work_ms_maximum": 60.1, "queue_depth": 4, "queue_bytes": 1024,
+             "capture_discovery_ms_p95": 0.8, "capture_discovery_ms_maximum": 2.0,
+             "capture_frame_sampling_ms_p95": 0.15, "capture_frame_sampling_ms_maximum": 0.3,
+             "capture_transport_ms_p95": 0.04, "capture_transport_ms_maximum": 0.1},
         ]
         (src / "metadata.json").write_text(json.dumps(metadata))
         (src / "000001.jsonl").write_text("\n".join(json.dumps(row) for row in [frame, *health]) + "\n")
@@ -162,6 +167,9 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(performance["producer_queue_max_sampled_depth"], 4)
         self.assertEqual(performance["writer_queue_high_water_depth"], 4)
         self.assertEqual(performance["writer_queue_high_water_bytes"], 2048)
+        self.assertEqual(performance["stage_capture_work"]["discovery"]["worst_post_15s_p95_ms"], 0.8)
+        self.assertEqual(performance["stage_capture_work"]["discovery"]["maximum_rolling_sample_ms"], 2.0)
+        self.assertIn("Capture stage discovery:", report)
         self.assertFalse(result["sample_phase_verified"])
         self.assertIn("Calibration result: not performed; observation phase remains unverified.", report)
         self.assertIn("maximum reported capture-work sample exceeds 60.0 ms", report)

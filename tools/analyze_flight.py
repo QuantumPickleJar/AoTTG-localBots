@@ -61,6 +61,11 @@ def nonnegative_count(value):
 
 def producer_health_summary(records, metadata, fixed_delta_times, entity_count,
                             producer_queue_capacity=None, producer_queue_max_bytes=None):
+    capture_stages = {
+        "discovery": "capture_discovery_ms",
+        "frame_sampling": "capture_frame_sampling_ms",
+        "serialization_and_queue": "capture_transport_ms",
+    }
     valid = []
     for record in records:
         game_time = finite_number(record.get("t"))
@@ -73,12 +78,29 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count,
                       "wall_monotonic_elapsed_seconds": wall_time,
                       "capture_work_ms_p95": p95,
                       "capture_work_ms_maximum": maximum})
+        for prefix in capture_stages.values():
+            for statistic in ("p95", "maximum"):
+                field = f"{prefix}_{statistic}"
+                value = finite_number(record.get(field))
+                if value is not None:
+                    valid[-1][field] = value
 
     post_start = [record for record in valid
                   if record["wall_monotonic_elapsed_seconds"] > CAPTURE_PERFORMANCE_STARTUP_SECONDS]
     worst_p95 = max(post_start, key=lambda record: record["capture_work_ms_p95"], default=None)
     worst_sample = max(valid, key=lambda record: record["capture_work_ms_maximum"], default=None)
     max_sample_post_start = max(post_start, key=lambda record: record["capture_work_ms_maximum"], default=None)
+    stage_capture_work = {}
+    for name, prefix in capture_stages.items():
+        stage_records = [record for record in post_start
+                         if finite_number(record.get(f"{prefix}_p95")) is not None
+                         and finite_number(record.get(f"{prefix}_maximum")) is not None]
+        stage_capture_work[name] = {
+            "worst_post_15s_p95_ms": max(
+                (record[f"{prefix}_p95"] for record in stage_records), default=None),
+            "maximum_rolling_sample_ms": max(
+                (record[f"{prefix}_maximum"] for record in stage_records), default=None),
+        }
     writer_stats = metadata.get("writer_stats", {})
     writer_limits = metadata.get("writer_limits", {})
     if not isinstance(writer_stats, dict):
@@ -170,8 +192,12 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count,
         "worst_post_15s_p95_window": ({"step": worst_p95.get("step"), "t": worst_p95.get("t"),
                                         "wall_monotonic_elapsed_seconds": worst_p95.get("wall_monotonic_elapsed_seconds"),
                                         "capture_work_ms_p95": worst_p95.get("capture_work_ms_p95"),
-                                        "capture_work_ms_maximum": worst_p95.get("capture_work_ms_maximum")}
+                                        "capture_work_ms_maximum": worst_p95.get("capture_work_ms_maximum"),
+                                        **{f"{prefix}_{statistic}": worst_p95.get(f"{prefix}_{statistic}")
+                                           for prefix in capture_stages.values()
+                                           for statistic in ("p95", "maximum")}}
                                        if worst_p95 else None),
+        "stage_capture_work": stage_capture_work,
         "maximum_reported_sample_ms": worst_sample["capture_work_ms_maximum"] if worst_sample else None,
         "maximum_reported_sample_window": ({"step": worst_sample.get("step"), "t": worst_sample.get("t"),
                                              "wall_monotonic_elapsed_seconds": worst_sample.get("wall_monotonic_elapsed_seconds"),
@@ -808,6 +834,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
                    "capture_tier": metadata.get("capture_tier", "unverified"),
                    "game_build": build_name,
                    "runtime_observation_phase": metadata.get("runtime_observation_phase", "unknown"),
+                   "physics_simulation_mode": metadata.get("physics_simulation_mode", "unknown"),
                    "sample_phase_verified": bool(metadata.get("sample_phase_verified", False)),
                    "step_source": metadata.get("step_source", "unknown"),
                    "timestamp_clock": metadata.get("timestamp_clock", "unknown"),
@@ -856,6 +883,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
                 f"- Missing per-entity steps (raw): {missing_track_steps}",
                 f"- Malformed records: {parse_errors}", f"- Capture complete flag: {summary['capture_complete']}",
                 f"- Observation phase: `{summary['runtime_observation_phase']}` (verified: {summary['sample_phase_verified']})",
+                f"- Physics simulation mode: `{summary['physics_simulation_mode']}`",
                 f"- Step source: `{summary['step_source']}`",
                 "", "## Anomalies (bounded sample)", ""]
         rows += [f"- `{k}`: {v}" for k, v in top.most_common()] or ["- None flagged"]
@@ -885,6 +913,8 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
                  f"- Reported drops: frames {perf['reported_dropped_frames']}, entity samples {perf['reported_dropped_entity_samples']}, control messages {perf['reported_dropped_control_messages']}",
                  f"- Tracked entities: {perf['tracked_entities']}"]
         rows += [f"- Gate finding: {reason}" for reason in perf["gate_reasons"]] or ["- Gate findings: all recorded thresholds passed."]
+        rows += [f"- Capture stage {stage}: worst post-start p95 {values['worst_post_15s_p95_ms']} ms; maximum rolling sample {values['maximum_rolling_sample_ms']} ms"
+                 for stage, values in perf["stage_capture_work"].items()]
         timing = summary["timing_and_calibration"]
         rows += ["", "## Timing and calibration", "",
                  f"- Frame-step gap incidents: {timing['frame_step_gap_occurrences']}; nonmonotonic game-time incidents: {timing['nonmonotonic_frame_time_occurrences']}; fixed-step time mismatches: {timing['fixed_step_time_mismatch_occurrences']}",

@@ -229,6 +229,7 @@ class FlightTransportTests(unittest.TestCase):
             "writer_schema": "aicadets.flight.v1",
             "capture_tier": "partial_il2cpp_periodic_discovery_v1",
             "runtime_observation_phase": "fixed_update_pre_physics_order_unspecified",
+            "physics_simulation_mode": "FixedUpdate",
             "timestamp_clock": "UnityEngine.Time.fixedTimeAsDouble",
             "step_source": "adapter FixedUpdate callback ordinal",
             "discovery_interval_seconds": 0.5,
@@ -325,6 +326,7 @@ class FlightTransportTests(unittest.TestCase):
         self.assertEqual(metadata["timestamp_clock"], "UnityEngine.Time.fixedTimeAsDouble")
         self.assertEqual(metadata["step_source"], "adapter FixedUpdate callback ordinal")
         self.assertEqual(metadata["discovery_interval_seconds"], 0.5)
+        self.assertEqual(metadata["physics_simulation_mode"], "FixedUpdate")
         self.assertEqual(metadata["declared_coverage"]["entity_lifecycle"]["first_seen"],
                          "inferred_first_seen_by_periodic_census")
         records = [json.loads(line) for chunk in run_dir.glob("*.jsonl")

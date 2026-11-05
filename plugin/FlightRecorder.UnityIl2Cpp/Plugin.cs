@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.12";
+    public const string PluginVersion = "0.1.13";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -44,9 +44,15 @@ public sealed class FlightRecorderPlugin : BasePlugin
     private long _lastCapturedFixedStep = -1;
     private double _nextHealthAt = 5d;
     private readonly double[] _captureWorkWindowMs = new double[256];
+    private readonly double[] _discoveryWorkWindowMs = new double[256];
+    private readonly double[] _frameWorkWindowMs = new double[256];
+    private readonly double[] _transportWorkWindowMs = new double[256];
     private int _captureWorkCount;
     private int _captureWorkWriteIndex;
     private double _captureWorkLastMs;
+    private double _discoveryWorkLastMs;
+    private double _frameWorkLastMs;
+    private double _transportWorkLastMs;
     private int _shutdownStarted;
     private bool _captureFailed;
 
@@ -110,6 +116,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
                 CaptureTier = "partial_il2cpp_periodic_discovery_v1",
                 InstalledBuildFingerprint = new { unity_version = Application.unityVersion, architecture = "x64" },
                 RuntimeObservationPhase = CapturePhaseName,
+                PhysicsSimulationMode = Physics.simulationMode.ToString(),
                 TimestampClock = "UnityEngine.Time.fixedTimeAsDouble; fixed simulation clock; wall monotonic elapsed is carried separately",
                 StepSource = "adapter FixedUpdate callback ordinal",
                 DiscoveryIntervalSeconds = Math.Clamp(DiscoveryInterval, 0.2d, 5d),
@@ -158,25 +165,32 @@ public sealed class FlightRecorderPlugin : BasePlugin
     internal double MonotonicElapsedSeconds() =>
         (Stopwatch.GetTimestamp() - _clockOrigin) / (double)Stopwatch.Frequency;
 
-    internal void RecordCaptureWork(double elapsedMs)
+    internal void RecordCaptureWork(double elapsedMs, double discoveryMs, double frameSamplingMs, double transportMs)
     {
+        var index = _captureWorkWriteIndex;
         _captureWorkLastMs = elapsedMs;
-        _captureWorkWindowMs[_captureWorkWriteIndex] = elapsedMs;
+        _discoveryWorkLastMs = discoveryMs;
+        _frameWorkLastMs = frameSamplingMs;
+        _transportWorkLastMs = transportMs;
+        _captureWorkWindowMs[index] = elapsedMs;
+        _discoveryWorkWindowMs[index] = discoveryMs;
+        _frameWorkWindowMs[index] = frameSamplingMs;
+        _transportWorkWindowMs[index] = transportMs;
         _captureWorkWriteIndex = (_captureWorkWriteIndex + 1) % _captureWorkWindowMs.Length;
         _captureWorkCount = Math.Min(_captureWorkCount + 1, _captureWorkWindowMs.Length);
     }
 
-    private (double Last, double P95, double Maximum, int Count) CaptureWorkStatistics()
+    private (double Last, double P95, double Maximum, int Count) CaptureWorkStatistics(double[] samples, double last)
     {
         if (_captureWorkCount == 0) return (0d, 0d, 0d, 0);
         Span<double> ordered = stackalloc double[256];
-        var start = _captureWorkCount == _captureWorkWindowMs.Length ? _captureWorkWriteIndex : 0;
+        var start = _captureWorkCount == samples.Length ? _captureWorkWriteIndex : 0;
         for (var i = 0; i < _captureWorkCount; i++)
-            ordered[i] = _captureWorkWindowMs[(start + i) % _captureWorkWindowMs.Length];
+            ordered[i] = samples[(start + i) % samples.Length];
         var window = ordered[.._captureWorkCount];
         window.Sort();
         var p95Index = Math.Max(0, (int)Math.Ceiling(window.Length * 0.95d) - 1);
-        return (_captureWorkLastMs, window[p95Index], window[^1], window.Length);
+        return (last, window[p95Index], window[^1], window.Length);
     }
 
     internal bool IsAllowed(BaseCharacter actor)
@@ -326,7 +340,10 @@ public sealed class FlightRecorderPlugin : BasePlugin
         if (publisher is null || publisher.ConnectionAttempts == 0 || publisher.LastConnectionError is not null || t < _nextHealthAt)
             return;
         _nextHealthAt = t + 5d;
-        var captureWork = CaptureWorkStatistics();
+        var captureWork = CaptureWorkStatistics(_captureWorkWindowMs, _captureWorkLastMs);
+        var discoveryWork = CaptureWorkStatistics(_discoveryWorkWindowMs, _discoveryWorkLastMs);
+        var frameWork = CaptureWorkStatistics(_frameWorkWindowMs, _frameWorkLastMs);
+        var transportWork = CaptureWorkStatistics(_transportWorkWindowMs, _transportWorkLastMs);
         var payload = JsonSerializer.Serialize(new HealthPayload
         {
             T = t,
@@ -344,6 +361,12 @@ public sealed class FlightRecorderPlugin : BasePlugin
             CaptureWorkMsP95 = captureWork.P95,
             CaptureWorkMsMaximum = captureWork.Maximum,
             CaptureWorkSampleCount = captureWork.Count,
+            CaptureDiscoveryMsP95 = discoveryWork.P95,
+            CaptureDiscoveryMsMaximum = discoveryWork.Maximum,
+            CaptureFrameSamplingMsP95 = frameWork.P95,
+            CaptureFrameSamplingMsMaximum = frameWork.Maximum,
+            CaptureTransportMsP95 = transportWork.P95,
+            CaptureTransportMsMaximum = transportWork.Maximum,
         }, JsonOptions);
         if (!publisher.TryPublishControl("health", payload)) CheckTransportHealth();
     }
@@ -367,6 +390,9 @@ public sealed class FlightRecorderDriver : MonoBehaviour
         var plugin = FlightRecorderPlugin.Instance;
         if (plugin is null || !plugin.IsCapturing || _registry is null) return;
         var captureStarted = Stopwatch.GetTimestamp();
+        var discoveryWorkMs = 0d;
+        var frameSamplingWorkMs = 0d;
+        var transportWorkMs = 0d;
         try
         {
             plugin.CheckTransportHealth();
@@ -374,12 +400,17 @@ public sealed class FlightRecorderDriver : MonoBehaviour
             plugin.IncrementFixedStep();
             _registry.ObserveSceneChange(plugin.FixedStep, plugin.NowSeconds());
             if (!plugin.IsCapturing) return;
+            var stageStarted = Stopwatch.GetTimestamp();
             _registry.DiscoverIfDue();
+            discoveryWorkMs = (Stopwatch.GetTimestamp() - stageStarted) * 1000d / Stopwatch.Frequency;
             if (!plugin.IsCapturing) return;
+            stageStarted = Stopwatch.GetTimestamp();
             var frame = _registry.CaptureFrame(plugin.FixedStep, plugin.NowSeconds(), Time.fixedDeltaTime,
                 plugin.MonotonicElapsedSeconds());
+            frameSamplingWorkMs = (Stopwatch.GetTimestamp() - stageStarted) * 1000d / Stopwatch.Frequency;
             plugin.MarkFixedUpdateSampled(plugin.FixedStep);
             var frameCapacityHint = Math.Clamp(2048 + frame.Samples.Count * 1024, 4096, 256 * 1024);
+            stageStarted = Stopwatch.GetTimestamp();
             if (plugin.Publisher?.TryPublishFrame(frame, plugin.FixedStep, frame.T,
                     FlightRecorderPlugin.SerializerOptions, frameCapacityHint) != true)
                 plugin.CheckTransportHealth();
@@ -388,7 +419,9 @@ public sealed class FlightRecorderDriver : MonoBehaviour
                 if (plugin.Publisher?.TryPublishControl("event", JsonSerializer.Serialize(observation, FlightRecorderPlugin.SerializerOptions)) != true)
                     plugin.CheckTransportHealth();
             }
-            plugin.RecordCaptureWork((Stopwatch.GetTimestamp() - captureStarted) * 1000d / Stopwatch.Frequency);
+            transportWorkMs = (Stopwatch.GetTimestamp() - stageStarted) * 1000d / Stopwatch.Frequency;
+            plugin.RecordCaptureWork((Stopwatch.GetTimestamp() - captureStarted) * 1000d / Stopwatch.Frequency,
+                discoveryWorkMs, frameSamplingWorkMs, transportWorkMs);
             plugin.PublishHealth(plugin.NowSeconds(), plugin.MonotonicElapsedSeconds());
         }
         catch (Exception exception)
@@ -419,6 +452,7 @@ internal sealed class CaptureRegistry
     private readonly List<EntitySamplePayload> _frameSamples;
     private readonly FramePayload _framePayload;
     private readonly List<EventPayload> _observationEvents = new();
+    private bool _entityOrderDirty = true;
     private double _nextDiscoveryAt;
     private int _activeSceneHandle;
     private string _activeSceneName = "";
@@ -485,19 +519,21 @@ internal sealed class CaptureRegistry
         if (now < _nextDiscoveryAt) return;
         _nextDiscoveryAt = now + Math.Clamp(_plugin.DiscoveryInterval, 0.2d, 5d);
 
-        foreach (var human in Object.FindObjectsByType<Human>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        foreach (var character in Object.FindObjectsByType<BaseCharacter>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (!_plugin.IsCapturing) return;
-            if (human == null || !_plugin.IsAllowed(human) || !human.FinishSetup) continue;
-            Track(human, "human");
-            if (!_plugin.IsCapturing) return;
-            TrackHooks(human);
-        }
-        foreach (var titan in Object.FindObjectsByType<BaseTitan>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-        {
-            if (!_plugin.IsCapturing) return;
-            if (titan == null || !_plugin.IsAllowed(titan)) continue;
-            Track(titan, "titan");
+            if (character == null || !_plugin.IsAllowed(character)) continue;
+            if (character is Human human)
+            {
+                if (!human.FinishSetup) continue;
+                Track(human, "human");
+                if (!_plugin.IsCapturing) return;
+                TrackHooks(human);
+            }
+            else if (character is BaseTitan titan)
+            {
+                Track(titan, "titan");
+            }
         }
         foreach (var projectile in Object.FindObjectsByType<BaseProjectile>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
@@ -517,17 +553,23 @@ internal sealed class CaptureRegistry
                 PublishLifecycle("despawn", entry, "observed_unity_object_destroyed", now);
                 _entities.Remove((entry.Kind, entry.SourceId));
                 _idsByInstance.Remove(entry.SourceId);
+                _entityOrderDirty = true;
             }
             else if (!StillWithinCaptureScope(entry))
             {
                 PublishLifecycle("despawn", entry, "capture_scope_ended_ownership_filter", now);
                 _entities.Remove((entry.Kind, entry.SourceId));
                 _idsByInstance.Remove(entry.SourceId);
+                _entityOrderDirty = true;
             }
         }
-        _ordered.Clear();
-        _ordered.AddRange(_entities.Values);
-        _ordered.Sort(static (left, right) => string.CompareOrdinal(left.Id, right.Id));
+        if (_entityOrderDirty)
+        {
+            _ordered.Clear();
+            _ordered.AddRange(_entities.Values);
+            _ordered.Sort(static (left, right) => string.CompareOrdinal(left.Id, right.Id));
+            _entityOrderDirty = false;
+        }
         _active = this;
 
         if (_entities.Count > _plugin.MaxEntities)
@@ -563,6 +605,7 @@ internal sealed class CaptureRegistry
             PublishLifecycle("despawn", priorEntry, "observed_unity_object_destroyed_before_instance_id_reuse", _plugin.NowSeconds());
             _entities.Remove(key);
             _idsByInstance.Remove(sourceId);
+            _entityOrderDirty = true;
         }
         if (!_entities.TryGetValue(key, out var entry))
         {
@@ -596,6 +639,7 @@ internal sealed class CaptureRegistry
             catch (Exception exception) { _plugin.FailCapture("rigidbody_lookup_failed", exception); return; }
             _entities.Add(key, entry);
             _idsByInstance[sourceId] = entry.Id;
+            _entityOrderDirty = true;
             PublishLifecycle("spawn", entry, "inferred_first_seen_by_periodic_census", _plugin.NowSeconds());
         }
         else
@@ -797,6 +841,7 @@ internal sealed class HelloPayload
     [JsonPropertyName("capture_tier")] public string CaptureTier { get; init; } = "";
     [JsonPropertyName("installed_build_fingerprint")] public object? InstalledBuildFingerprint { get; init; }
     [JsonPropertyName("runtime_observation_phase")] public string RuntimeObservationPhase { get; init; } = "";
+    [JsonPropertyName("physics_simulation_mode")] public string PhysicsSimulationMode { get; init; } = "";
     [JsonPropertyName("timestamp_clock")] public string TimestampClock { get; init; } = "";
     [JsonPropertyName("step_source")] public string StepSource { get; init; } = "";
     [JsonPropertyName("discovery_interval_seconds")] public double DiscoveryIntervalSeconds { get; init; }
@@ -957,4 +1002,10 @@ internal sealed class HealthPayload
     [JsonPropertyName("capture_work_ms_p95")] public double CaptureWorkMsP95 { get; init; }
     [JsonPropertyName("capture_work_ms_maximum")] public double CaptureWorkMsMaximum { get; init; }
     [JsonPropertyName("capture_work_sample_count")] public int CaptureWorkSampleCount { get; init; }
+    [JsonPropertyName("capture_discovery_ms_p95")] public double CaptureDiscoveryMsP95 { get; init; }
+    [JsonPropertyName("capture_discovery_ms_maximum")] public double CaptureDiscoveryMsMaximum { get; init; }
+    [JsonPropertyName("capture_frame_sampling_ms_p95")] public double CaptureFrameSamplingMsP95 { get; init; }
+    [JsonPropertyName("capture_frame_sampling_ms_maximum")] public double CaptureFrameSamplingMsMaximum { get; init; }
+    [JsonPropertyName("capture_transport_ms_p95")] public double CaptureTransportMsP95 { get; init; }
+    [JsonPropertyName("capture_transport_ms_maximum")] public double CaptureTransportMsMaximum { get; init; }
 }

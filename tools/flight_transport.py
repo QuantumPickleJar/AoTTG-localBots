@@ -233,10 +233,15 @@ class FlightTransportReceiver:
                     timestamp_clock = payload.get("timestamp_clock")
                     step_source = payload.get("step_source")
                     discovery_interval = payload.get("discovery_interval_seconds")
+                    physics_simulation_mode = payload.get("physics_simulation_mode")
                     if timestamp_clock is not None and (not isinstance(timestamp_clock, str) or not timestamp_clock or len(timestamp_clock) > 256):
                         raise TransportProtocolError("hello.timestamp_clock must be a short string when supplied")
                     if step_source is not None and (not isinstance(step_source, str) or not step_source or len(step_source) > 256):
                         raise TransportProtocolError("hello.step_source must be a short string when supplied")
+                    if physics_simulation_mode is not None and (
+                            not isinstance(physics_simulation_mode, str) or not physics_simulation_mode
+                            or len(physics_simulation_mode) > 64):
+                        raise TransportProtocolError("hello.physics_simulation_mode must be a short string when supplied")
                     if discovery_interval is not None and (
                             isinstance(discovery_interval, bool) or not isinstance(discovery_interval, (int, float))
                             or not math.isfinite(discovery_interval) or discovery_interval <= 0):
@@ -255,6 +260,8 @@ class FlightTransportReceiver:
                         metadata["timestamp_clock"] = timestamp_clock
                     if step_source is not None:
                         metadata["step_source"] = step_source
+                    if physics_simulation_mode is not None:
+                        metadata["physics_simulation_mode"] = physics_simulation_mode
                     if discovery_interval is not None:
                         metadata["discovery_interval_seconds"] = discovery_interval
                     opts = dict(self.writer_options)

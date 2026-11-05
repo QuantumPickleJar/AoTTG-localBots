@@ -1,10 +1,10 @@
-# REC-I status: 0.1.11 capture complete; performance and timing gates remain open
+# REC-I status: 0.1.12 actor-loaded capture complete; performance and timing gates remain open
 
 ## 2026-11-04 status update
 
 The supplied 0.1.10 run is structurally complete (20 verified chunks, 20,878 frames, 901 events, no declared drops or frame-step gaps, about 417.54 seconds), but it fails performance: 59 of 81 post-15-second health windows exceed 1.0 ms p95; the worst p95 is 5.7656 ms and the worst individual sample is 65.7773 ms. Its phase is `fixed_update_pre_physics_order_unspecified` and `sample_phase_verified=false`; ZIP completeness does not calibrate timing.
 
-The 0.1.11 candidate reused per-entity sample DTOs, arrays, extra payload, and frame storage. Its installed run completed cleanly, but failed the performance gate as detailed below. The 0.1.12 candidate removes Unity's implicit sort from periodic discovery while preserving inactive-object discovery and output ordering. Unity 2023.1 documents `FindObjectsSortMode.None` as the least resource-intensive option and notes that result order is unspecified ([`FindObjectsByType`](https://docs.unity3d.com/ja/2023.1/ScriptReference/Object.FindObjectsByType.html), [`FindObjectsSortMode.None`](https://docs.unity3d.com/ja/2023.1/ScriptReference/FindObjectsSortMode.None.html)). The 0.1.12 package has not had an installed-runtime retest. Keep `sample_phase_verified=false` and PR #16 open until a fresh installed capture passes performance and a controlled physics transition calibrates phase.
+The 0.1.11 candidate reused per-entity sample DTOs, arrays, extra payload, and frame storage. Its installed run completed cleanly, but failed the performance gate as detailed below. Version 0.1.12 removed Unity's implicit sort from periodic discovery; an installed actor-loaded retest completed structurally but still failed performance. Version 0.1.13 combines Human/Titan discovery, avoids rebuilding stable entity order, and reports capture-stage timings and Unity's physics simulation mode. It has passed local tests/builds but remains a candidate until packaged, installed, and runtime-measured. Keep `sample_phase_verified=false` and PR #16 open until a fresh capture passes performance and a controlled physics transition calibrates phase.
 
 ## 2026-11-04 installed 0.1.11 attempt
 
@@ -20,6 +20,12 @@ Frames run from fixed-step ordinal 1 to 39,509 with no missing steps, fixed delt
 
 The game process did not expose a screenshot or menu state through desktop control. No lobby was entered, no active add-on list or runtime movement was observed, and no calibration/video evidence was produced. The plugin's `Enabled` setting was already `true` before this attempt and the installer preserved it; the receiver was started before the game. The installed DLLs, config, and previous install backup remain under `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261104/rollback`; the completed run and logs remain under that validation directory.
 
+## 2026-11-04 user-operated 0.1.12 actor-loaded run
+
+Version 0.1.12 was installed after a clean restart and loaded on AoTTG2 `1.2.3` / Unity `2023.1.22f1`. The user confirmed the session was private with only them present. Exact active add-ons, map/mode, effective ground driver, and master-host status were not independently observed. Run `eefc8131fe93455d89bca3d5261af70c` completed cleanly with `capture_complete=true`, 17,123 frames, 16 verified chunks, 1.0 frame coverage, 1,072 events, zero frame gaps, zero declared frame/entity/control drops, and no parse errors. It tracked 28 entities. ZIP SHA-256: `881BBE1DC39404F913EE7EB0C8F6C38F26C816487AB2381CA3EA7DFFA5F95150`.
+
+Performance **fails**: 14 of 67 post-15-second health windows exceed 1.0 ms p95; worst p95 is 2.8867 ms and maximum sample is 59.6039 ms. Producer and writer queues remained within caps, with no drops, fatal errors, or storage exhaustion. Timing continuity is clean: no ordinal/frame-time mismatches, fixed delta `0.019999992`, monotonic wall time, game/wall Pearson correlation `0.9999706711`, slope `1.0086115`. The run was not a controlled calibration; `sample_phase_verified=false` remains. The ZIP and analysis reports are in `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261104/recorder-0.1.12-live-retest` and the corresponding `Recorders/analysis` directories. Recorder config was returned to `Enabled=false` after game exit.
+
 ## Current evidence
 
 The owner-supplied 0.1.5 gameplay recording completed cleanly through the writer and transport: 56,970 ordered frame markers, 779 events, 54 lifecycle records, 35/35 SHA-256-verified chunks, 27 entity IDs, no reported frame or entity drops, and `capture_complete=true`. It contains Humans, Titans, Hooks, 209 observed Human collision callbacks, and 340 sampled Hook state transitions.
@@ -30,21 +36,21 @@ The prior analyzer counted 277 `unexplained_velocity_change` findings because it
 
 The same 0.1.5 capture's later health window reached 1.8008 ms capture-work p95 at a 20 ms fixed step, above the 1.0 ms criterion; maximum was 53.6163 ms, below the 60 ms limit. A later installed-game log from plugin 0.1.5 reports `control_reserve_exhausted_before_frame_gap`; treat that separate attempt as incomplete. A subsequent 0.1.8 run connected and wrote 8,197 durable frames and 282 events in six verified chunks, but stopped incomplete after `PermissionError` replacing `writer_state.json`; one submitted frame was not durable. A 0.1.9 installed-game session wrote many verified chunks, but the game disconnected without a stop envelope and the receiver left its latest chunk partial. Version 0.1.10 retains the earlier writer fixes and adds a five-second reconnect window; it seals the durable prefix and marks the run incomplete if the producer does not return. **No completed 0.1.10 gameplay performance result exists yet.** Sample phase remains `fixed_update_pre_physics_order_unspecified`, map/mode is unknown, and no video was included.
 
-The installed 0.1.11 DLLs were observed loading after a clean restart; its local-pipe handshake, clean stop, and final chunk integrity pass. Steady-state performance fails; controlled timing calibration remains open. The performance improvement in 0.1.12 has only been built and statically checked, not installed or runtime-measured.
+The installed 0.1.11 and 0.1.12 DLLs were observed loading after clean restarts; local-pipe handshakes, clean stops, and chunk integrity passed. Both versions fail steady-state performance; controlled timing calibration remains open. Version 0.1.13 combines two character scans into one base-class census, only sorts when tracked membership changes, and adds per-stage p95/max diagnostics. These changes are built and statically checked; the package and installed-runtime retest are pending.
 
 ## Current implementation state
 
 - PR #15 is merged into `main`; PR #16 targets `main` and retains the adapter-only diff.
 - The offline analyzer emits `kill_attributions.json` and a report section. It uses sampled alive→dead transitions, observed target-specific collisions, sampled AI/attack state, and explicitly correlated direct events when present. It preserves the provenance of each signal and labels contact-based attribution as inference.
 - The Unity adapter and writer schema remain unchanged by the analyzer output. No M2 gameplay code or installed game file is changed by this work.
-- Candidate package version is 0.1.12. Installed version 0.1.11 has an installed-file rollback copy. Keep recording disabled except during the deliberately opted-in private validation session; after the completed 0.1.11 run, restore `Enabled=false` before leaving the game installation idle.
+- Candidate package version is 0.1.13. Installed version 0.1.12 has a receipt-verified rollback path under the validation `rollback` directory. Keep recording disabled except during the deliberately opted-in private validation session; after the completed 0.1.12 run, `Enabled=false` was restored.
 
 ## REC-I validation card
 
     SESSION: REC-I short passive capture and performance check
     SOURCE: PR #16 branch codex/flight-recorder-il2cpp-adapter; use the commit recorded in package-manifest.json
-    PACKAGE: AoTTG2 Flight Recorder 0.1.12 candidate, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
-    DEPLOY: Close the game copy, then run the 0.1.12 install_flight_recorder.ps1. It automatically replaces a prior install only when its receipt and DLL hashes verify and the folder contains no extra files. It refuses modified or unmanaged folders for manual review.
+    PACKAGE: AoTTG2 Flight Recorder 0.1.13 candidate, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
+    DEPLOY: Close the game copy, then run the 0.1.13 install_flight_recorder.ps1. It automatically replaces a prior install only when its receipt and DLL hashes verify and the folder contains no extra files. It refuses modified or unmanaged folders for manual review.
     GAME CONFIG: BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg; set Enabled=true only for this capture and restore false afterward
     RECEIVER: Pass the private JSON file under Documents/AoTTG2/Recorders to start_flight_recorder_receiver.ps1. The launcher prints the resolved output directory; use a new local output folder and verify the pipe-ready message before launching the game
     ADD-ONS: Enable exactly AICadetsWaveCadet, AICadetsCommandPanel, and AICadetsM2Watcher. Disable AICadetsProbe, AICadetsTraversal, AICadetsTraversalReliable, AICadetsWatcher, and every other test add-on.
@@ -59,8 +65,8 @@ The installed 0.1.11 DLLs were observed loading after a clean restart; its local
 
 ## Acceptance boundary
 
-The supplied 0.1.5 recording establishes successful writer/transport operation and gives strong, non-causal evidence consistent with a cadet kill. It does not establish direct damage attribution, calibrated physics phase, REC-I performance acceptance, or M2 decision quality. The supplied 0.1.10 capture and installed 0.1.11 capture fail the performance gate; the latter is structurally complete but contains no tracked actors. The 0.1.12 discovery-sort optimization remains unmeasured. Keep `sample_phase_verified=false` and PR #16 open. The 174 unmatched velocity changes remain explicit review findings.
+The supplied 0.1.5 recording establishes successful writer/transport operation and gives strong, non-causal evidence consistent with a cadet kill. It does not establish direct damage attribution, calibrated physics phase, REC-I performance acceptance, or M2 decision quality. The supplied 0.1.10 and installed 0.1.11 captures fail the performance gate; the 0.1.11 run contains no tracked actors. The installed, actor-loaded 0.1.12 run is structurally complete but fails performance. Version 0.1.13 is the next diagnostic candidate. Keep `sample_phase_verified=false` and PR #16 open. The 174 unmatched velocity changes remain explicit review findings.
 
 ## Installed-machine handling
 
-Version 0.1.9 was installed and exercised in-game; the run exposed the disconnect-finalization gap. Version 0.1.10 was installed and produced the supplied complete structural capture, but failed the performance and timing gates. Version 0.1.11 was installed with a verified package manifest and receipt-checked upgrade; it loaded cleanly and its run finalized, but failed the performance gate and tracked no entities. Version 0.1.12 is only a candidate package until its installed load, producer shutdown, performance, and package gates are run. The prior install/config backup is under `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261104/rollback`; restore it through the guarded removal/installation procedure if rollback is needed, preserving BepInEx and generated interop.
+Version 0.1.9 was installed and exercised in-game; the run exposed the disconnect-finalization gap. Version 0.1.10 was installed and produced a complete structural capture, but failed performance and timing gates. Version 0.1.11 loaded cleanly and finalized, but failed performance and tracked no entities. Version 0.1.12 loaded cleanly and finalized with actors, but failed performance. Version 0.1.13 is built and statically tested; package and installed runtime gates are pending. The prior install/config backup is under `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261104/rollback`; restore it through the guarded removal/installation procedure if rollback is needed, preserving BepInEx and generated interop.
