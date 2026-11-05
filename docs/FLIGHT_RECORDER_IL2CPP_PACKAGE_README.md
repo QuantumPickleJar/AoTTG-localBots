@@ -1,12 +1,22 @@
 # AoTTG2 IL2CPP Flight Recorder package
 
-**Build:** 0.1.16 active-object discovery optimization candidate, compiled against interop generated from the installed AoTTG2 build
+**Build:** 0.1.17 disabled-hook sampling optimization candidate, compiled against interop generated from the installed AoTTG2 build
 
 **Runtime:** x64, Unity 2023.1.22f1, IL2CPP metadata 29.1, BepInEx 6.0.0-be.791, .NET 6
 
 **Capture default:** disabled
 
-This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Versions 0.1.11–0.1.15 retained the `aicadets.flight.v1` fields, local transport, and queue/recovery behavior while successively reducing allocations and adding measured callback stages. Installed 0.1.15 run 06 passed the steady-state p95 limit but failed the unchanged 60 ms maximum-sample gate because a periodic discovery sample reached 79.0452 ms. Version 0.1.16 excludes inactive objects from periodic scene discovery while continuing to sample already tracked entities. This is an optimization candidate only; no runtime improvement is claimed until a fresh installed capture passes every gate.
+This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Versions 0.1.11–0.1.15 retained the `aicadets.flight.v1` fields, local transport, and queue/recovery behavior while successively reducing allocations and adding measured callback stages. Installed 0.1.15 run 06 passed the steady-state p95 limit but failed the unchanged 60 ms maximum-sample gate because a periodic discovery sample reached 79.0452 ms. Version 0.1.16 excludes inactive objects from periodic scene discovery while continuing to sample already tracked entities; its fresh installed run 07 still fails the p95 gate. Version 0.1.17 keeps per-step hook pose/state records but skips hook-point, anchor, and character queries for `Disabled` hooks. It is a candidate only; no runtime improvement is claimed until a fresh installed capture passes every gate.
+
+## Installed 0.1.16 capture — run 07 (interim; capture still open)
+
+The user confirmed a private master-host City 1 / Training / Waves match with one human-controlled participant, one owned cadet, one ordinary Titan, and the three required M2 add-ons. After a fresh game launch, BepInEx loaded plugin 0.1.16 and the local receiver accepted hello sequence 1. The user issued one Direct Engage order. At the latest live snapshot, 109,907 frame records were parsed with contiguous ordinals and exact 0.0199999929-second spacing; 437 producer-health records included 435 post-15-second windows. Capture is not finalized, chunk hashes are not yet final-verified, and clean stop is pending.
+
+The interim performance result is a **fail**: 22 of 435 post-15-second windows exceed the unchanged 1.0 ms p95 limit, with a worst p95 of 1.4775 ms. The largest reported individual sample is 59.9965 ms, below 60 ms at this snapshot. No frame or control drops were reported. Queue high-water was 11 entries / 175,876 bytes, below the configured 512 entries / 4 MiB. The sample also contains 294 observed collision callbacks on the AI cadet; 291 have a same-step sample before the callback and a same-step actor sample. These are phase-calibration candidates, not a final verified timing result until the controlled calibration and clean final report are documented.
+
+M2 watcher output in this capture stopped at game time 36.16 in `WaitLanding`, after traversal failed to find a suitable anchor; it recorded real approach movement and positive target progress, but no grounded `ground_route_blocked` or reposition retry. Grounded movement/recovery remains untested in this run. Do not infer attack, damage, kill, or complete actor coverage from this recorder capture.
+
+Version 0.1.17 skips the disabled-hook point/anchor/character API reads while preserving every fixed-step frame and sampled Hook.State. Its source/build checks and a new installed-runtime capture are pending. Run 07 raw chunks and watcher files remain local until the user exits normally and finalization and analysis complete.
 
 ## Installed 0.1.15 capture — run 06
 
@@ -59,7 +69,7 @@ In that 0.1.5 gameplay capture, a later health window reached 1.8008 ms capture-
 - Polls active scene changes at FixedUpdate boundaries. Scene and Hook transition times are detection/sample times; brief transitions may be missed.
 - Measures capture-work last/p95/max over a rolling 256-callback window. Version 0.1.13 also reports discovery, frame-sampling, and serialization/queue stage p95/max diagnostics. Version 0.1.14 samples `GetCurrentAnimation()` at most every five fixed steps and records the source step. Version 0.1.15 keeps the scope cache step-tagged, reduces the frame buffer estimate, and measures periodic health serialization/queueing as callback work; each health record reports the ring before its own callback sample is appended. Stage readings and lower-rate optional fields do not replace or weaken the gate and do not measure total game frame time.
 
-Entity first-seen lifecycle is inferred from the 0.5-second discovery census. Inactive objects are excluded from new discovery in 0.1.16 and may first appear after becoming active; already tracked objects remain sampled until destruction or capture-scope exit. Transient objects between censuses may be missed. IDs are stable within one run and are not cross-run identities.
+Entity first-seen lifecycle is inferred from the 0.5-second discovery census. Inactive objects are excluded from new discovery in 0.1.16 and may first appear after becoming active; already tracked objects remain sampled until destruction or capture-scope exit. Transient objects between censuses may be missed. Disabled Hooks retain per-step pose and state samples, while optional hook-point, anchor, and character fields are omitted until the Hook.State becomes active. IDs are stable within one run and are not cross-run identities.
 
 The adapter reads Unity/game values on the Unity callback thread and hands primitive data to the pipe worker. It does not write transforms, physics properties, controls, or gameplay state. Sampling runs in Unity `FixedUpdate`; Unity documents physics calculations after `FixedUpdate` when using the `FixedUpdate` simulation mode. Version 0.1.13 records the actual `Physics.simulationMode` string. Relative ordering among other `FixedUpdate` scripts remains unspecified. The runtime phase label and simulation mode alone do not calibrate actor samples against a physical transition; keep `sample_phase_verified=false` until a controlled natural transition is reproducibly correlated.
 
@@ -71,12 +81,12 @@ Unavailable or unverified: moving world geometry, Titan-side collision callbacks
 2. Extract the reviewed package to a local directory.
 3. Run the guarded installer. It automatically removes a previous recorder install after verifying its receipt, DLL hashes, and folder contents. It refuses modified or unmanaged installations for manual review:
 
-       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.16"
+       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.17"
 
 4. Leave BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg at `Enabled = false` for the startup check. Launch to the menu, verify plug-in version and disabled-capture log entries, then close the game.
 5. Copy `configs/flight-recorder-transport.example.json` to a private local config, set `recording_enabled=true`, and choose a new empty output directory. Start the receiver first:
 
-       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.16" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
+       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.17" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
 
    `ConfigPath` must be the JSON file. A relative `output_dir` is resolved beside that file, and the launcher prints the resolved directory. For output in `Documents\AoTTG2\Recorders\recordings`, use the JSON in that `Recorders` folder, not the package's `configs` directory.
 
@@ -95,4 +105,4 @@ Close the game and run the package's `remove_flight_recorder.ps1` against the sa
 
 ## Validation boundary
 
-The supplied 0.1.5 run proves a complete writer/transport recording and observed Human/Hook/Titan data. It gives strong but non-causal evidence consistent with a cadet kill. It does not prove direct damage attribution, M2 decision quality, or calibrated physics phase. Installed 0.1.11 through 0.1.15 runs do not all pass the unchanged performance gates; run 06 on 0.1.15 passed steady-state p95 and producer/writer queue bounds, but exceeded the 60 ms individual-sample limit. Version 0.1.16 is an unvalidated discovery optimization candidate. Timing calibration remains open. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the M2/recorder Validation Cards for acceptance limits and rollback steps.
+The supplied 0.1.5 run proves a complete writer/transport recording and observed Human/Hook/Titan data. It does not prove direct damage attribution, M2 decision quality, or calibrated physics phase. Installed 0.1.11 through 0.1.15 runs do not all pass the unchanged performance gates; run 06 on 0.1.15 passed steady-state p95 and producer/writer queue bounds, but exceeded the 60 ms individual-sample limit. Installed 0.1.16 run 07 is still open and its interim analysis fails the 1.0 ms p95 gate. Its same-step collision records provide timing-calibration candidates, but the final controlled calibration and report remain pending. Version 0.1.17 is a disabled-hook sampling optimization candidate; it has no installed-runtime result yet. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the M2/recorder Validation Cards for acceptance limits and rollback steps.

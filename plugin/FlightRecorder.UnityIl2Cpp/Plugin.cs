@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.16";
+    public const string PluginVersion = "0.1.17";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     internal const int AnimationSampleIntervalFixedSteps = 5;
@@ -127,6 +127,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
                     transforms = new[] { "position", "rotation" },
                     rigidbody = "root Rigidbody only; velocity fields emitted only when present and non-kinematic",
                     game_fields = new[] { "AI", "team", "health", "dead", "grounded", "current_speed", "current_animation", "human_state", "human_current_gas", "titan_state", "hook_state", "hook_anchor", "projectile_velocity_field" },
+                    hook_detail_sampling = "Hook pose and state remain sampled each fixed step; hook point, anchor, and character details are read only while Hook.State is not Disabled",
                     game_field_sampling = new { animation_game_method = "sampled_at_most_every_5_fixed_update_steps; animation_source_step identifies the source step" },
                     collisions = "Human.OnCollisionEnter Harmony postfix; only locally owned actors or AI on the local Photon master, and non-character world colliders",
                     entity_lifecycle = new { first_seen = "inferred_first_seen_by_periodic_census", destroyed = "observed_unity_object_destroyed", transient_between_censuses = "may_be_missed" },
@@ -813,18 +814,21 @@ internal sealed class CaptureRegistry
                     entity.LastSampledStateCode = hookStateCode;
                 }
                 sample.State = entity.LastSampledState;
-                var hookPoint = hook.GetHookPosition();
-                extra.SetHookPoint(hookPoint.x, hookPoint.y, hookPoint.z);
                 extra.HookStateSource = "Characters.Hook.State";
-                var anchor = hook.Anchor;
-                if (anchor != null)
+                if (sample.State != "Disabled")
                 {
-                    var anchorPosition = anchor.position;
-                    extra.SetAnchorPosition(anchorPosition.x, anchorPosition.y, anchorPosition.z);
+                    var hookPoint = hook.GetHookPosition();
+                    extra.SetHookPoint(hookPoint.x, hookPoint.y, hookPoint.z);
+                    var anchor = hook.Anchor;
+                    if (anchor != null)
+                    {
+                        var anchorPosition = anchor.position;
+                        extra.SetAnchorPosition(anchorPosition.x, anchorPosition.y, anchorPosition.z);
+                    }
+                    var target = hook.HookCharacter;
+                    if (target != null && IsAllowedForCurrentSample(target))
+                        extra.HookCharacterId = FindId(target.GetInstanceID());
                 }
-                var target = hook.HookCharacter;
-                if (target != null && IsAllowedForCurrentSample(target))
-                    extra.HookCharacterId = FindId(target.GetInstanceID());
             }
             else if (component is BaseProjectile projectile)
             {

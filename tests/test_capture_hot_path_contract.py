@@ -39,6 +39,17 @@ class CaptureHotPathContractTests(unittest.TestCase):
         self.assertIn("currentHookState.GetHashCode()", self.source)
         self.assertIn("entity.LastSampledStateCode != hookStateCode", self.source)
 
+    def test_disabled_hooks_keep_state_sampling_without_anchor_queries(self):
+        hook = self.source.split("else if (component is Hook hook)", 1)[1].split(
+            "else if (component is BaseProjectile projectile)", 1)[0]
+        self.assertIn("var currentHookState = hook.State;", hook)
+        self.assertIn("sample.State = entity.LastSampledState;", hook)
+        self.assertIn('extra.HookStateSource = "Characters.Hook.State";', hook)
+        disabled_guard = hook.index('if (sample.State != "Disabled")')
+        self.assertLess(disabled_guard, hook.index("hook.GetHookPosition()"))
+        self.assertLess(disabled_guard, hook.index("hook.Anchor"))
+        self.assertLess(disabled_guard, hook.index("hook.HookCharacter"))
+
     def test_periodic_discovery_excludes_inactive_scene_objects(self):
         self.assertEqual(self.source.count("FindObjectsInactive.Exclude, FindObjectsSortMode.None"), 2)
         self.assertNotIn("FindObjectsInactive.Include, FindObjectsSortMode.None", self.source)
