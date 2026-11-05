@@ -3,8 +3,8 @@
 SESSION: `M2-DIRECT-RECOVERY-20261105-014`
 SCOPE: One-cadet M2 Direct grounded movement, bounded opposite-side recovery, Hold interruption, Engine comparison, recorder performance/timing, and watcher rotation. No multi-cadet, rescue, personality, or M3 gameplay.
 GAME: Previous user-confirmed session was a private master-host City 1 / Training / Waves lobby with one human-controlled player, one owned cadet, one ordinary Titan, Wave 1 set to one Titan, and the three required add-ons only. Product build was previously reported as `1.2.3`; capture it again from the active run. Unity `2023.1.22f1` was observed in the recorder startup log.
-M2: Candidate build `M2-locomotion-1-f8combo-6-opposite-back-diagonal-retry`; commit is pending tests and live validation. Existing installed M2 build was `M2-locomotion-1-f8combo-5-shorter-opposite-retry`.
-RECORDER: 0.1.14 hot-path candidate is not yet packaged, installed, or runtime-validated. Prior installed 0.1.13 run `0f641e245f0f4c0a9c3dab23d08c355e` was structurally complete and stopped cleanly, but failed performance and timing acceptance. Package path, hash, and installed hashes must be recorded after packaging/deployment.
+M2: Candidate build `M2-locomotion-1-f8combo-6-opposite-back-diagonal-retry`, commit `6862516ca7bbf56db81bd661afb8a23002b9afc1`; local CI-equivalent checks and GitHub Actions run `42082484024` passed. Live validation remains open. The previously installed M2 build was `M2-locomotion-1-f8combo-5-shorter-opposite-retry`.
+RECORDER: 0.1.14 source commit `7b59701131aa328c2e329863ad827e3bc275780e`; package ZIP SHA-256 `6C8CDBA42CE0422384D511E6875692AB43477C20489F75ECAED730627515798C`; 50/50 manifest hashes verify and the ZIP has 51 entries including the manifest. Installed plugin SHA-256 `92F8954509F3A84DE1EA6EA0AA6E35633971EABA80433208E18E0CECE8D92AB5`; transport SHA-256 `980A90B1B255E7A914722D797DB899D48395752DC455EC814A1621DB9E7EEFE0`. Version 0.1.14 is installed but not yet observed loading in game. The previous installed 0.1.13 run `0f641e245f0f4c0a9c3dab23d08c355e` was structurally complete and stopped cleanly, but failed performance and timing acceptance.
 PRIVACY: Use a fresh private master-host lobby for every gameplay variant. Only the user's human-controlled player may be present. Raw logs, watcher data, and recorder files remain local unless explicitly approved.
 
 ## Preconditions
@@ -30,6 +30,18 @@ PRIVACY: Use a fresh private master-host lobby for every gameplay variant. Only 
 | pending | Watcher persistence | Long private run creates multiple segments; verify no `SaveToFile exceeded 1 mb limit`, each segment below 1 MB, sequence/previous links, preservation of unrelated `PersistentData`, and save the game console log. | Not run on candidate build |
 | `0f641e245f0f4c0a9c3dab23d08c355e` | Installed recorder 0.1.13 / Direct run | 24,846 frames; 24/24 chunks valid; no frame gaps, drops, or fatal errors; clean stop and bounded queue. Failed p95 (51/97 post-15-second windows above 1.0 ms; worst p95 4.311 ms) and max sample 87.7007 ms. Phase label `fixed_update_pre_physics`, `sample_phase_verified=false`; no controlled calibration. | Structural pass; performance fail; timing unverified |
 | pending | Installed recorder 0.1.14 | Clean plugin load and receiver handshake; complete hash-valid ZIP; no gaps/drops; every post-15-second p95 <= 1.0 ms; no sample > 60 ms; bounded queues; clean producer/receiver stop; calibrated phase. | Not run |
+
+## Candidate deployment before run 05
+
+- Candidate WaveCadet is installed at `Documents/Aottg2/CustomAddon/AICadetsWaveCadet.cl`, SHA-256 `965E5B57A19917302F089EBB90902A2C637E096D245B3AC173EE3EF3DEC0B752`. The prior installed file is preserved at `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261105/gameplay-f8combo6-run-pending/rollback/AICadetsWaveCadet.before-f8combo6.cl`, SHA-256 `866C3BC8B3C9DDA0465633EB85B5B4E7D8C188B79CDD14FA53FA3FFB185C2CA9`.
+- CommandPanel remains SHA-256 `8E6EB2B708F6A67BF7C9D5D7E0BD23B9DCBA1418910239CBDAAE6AE96EC1E17C`; M2Watcher remains SHA-256 `B6BD148511EA59203F6A3ACBFE0C8886E73C32C6CF4E71D08D9DBE15CCC24489`.
+- Flight Recorder 0.1.14 is installed through the guarded installer. Its pre-0.1.14 DLL/config rollback is preserved under `recorder-0.1.13-c5-run-04/rollback/installed-0.1.13-before-0.1.14`. The local receiver is started before the game. Current receiver PID is 21640, with a new output directory at `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261105/recorder-0.1.14-c6-run-05/recordings`.
+- At card update time, the game has not been relaunched, no 0.1.14 load or handshake is observed, and no gameplay order has been issued. Confirm the current lobby, product build, enabled add-ons, saved settings, and effective driver again before testing.
+
+## Static results
+
+- M2: `python scripts/check_probe.py`, `python scripts/check_traversal.py`, `python scripts/check_traversal_reliable.py`, `python scripts/check_wave_m2.py`, `python tools/recovery_preflight.py --addons addons --persistent <empty directory>`, `python -m unittest discover -s tests -v` (144 tests), `git show --check HEAD`, and `git diff --check` passed. GitHub Actions run `42082484024` passed. These checks do not validate Custom Logic parsing or live physics.
+- Recorder 0.1.14: 123 Python tests, Python compile checks, .NET 6/.NET 8 transport builds, transport smoke, Windows pipe/writer/analyzer smoke, PowerShell parsing, Unity IL2CPP plugin build with zero warnings/errors, and `git diff --check` passed. GitHub Actions run `42082711362` passed. None establish installed-runtime performance or phase.
 
 ## Recorder timing and performance gate
 
