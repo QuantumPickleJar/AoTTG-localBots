@@ -1,6 +1,18 @@
-# REC-I status: installed 0.1.14 performance failed; 0.1.15 candidate pending package and retest
+# REC-I status: installed 0.1.15 run 06 failed the 60 ms sample gate; 0.1.16 candidate pending retest
 
-## 2026-11-05 update — installed 0.1.14 failed; 0.1.15 is a source candidate
+## Current status — installed 0.1.15 run 06
+
+The fresh installed run `54ba9419295a4ec8b05d5769b1bc9990` loaded plugin 0.1.15 after a clean restart, completed the receiver hello handshake, and stopped cleanly after normal game exit. The writer reports `capture_complete=true`, 24,247 frames, 10/10 hash-verified chunks, no frame-step gaps, zero declared frame/entity drops, no malformed/incomplete/fatal records, and clean receiver shutdown. The sealed ZIP SHA-256 is `F24188704D6AFE4937C964EB410C3D90BEE076C5950292A820427EFAF120C5C3`.
+
+Performance is a fail: 0/95 post-15-second windows exceed 1.0 ms p95 and the worst p95 is 0.9527 ms, but the maximum individual capture-work sample is 81.3031 ms (limit 60 ms). The largest reported discovery sample is 79.0452 ms. The captured active plugin config at `artifacts-54ba9419295a4ec8b05d5769b1bc9990/logs/recorder-plugin-config-active-run06.cfg` (SHA-256 `7F6B4503E22F7A424BEC6195E0906DD21150C411E56A35CD9DEFFEDAD945D682`) sets producer limits to 512 entries / 4 MiB. A separate configured re-analysis at `analysis-configured-queue-limits/report.md` records a high-water of 5 entries / 64,995 bytes within those limits, with zero drops. Writer high-water was 2 entries / 43,824 bytes against 256 entries / 64 MiB. Queue bounds pass; the capture-work maximum gate fails. The original analyzer report is preserved unchanged.
+
+Timing remains unverified: the plugin reports `fixed_update_pre_physics`, `sample_phase_verified=false`; continuity, monotonic wall time, and correlation do not calibrate phase. The run did not perform a controlled transition calibration, and the recorder trace contains no M2 watcher events. The current installed config was restored to `Enabled=false` with SHA-256 `EF7D38689B5C55D7C24EAA3BAEB6B6ACD460509A5F3815D2897442EDC7AE162B`.
+
+Source candidate 0.1.16 changes periodic discovery to exclude inactive scene objects, while previously tracked actors remain sampled until destroyed or out of capture scope. This reduces the inactive-object work path implicated by the run 06 discovery spike without changing the `aicadets.flight.v1` schema, queue limits, capture thresholds, transport, or recovery behavior. No performance improvement is claimed until a new installed-runtime capture passes the unchanged gates.
+
+PR #16 stays open. Do not merge until a fresh installed run passes startup, clean stop, package/chunk integrity, no gaps/drops, every post-15-second p95 <= 1.0 ms, maximum sample <= 60 ms, configured queue bounds, and a documented controlled timing calibration. Keep `sample_phase_verified=false` if calibration is inconclusive.
+
+## Earlier 2026-11-05 preparation — installed 0.1.14 failed; 0.1.15 was the next source candidate
 
 The private Direct run `72c1c04816b040e984ba25dde909c7b0` loaded installed plugin 0.1.14 after a clean restart, connected to the local receiver, and stopped cleanly after the user exited the game. The finalized capture has `capture_complete=true`, 37,706 durable frames, 37/37 verified chunks, zero frame-step gaps or fixed-time mismatches, zero declared frame/entity drops, bounded queues, and no fatal writer error. These are structural and shutdown passes only. The user-operated watcher separately recorded physical Direct pursuit progress; the recorder contained no M2 controller event.
 

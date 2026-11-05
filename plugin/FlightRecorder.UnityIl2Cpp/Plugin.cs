@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.15";
+    public const string PluginVersion = "0.1.16";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     internal const int AnimationSampleIntervalFixedSteps = 5;
@@ -529,7 +529,10 @@ internal sealed class CaptureRegistry
         _nextDiscoveryAt = now + Math.Clamp(_plugin.DiscoveryInterval, 0.2d, 5d);
         _captureScopeByCharacter.Clear();
 
-        foreach (var character in Object.FindObjectsByType<BaseCharacter>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        // Inactive scene components are not useful as live actor candidates and
+        // can make periodic whole-scene discovery expensive on content-heavy maps.
+        // Existing tracked entries remain sampled until destroyed or out of scope.
+        foreach (var character in Object.FindObjectsByType<BaseCharacter>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
         {
             if (!_plugin.IsCapturing) return;
             if (character == null || !_plugin.IsAllowed(character)) continue;
@@ -545,7 +548,7 @@ internal sealed class CaptureRegistry
                 Track(titan, "titan");
             }
         }
-        foreach (var projectile in Object.FindObjectsByType<BaseProjectile>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        foreach (var projectile in Object.FindObjectsByType<BaseProjectile>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
         {
             if (!_plugin.IsCapturing) return;
             if (projectile == null) continue;

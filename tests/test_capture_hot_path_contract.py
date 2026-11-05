@@ -39,6 +39,10 @@ class CaptureHotPathContractTests(unittest.TestCase):
         self.assertIn("currentHookState.GetHashCode()", self.source)
         self.assertIn("entity.LastSampledStateCode != hookStateCode", self.source)
 
+    def test_periodic_discovery_excludes_inactive_scene_objects(self):
+        self.assertEqual(self.source.count("FindObjectsInactive.Exclude, FindObjectsSortMode.None"), 2)
+        self.assertNotIn("FindObjectsInactive.Include, FindObjectsSortMode.None", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()
