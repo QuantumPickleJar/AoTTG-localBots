@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.14";
+    public const string PluginVersion = "0.1.15";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     internal const int AnimationSampleIntervalFixedSteps = 5;
@@ -411,7 +411,7 @@ public sealed class FlightRecorderDriver : MonoBehaviour
                 plugin.MonotonicElapsedSeconds());
             frameSamplingWorkMs = (Stopwatch.GetTimestamp() - stageStarted) * 1000d / Stopwatch.Frequency;
             plugin.MarkFixedUpdateSampled(plugin.FixedStep);
-            var frameCapacityHint = Math.Clamp(2048 + frame.Samples.Count * 1024, 4096, 256 * 1024);
+            var frameCapacityHint = Math.Clamp(1024 + frame.Samples.Count * 640, 4096, 256 * 1024);
             stageStarted = Stopwatch.GetTimestamp();
             if (plugin.Publisher?.TryPublishFrame(frame, plugin.FixedStep, frame.T,
                     FlightRecorderPlugin.SerializerOptions, frameCapacityHint) != true)
@@ -422,9 +422,13 @@ public sealed class FlightRecorderDriver : MonoBehaviour
                     plugin.CheckTransportHealth();
             }
             transportWorkMs = (Stopwatch.GetTimestamp() - stageStarted) * 1000d / Stopwatch.Frequency;
+            stageStarted = Stopwatch.GetTimestamp();
+            plugin.PublishHealth(plugin.NowSeconds(), plugin.MonotonicElapsedSeconds());
+            transportWorkMs += (Stopwatch.GetTimestamp() - stageStarted) * 1000d / Stopwatch.Frequency;
+            // Include periodic health serialization and queueing in the callback sample.
+            // The health record itself summarizes the ring before this callback is appended.
             plugin.RecordCaptureWork((Stopwatch.GetTimestamp() - captureStarted) * 1000d / Stopwatch.Frequency,
                 discoveryWorkMs, frameSamplingWorkMs, transportWorkMs);
-            plugin.PublishHealth(plugin.NowSeconds(), plugin.MonotonicElapsedSeconds());
         }
         catch (Exception exception)
         {
@@ -454,7 +458,8 @@ internal sealed class CaptureRegistry
     private readonly List<EntitySamplePayload> _frameSamples;
     private readonly FramePayload _framePayload;
     private readonly List<EventPayload> _observationEvents = new();
-    private readonly Dictionary<int, bool> _captureScopeByCharacter;
+    private readonly Dictionary<int, (long Step, bool Allowed)> _captureScopeByCharacter;
+    private long _captureScopeStep = -1;
     private bool _entityOrderDirty = true;
     private double _nextDiscoveryAt;
     private int _activeSceneHandle;
@@ -468,7 +473,7 @@ internal sealed class CaptureRegistry
         _entityScratch = new List<TrackedEntity>(capacity);
         _frameSamples = new List<EntitySamplePayload>(capacity);
         _framePayload = new FramePayload { Samples = _frameSamples };
-        _captureScopeByCharacter = new Dictionary<int, bool>(capacity);
+        _captureScopeByCharacter = new Dictionary<int, (long Step, bool Allowed)>(capacity);
         var scene = SceneManager.GetActiveScene();
         _activeSceneHandle = scene.handle;
         _activeSceneName = scene.name;
@@ -682,7 +687,7 @@ internal sealed class CaptureRegistry
     internal FramePayload CaptureFrame(long step, double t, float fixedDeltaTime, double monotonicElapsed)
     {
         _frameSamples.Clear();
-        _captureScopeByCharacter.Clear();
+        _captureScopeStep = step;
         foreach (var entity in _ordered)
         {
             var component = entity.Component;
@@ -851,9 +856,10 @@ internal sealed class CaptureRegistry
     private bool IsAllowedForCurrentSample(BaseCharacter character)
     {
         var sourceId = character.GetInstanceID();
-        if (_captureScopeByCharacter.TryGetValue(sourceId, out var allowed)) return allowed;
-        allowed = _plugin.IsAllowed(character);
-        _captureScopeByCharacter[sourceId] = allowed;
+        if (_captureScopeByCharacter.TryGetValue(sourceId, out var cached) && cached.Step == _captureScopeStep)
+            return cached.Allowed;
+        var allowed = _plugin.IsAllowed(character);
+        _captureScopeByCharacter[sourceId] = (_captureScopeStep, allowed);
         return allowed;
     }
 }

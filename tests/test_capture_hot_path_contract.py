@@ -19,9 +19,20 @@ class CaptureHotPathContractTests(unittest.TestCase):
         self.assertIn("step - entity.AnimationSampleStep >= FlightRecorderPlugin.AnimationSampleIntervalFixedSteps", self.source)
 
     def test_scope_cache_is_per_fixed_step(self):
-        self.assertIn("_captureScopeByCharacter.Clear();", self.source)
+        frame = self.source.split("internal FramePayload CaptureFrame(", 1)[1].split("private string? FindId", 1)[0]
+        self.assertIn("_captureScopeStep = step;", frame)
+        self.assertNotIn("_captureScopeByCharacter.Clear();", frame)
+        self.assertIn("cached.Step == _captureScopeStep", self.source)
         self.assertIn("IsAllowedForCurrentSample(BaseCharacter character)", self.source)
-        self.assertIn("allowed = _plugin.IsAllowed(character);", self.source)
+        self.assertIn("var allowed = _plugin.IsAllowed(character);", self.source)
+
+    def test_frame_buffer_hint_tracks_observed_v1_sample_size(self):
+        self.assertIn("Math.Clamp(1024 + frame.Samples.Count * 640, 4096, 256 * 1024)", self.source)
+
+    def test_capture_work_includes_periodic_health_publication(self):
+        fixed_update = self.source.split("public void FixedUpdate()", 1)[1].split("public void OnApplicationQuit", 1)[0]
+        self.assertIn("transportWorkMs += (Stopwatch.GetTimestamp() - stageStarted)", fixed_update)
+        self.assertLess(fixed_update.index("plugin.PublishHealth("), fixed_update.index("plugin.RecordCaptureWork("))
 
     def test_enum_state_names_are_cached_until_the_underlying_value_changes(self):
         self.assertIn("LastSampledStateCode", self.source)
