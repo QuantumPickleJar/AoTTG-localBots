@@ -2,18 +2,18 @@
 
 SESSION: `M2-DIRECT-RECOVERY-20261104`
 GOAL: Validate the focused single-cadet Direct grounded pursuit and bounded opposite-side recovery change, verify Hold interruption and the Engine comparison, and evaluate Flight Recorder performance, timing, and watcher persistence. This card does not authorize multi-cadet, rescue, personality, or M3 gameplay.
-SOURCE BRANCH / BASE HEAD: `feat/m2-exploration-and-orders` / `0f10ef1c7e73dfb3c02ec69499e73851a1954787` (seven local commits ahead of PR #6 head `027ac43`; local changes pending).
+SOURCE BRANCH / M2 GAMEPLAY COMMIT: `feat/m2-exploration-and-orders` / `7c19f75217af57a6ff895c0452266363ea07b5dc`. Docs-only commits followed; the pre-task feature head was `0f10ef1c7e73dfb3c02ec69499e73851a1954787`, and the original seven commits beyond PR #6 head `027ac43` are preserved.
 REPORTED M2 BUILD: `M2-locomotion-1-f8combo-4-opposite-retry-gate`
-RECORDER BUILD: pending; the previously supplied run used plugin `0.1.10` and did not pass performance or timing gates.
+RECORDER BUILD: `0.1.11`, source commit `db2a57a6bc62211844b988e24f373dff246763a4`; installed DLLs loaded after the restart, but the runtime capture is still open and is not a completed acceptance run.
 TEST PROFILE: single owned cadet; private master-host; City 1 / Training / Waves; one ordinary Titan; comparable start geometry.
 
 ## Preflight record
 
-- AoTTG2 product build: **pending; record the in-game build shown by the client**.
-- Unity build: **pending runtime confirmation**; prior recorder run reported `2023.1.22f1`.
-- Lobby privacy / host authority / connected clients: **pending live observation**.
-- Saved preset and values: **pending snapshot**.
-- Effective runtime ground driver as shown in the F8 panel: **pending per run**.
+- AoTTG2 product build: **not observed; the game window did not expose a screenshot or menu state through desktop control**.
+- Unity build: `2023.1.22f1`, observed in the fresh BepInEx startup log.
+- Lobby privacy / host authority / connected clients: **not observed; no lobby was entered**.
+- Saved settings snapshot: `C:\Users\vmorr\Documents\Aottg2\Recorders\validation\M2-DIRECT-RECOVERY-20261104\InGame.before.json` (saved preset only; not evidence of active settings).
+- Effective runtime ground driver as shown in the F8 panel: **not observed**.
 - Active add-ons, observed in the lobby UI (not inferred from a saved preset): enable exactly:
   - `AICadetsWaveCadet`
   - `AICadetsCommandPanel`
@@ -21,8 +21,18 @@ TEST PROFILE: single owned cadet; private master-host; City 1 / Training / Waves
 - Confirm disabled: `AICadetsProbe`, `AICadetsTraversal`, `AICadetsTraversalReliable`, `AICadetsWatcher`, and every other active test add-on.
 - No manual steering or Recovery during locomotion runs. Preserve normal master-client ownership; do not test migration by assumption.
 - Recorder must be local opt-in using the existing named-pipe receiver. Do not include other players' telemetry.
-- Source/deployed file hashes and recorder package-manifest integrity: **pending deployment record**.
-- Save the video, watcher files, recorder ZIP, receiver output, console log, settings snapshot, deployed hashes, and this completed card for each run.
+- Deployed add-on SHA-256: WaveCadet `55F0D4CF0FDA6C4789CB7A59B16D9A29C19BF9F2FFF1B663DC504CB984007EF4`; CommandPanel `8E6EB2B708F6A67BF7C9D5D7E0BD23B9DCBA1418910239CBDAAE6AE96EC1E17C`; M2Watcher `B6BD148511EA59203F6A3ACBFE0C8886E73C32C6CF4E71D08D9DBE15CCC24489`.
+- Recorder package ZIP SHA-256: `96BDE8B78E0AE84A5F0A36A8180F8552FAA37D2E0AE12505E0AA5E82E1E32521`. All 49 manifest-listed files and hashes match; the ZIP contains those files plus `package-manifest.json`.
+- Installed recorder DLL SHA-256: plugin `0AAB6C3F0FF99111652797DD34EA968FB4B47B2591A15523F20C09FECDD5F061`; transport `91F47BEACC12351C4E2CD9B7370C54F6B9F67802C30E8076C14A0AAD9BA0DF5B`.
+- Pre-run add-on and recorder backups: `C:\Users\vmorr\Documents\Aottg2\Recorders\validation\M2-DIRECT-RECOVERY-20261104\rollback`.
+- Save video, watcher files, recorder ZIP, receiver output, console log, settings snapshot, deployed hashes, and this card when a lobby run can be observed.
+
+## Deployment and capture attempt
+
+- A clean game restart loaded `AoTTG2 Flight Recorder 0.1.11`; BepInEx logged recorder run `1ad84008622a4d4d9e06cae2a25ffac6` and `Chainloader startup complete`. The local receiver connected and received the hello record.
+- At the 2026-11-04 18:32 local snapshot, `writer_state.json` reported 15,393 accepted frames, last durable/submitted step 15,393, and `is_final=false`. One 2,040,567-byte `.partial` chunk was still open. There is no `capture_complete` result, clean producer stop, receiver shutdown, recorder ZIP, or performance analysis for this run.
+- UI observation is blocked: the game window exposes only an empty pane to accessibility and its screenshot capture times out. No active add-on list, lobby privacy, map/mode, settings, F8 driver, movement, watcher output, or video was observed.
+- The plugin reports `fixed_update_pre_physics`; `sample_phase_verified=false`. No controlled collision or ground-contact calibration was performed. This attempt does not pass the recorder timing or performance gate.
 
 ## Fresh-lobby run matrix
 
@@ -30,12 +40,12 @@ Create a fresh private master-host lobby for every row. Restart the game between
 
 | Run ID | Variant | Required observation | Outcome |
 |---|---|---|---|
-| `M2-DIR-CLEAR-01` | Engage + Direct on clear ground | Measured physical displacement, sustained positive target-relative progress, and no repeated command thrashing | Pending |
-| `M2-DIR-CORNER-01` | Engage + Direct at the W3-style blocked corner | `ground_route_blocked`; first `reposition_end moved<2`; exactly one opposite-side retry; distinct goal; same Titan; second displacement >= 2; renewed same-target progress. If second displacement is < 2, confirm safe observation/temporary ban and no third retry; this is a failure of recovery acceptance. | Pending |
-| `M2-DIR-HOLD-01` | Hold during measured Direct ground movement | `Idle` cancellation and cessation of ground movement; then separately verify Engage and Explore still work | Pending |
-| `M2-ENGINE-COMP-01` | Engage + Engine in comparable fresh conditions | Compare physical displacement, target gain, path length, reversals, and recovery. `MoveTo` or `ai_state=MoveTo` alone is API/state evidence, not a pass. | Pending |
-| `FR-PHASE-CAL-01` | Controlled calibration with an independently observable, ordinary physics transition | Record fixed-step ordinal, `Time.fixedTimeAsDouble`, monotonic wall time, recorder actor samples, and same-step M2 watcher/controller or collision callback event. Use a naturally occurring collision/ground-contact transition; no teleport, direct transform/velocity write, fake damage, or synthetic physics. | Pending |
-| `M2-WATCH-ROTATE-01` | Long private run with watcher rotation enabled | Create multiple segments; no `SaveToFile exceeded 1 mb limit`; every segment below limit; valid previous-file links and numbering; preserve unrelated `PersistentData`; save console log | Pending |
+| `M2-DIR-CLEAR-01` | Engage + Direct on clear ground | Measured physical displacement, sustained positive target-relative progress, and no repeated command thrashing | Blocked before lobby setup |
+| `M2-DIR-CORNER-01` | Engage + Direct at the W3-style blocked corner | `ground_route_blocked`; first `reposition_end moved<2`; exactly one opposite-side retry; distinct goal; same Titan; second displacement >= 2; renewed same-target progress. If second displacement is < 2, confirm safe observation/temporary ban and no third retry; this is a failure of recovery acceptance. | Blocked before lobby setup |
+| `M2-DIR-HOLD-01` | Hold during measured Direct ground movement | `Idle` cancellation and cessation of ground movement; then separately verify Engage and Explore still work | Blocked before lobby setup |
+| `M2-ENGINE-COMP-01` | Engage + Engine in comparable fresh conditions | Compare physical displacement, target gain, path length, reversals, and recovery. `MoveTo` or `ai_state=MoveTo` alone is API/state evidence, not a pass. | Blocked before lobby setup |
+| `FR-PHASE-CAL-01` | Controlled calibration with an independently observable, ordinary physics transition | Record fixed-step ordinal, `Time.fixedTimeAsDouble`, monotonic wall time, recorder actor samples, and same-step M2 watcher/controller or collision callback event. Use a naturally occurring collision/ground-contact transition; no teleport, direct transform/velocity write, fake damage, or synthetic physics. | Not performed; phase remains unverified |
+| `M2-WATCH-ROTATE-01` | Long private run with watcher rotation enabled | Create multiple segments; no `SaveToFile exceeded 1 mb limit`; every segment below limit; valid previous-file links and numbering; preserve unrelated `PersistentData`; save console log | Blocked before lobby setup |
 
 ## Recorder acceptance gate
 
@@ -54,21 +64,21 @@ If locomotion reaches an attack window, record attack attempts and observed anim
 
 ## Results and evidence
 
-- Direct clear-ground: **pending**.
-- Direct W3-style recovery: **pending**.
-- Hold / Engage / Explore: **pending**.
-- Engine regression comparison: **pending**.
-- Recorder runtime loading / stop / chunk integrity / continuity: **pending**.
-- Recorder performance: **pending**.
-- Recorder phase calibration: **pending**.
-- Watcher persistence rotation: **pending**.
-- Artifact names, deployed hashes, settings snapshot, product build, effective driver, and run IDs: **pending**.
-- Separate conclusions for static/API checks, runtime recorder, watcher persistence, physical movement, combat, and package integrity: **pending**.
+- Static/API: **pass** — `python scripts/check_probe.py`, `python scripts/check_traversal.py`, `python scripts/check_traversal_reliable.py`, `python scripts/check_wave_m2.py`, `python -m unittest discover -s tests -v` (141 tests), `python tools/recovery_preflight.py --addons addons --persistent <empty-test-directory>`, and whitespace checks. These are source/mock checks, not game execution.
+- Direct clear-ground / recovery / Hold / Engine: **not run; UI access blocked before lobby setup**.
+- Recorder loading: **pass**; clean restart logged 0.1.11 loading and local receiver hello.
+- Recorder stop / complete ZIP / performance: **not established**; one partial capture remains open and has no stop record or analysis.
+- Recorder phase calibration: **not performed; `sample_phase_verified=false`**.
+- Watcher persistence rotation: **not run**.
+- Package integrity: **pass**; installed DLL hashes match the verified 0.1.11 package manifest.
+- Physical movement, combat, and M2 live recovery: **no live evidence**. The user-supplied prior trace is failure evidence, not a result for this build.
+- Active runtime add-ons, actual in-game product build, lobby state, effective driver, and video: **not observed**.
 
 ## Rollback
 
 - Source rollback for gameplay is the unmodified pre-task `0f10ef1c7e73dfb3c02ec69499e73851a1954787` commit plus the prior PR #6 head `027ac43`; preserve all existing commits and rollback files.
-- Installed WaveCadet baseline SHA-256 before this task: `0CEE1C59489E23585F9653078AC5B5EDB3348D2A46BA88E0FC0E5872F413D2AC`. A timestamped byte-for-byte backup path and post-deploy hash must be recorded before launching the game.
+- Installed WaveCadet baseline SHA-256 before this task: `0CEE1C59489E23585F9653078AC5B5EDB3348D2A46BA88E0FC0E5872F413D2AC`; the byte-for-byte backup is `C:\Users\vmorr\Documents\Aottg2\Recorders\validation\M2-DIRECT-RECOVERY-20261104\rollback\AICadetsWaveCadet.cl`, and the deployed SHA-256 is `55F0D4CF0FDA6C4789CB7A59B16D9A29C19BF9F2FFF1B663DC504CB984007EF4`.
 - Installed CommandPanel baseline SHA-256: `8E6EB2B708F6A67BF7C9D5D7E0BD23B9DCBA1418910239CBDAE6AE96EC1E17C`.
 - Installed M2Watcher baseline SHA-256: `B6BD148511EA59203F6A3ACBFE0C8886E73C32C6CF4E71D08D9DBE15CCC24489`.
+- Task backups are under `C:\Users\vmorr\Documents\Aottg2\Recorders\validation\M2-DIRECT-RECOVERY-20261104\rollback`; restore only these three `.cl` files and the recorder DLL/config files if rolling back this deployment.
 - Restore only the add-on files changed for the test from the recorded backups, restore the previous recorder DLL and config if replaced, and restart AoTTG2. Do not modify M1 files, mission scripts, unrelated persistent data, or existing rollback files.
