@@ -816,7 +816,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-6-opposite-back-diagonal-retry")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-6-odm-retry")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1464,6 +1464,171 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
         self.assertTrue(any("escape_no_displacement" in x for x in w.messages))
         self.assertEqual(len([x for x in w.messages if "event=reposition_start" in x]), 2)
+
+    def test_odm_transition_under_two_units_waits_grounded_then_retries_opposite_side_once(self):
+        w = World()
+        w.tick()
+        w.controller.Persistence = 3
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_odm_under_displacement")
+        w.tick()
+        first_goal = w.controller._groundGoal
+        first_side = w.controller._groundRecoverySelectedSide
+        self.assertEqual(w.controller._state, "RecoverGround")
+
+        w.cadet.Grounded = False
+        w.tick()
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertTrue(w.controller._groundRecoveryRetryRequested)
+        first_end = next(line for line in w.messages if "event=reposition_end" in line)
+        self.assertIn("movement_result=moved<2", first_end)
+        self.assertIn("termination_reason=odm_transition", first_end)
+        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+
+        w.tick(0.5)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+
+        w.cadet.Grounded = True
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertEqual(w.controller._groundRecoverySelectedSide, -first_side)
+        self.assertNotEqual(w.controller._groundGoal, first_goal)
+        retries = [line for line in w.messages if "event=reposition_retry " in line]
+        self.assertEqual(len(retries), 1)
+        self.assertIn("target_id=101", retries[0])
+        self.assertIn("attempt=2", retries[0])
+        self.assertIn("opposite_side=true", retries[0])
+
+    def test_second_odm_under_displacement_bans_target_without_a_third_retry(self):
+        w = World()
+        w.tick()
+        w.controller.Persistence = 3
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_second_odm_under_displacement")
+        w.tick()
+        w.cadet.Grounded = False
+        w.tick()
+        self.assertTrue(w.controller._groundRecoveryRetryRequested)
+
+        w.cadet.Grounded = True
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        move_calls_before_second_end = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        w.cadet.Grounded = False
+        w.tick()
+
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls_before_second_end)
+        self.assertEqual(len([line for line in w.messages if "event=reposition_retry " in line]), 1)
+        self.assertEqual(len([line for line in w.messages if "event=reposition_start" in line]), 2)
+
+    def test_second_odm_recovery_records_same_target_progress_before_leaving_ground(self):
+        w = World()
+        w.tick()
+        w.controller.Persistence = 3
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_retry_progress_at_odm_transition")
+        w.tick()
+        w.cadet.Grounded = False
+        w.tick()
+        w.cadet.Grounded = True
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+
+        w.cadet.Position = w.cadet.Position + Vector(0, 0, 3)
+        w.cadet.Grounded = False
+        w.tick()
+
+        self.assertFalse(w.controller._groundRecoveryRetryProgressPending)
+        progress = next(line for line in w.messages if "event=reposition_retry_progress " in line)
+        self.assertIn("target_id=101", progress)
+        self.assertIn("target_gain=", progress)
+        self.assertIn("termination_reason=same_target_progress_confirmed_after_odm_transition", progress)
+
+    def test_hold_cancels_a_deferred_ground_recovery_retry(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_hold_cancels_deferred_retry")
+        w.tick()
+        w.cadet.Grounded = False
+        w.tick()
+        self.assertTrue(w.controller._groundRecoveryRetryRequested)
+        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertFalse(w.controller._groundRecoveryRetryRequested)
+        w.cadet.Grounded = True
+        w.tick()
+        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+        self.assertFalse(any("event=reposition_retry " in line for line in w.messages))
+
+    def test_deferred_retry_landing_wait_times_out_safely(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_retry_landing_timeout")
+        w.tick()
+        w.cadet.Grounded = False
+        w.tick()
+        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+
+        w.tick(4.1)
+
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
+        self.assertFalse(w.controller._groundRecoveryRetryRequested)
+        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+        self.assertTrue(any("event=reposition_retry_abandoned" in line
+                            and "ground_wait_timeout" in line
+                            and "command_dispatched=false" in line for line in w.messages))
+
+    def test_lost_target_cancels_a_deferred_retry(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_retry_target_loss")
+        w.tick()
+        w.cadet.Grounded = False
+        w.tick()
+        self.assertTrue(w.controller._groundRecoveryRetryRequested)
+        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        w.titan.IsAlive = False
+
+        w.tick()
+
+        self.assertEqual(w.controller._state, "AcquireTarget")
+        self.assertFalse(w.controller._groundRecoveryRetryRequested)
+        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+        self.assertTrue(any("event=reposition_retry_cancelled" in line
+                            and "termination_reason=retry_target_lost" in line for line in w.messages))
+
+    def test_authority_loss_ends_active_recovery_with_a_reasoned_record(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_authority_loss_recovery")
+        w.tick()
+        self.assertTrue(w.controller._groundRecoveryActive)
+
+        w.network.IsMasterClient = False
+        w.tick()
+
+        self.assertEqual(w.controller._state, "Done")
+        ended = next(line for line in w.messages if "event=reposition_end" in line)
+        self.assertIn("termination_reason=termination_master_lost_cleanup_unavailable", ended)
+        self.assertIn("target_id=101", ended)
+        self.assertIn("start_pos=", ended)
+        self.assertIn("end_pos=", ended)
+        self.assertIn("moved=", ended)
+        self.assertIn("goal=", ended)
+        self.assertIn("target_gain=", ended)
+        self.assertIn("ai_state=", ended)
 
     def test_opposite_retry_uses_shorter_clear_goal_when_full_corridors_are_blocked(self):
         w = World()

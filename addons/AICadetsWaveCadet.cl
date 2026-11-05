@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-locomotion-1-f8combo-6-opposite-back-diagonal-retry";
+    _buildTag = "M2-locomotion-1-f8combo-6-odm-retry";
     # Ground Titan pursuit uses explicit planar steering. The native MoveTo
     # angle offsets are retained only as an opt-in comparison driver.
     GroundSteering = "Direct";
@@ -84,6 +84,8 @@ addon AICadetsWaveCadet
     _groundRecoveryFirstCandidate = -1;
     _groundRecoveryFirstSide = 0;
     _groundRecoveryRetryRequested = false;
+    _groundRecoveryRetryWaitStarted = 0.0;
+    _groundRecoveryRetryWaitLimit = 4.0;
     _groundRecoveryRetryProgressPending = false;
     _groundRecoveryRetryTargetId = 0;
     _groundRecoverySelectedCandidate = -1;
@@ -712,6 +714,7 @@ addon AICadetsWaveCadet
         self._groundRecoveryFirstSide = 0;
         self._groundRecoveryFirstGoal = null;
         self._groundRecoveryRetryRequested = false;
+        self._groundRecoveryRetryWaitStarted = 0.0;
         self._groundRecoveryRetryProgressPending = false;
         self._groundRecoveryRetryTargetId = 0;
         self._groundRecoverySelectedScale = 1.0;
@@ -1367,6 +1370,7 @@ addon AICadetsWaveCadet
     # Pause all inputs after exhausted plans; prevents rapid target ping-pong.
     function BeginObserve(reason)
     {
+        self.ClearGroundRecoveryRetry(reason);
         self.StopODM();
         self._cadet.Idle();
         self._observeUntil = Time.GameTime + 6.0;
@@ -1447,6 +1451,10 @@ addon AICadetsWaveCadet
                 {
                     continue;
                 }
+                if (requiredSide != 0 && self._groundRecoveryFirstGoal != null && Vector3.Distance(goal, self._groundRecoveryFirstGoal) < 2.0)
+                {
+                    continue;
+                }
                 if (self.EscapeRouteClear(goal))
                 {
                     self._groundGoal = Vector3(goal.X, self._cadet.Position.Y, goal.Z);
@@ -1475,6 +1483,51 @@ addon AICadetsWaveCadet
             movementResult = "moved<2";
         }
         return "target_id=" + Convert.ToString(targetId) + " attempt=" + Convert.ToString(attempt) + " start_pos=" + Convert.ToString(startPosition) + " end_pos=" + Convert.ToString(endPosition) + " moved=" + Convert.ToString(moved) + " moved_lt_2=" + Convert.ToString(moved < 2.0) + " movement_result=" + movementResult + " goal=" + goalText + " target_gain=" + Convert.ToString(targetGain) + " ai_state=" + aiState + " termination_reason=" + terminationReason;
+    }
+
+    function ClearGroundRecoveryRetry(reason)
+    {
+        if (self._groundRecoveryRetryRequested || self._groundRecoveryRetryProgressPending)
+        {
+            targetId = self._groundRecoveryRetryTargetId;
+            if (targetId == 0)
+            {
+                targetId = self._groundRecoveryTargetId;
+            }
+            details = self.RecoveryRecordDetails(2, targetId, self._cadet.Position, self._cadet.Position, 0.0, self._groundRecoveryFirstGoal, 0.0, self._cadet.GetAIState(), reason);
+            self.LogEvent("reposition_retry_cancelled", details);
+        }
+        self._groundRecoveryRetryRequested = false;
+        self._groundRecoveryRetryWaitStarted = 0.0;
+        self._groundRecoveryRetryProgressPending = false;
+        self._groundRecoveryRetryTargetId = 0;
+    }
+
+    function HandleGroundRecoveryDisplacement(moved, terminationReason)
+    {
+        if (moved >= 2.0 || self._groundRecoveryTargetId == 0 || self._groundRecoveryTargetId != self._targetViewId)
+        {
+            return false;
+        }
+        self._lastFailureReason = "escape_no_displacement";
+        if (self._groundRecoveryAttempt == 1)
+        {
+            self._groundRecoveryRetryRequested = true;
+            self._groundRecoveryRetryTargetId = self._groundRecoveryTargetId;
+            self._groundRecoveryRetryWaitStarted = Time.GameTime;
+            details = self.RecoveryRecordDetails(2, self._groundRecoveryTargetId, self._cadet.Position, "pending_ground", 0.0, self._groundRecoveryFirstGoal, 0.0, self._cadet.GetAIState(), "awaiting_ground_for_opposite_retry");
+            self.LogEvent("reposition_wait_ground_for_retry", details + " after_attempt=1 termination_reason=" + terminationReason + " deadline_seconds=" + Convert.ToString(self._groundRecoveryRetryWaitLimit));
+            self.Enter("Recover", "escape_no_displacement_retry");
+            return true;
+        }
+        if (self._groundRecoveryAttempt == 2)
+        {
+            self._bannedTargetViewId = self._groundRecoveryTargetId;
+            self._banUntil = Time.GameTime + 15.0;
+            self.BeginObserve("escape_no_displacement");
+            return true;
+        }
+        return false;
     }
 
     function FinishGroundRecovery(terminationReason)
@@ -1518,7 +1571,26 @@ addon AICadetsWaveCadet
         }
         if (!self._cadet.Grounded)
         {
-            self.FinishGroundRecovery("odm_transition");
+            moved = self.FinishGroundRecovery("odm_transition");
+            if (self.HandleGroundRecoveryDisplacement(moved, "odm_transition"))
+            {
+                return;
+            }
+            if (self._groundRecoveryAttempt == 2 && moved >= 2.0 && self._groundRecoveryTargetId == self._targetViewId)
+            {
+                self._groundRecoveryRetryTargetId = self._targetViewId;
+                targetGain = self._groundRecoveryStartDistance - self.GroundDistanceToTarget();
+                if (targetGain > 0.0)
+                {
+                    details = self.RecoveryRecordDetails(2, self._groundRecoveryRetryTargetId, self._groundRecoveryStartPosition, self._cadet.Position, moved, self._groundRecoveryGoal, targetGain, self._cadet.GetAIState(), "same_target_progress_confirmed_after_odm_transition");
+                    self.LogEvent("reposition_retry_progress", details + " phase=odm_transition_end");
+                    self._groundRecoveryRetryProgressPending = false;
+                }
+                else
+                {
+                    self._groundRecoveryRetryProgressPending = true;
+                }
+            }
             if (self._cadet.LeftHookReady)
             {
                 self.Enter("PlanApproach", "recovery_interrupted_by_odm");
@@ -1537,18 +1609,8 @@ addon AICadetsWaveCadet
                 terminationReason = "timeout";
             }
             moved = self.FinishGroundRecovery(terminationReason);
-            if (moved < 2.0)
+            if (self.HandleGroundRecoveryDisplacement(moved, terminationReason))
             {
-                self._lastFailureReason = "escape_no_displacement";
-                if (self._targetRecoveries == 1)
-                {
-                    self._groundRecoveryRetryRequested = true;
-                    self.Enter("Recover", "escape_no_displacement_retry");
-                    return;
-                }
-                self._bannedTargetViewId = self._targetViewId;
-                self._banUntil = Time.GameTime + 15.0;
-                self.BeginObserve("escape_no_displacement");
                 return;
             }
             if (self._groundRecoveryAttempt == 2 && self._groundRecoveryTargetId == self._targetViewId)
@@ -1571,6 +1633,27 @@ addon AICadetsWaveCadet
 
     function RecoverStep()
     {
+        if (self._groundRecoveryRetryRequested)
+        {
+            if (self._targetViewId != self._groundRecoveryRetryTargetId || !self.RefreshTarget())
+            {
+                self.ClearGroundRecoveryRetry("retry_target_lost");
+                self.Enter("AcquireTarget", "recovery_retry_target_lost");
+                return;
+            }
+            if (!self._cadet.Grounded)
+            {
+                if (Time.GameTime - self._groundRecoveryRetryWaitStarted >= self._groundRecoveryRetryWaitLimit)
+                {
+                    self._bannedTargetViewId = self._groundRecoveryRetryTargetId;
+                    self._banUntil = Time.GameTime + 15.0;
+                    details = self.RecoveryRecordDetails(2, self._groundRecoveryRetryTargetId, self._cadet.Position, self._cadet.Position, 0.0, self._groundRecoveryFirstGoal, 0.0, self._cadet.GetAIState(), "ground_wait_timeout");
+                    self.LogEvent("reposition_retry_abandoned", details + " command_dispatched=false");
+                    self.BeginObserve("escape_retry_landing_timeout");
+                }
+                return;
+            }
+        }
         if (self._targetRecoveries >= self.RecoveryBudget() && !self._groundRecoveryRetryRequested)
         {
             details = self.RecoveryRecordDetails(self._targetRecoveries, self._targetViewId, self._cadet.Position, self._cadet.Position, 0.0, null, 0.0, self._cadet.GetAIState(), "recovery_budget_exhausted");
@@ -1637,6 +1720,7 @@ addon AICadetsWaveCadet
             {
                 self.LogEvent("reposition_retry", details + " first_goal=" + Convert.ToString(self._groundRecoveryFirstGoal) + " first_candidate=" + Convert.ToString(self._groundRecoveryFirstCandidate) + " candidate=" + Convert.ToString(self._groundRecoverySelectedCandidate) + " scale=" + Convert.ToString(self._groundRecoverySelectedScale) + " opposite_side=true next_attempt=2");
                 self._groundRecoveryRetryRequested = false;
+                self._groundRecoveryRetryWaitStarted = 0.0;
             }
             self.LogEvent("reposition_start", details);
             self.Enter("RecoverGround", "retain_target_change_route");
@@ -2187,6 +2271,8 @@ addon AICadetsWaveCadet
         }
         requestedOrder = order;
         ackOrder = order;
+        retryWasPending = self._groundRecoveryRetryRequested;
+        self.ClearGroundRecoveryRetry("order_" + order);
         if (order == "EngageEngine" || order == "EngageDirect")
         {
             self.GroundSteering = "Engine";
@@ -2208,6 +2294,10 @@ addon AICadetsWaveCadet
             if (self._state == "ApproachGround")
             {
                 self.StartGroundApproach(self._groundFallback);
+            }
+            elif (retryWasPending && self._state == "Recover")
+            {
+                self.Enter("PlanApproach", "ground_driver_order_cancelled_retry");
             }
             self.LogEvent("ground_driver_changed", "driver=" + self.GroundSteering);
             self.AcknowledgeOrder(sequence, ackOrder);
@@ -2316,6 +2406,7 @@ addon AICadetsWaveCadet
         {
             return;
         }
+        self.ClearGroundRecoveryRetry("resupply_" + reason);
         if (self._orderMode != "Resupply")
         {
             self._resumeAfterSupply = self._orderMode;
@@ -2696,6 +2787,15 @@ addon AICadetsWaveCadet
 
     function Terminate(resultClass, reason)
     {
+        self.ClearGroundRecoveryRetry("termination_" + reason);
+        if (self._groundControlActive)
+        {
+            self.CancelGroundControl("termination_" + reason);
+        }
+        if (self._groundRecoveryActive && self._cadet != null)
+        {
+            self.CancelGroundRecovery("termination_" + reason);
+        }
         self.StopODM();
         if (Network.IsMasterClient && self._cadet != null && self._cadet.IsMine)
         {
