@@ -1,10 +1,10 @@
 # Validation Card — M2 Direct recovery and Flight Recorder gates
 
-SESSION: `M2-DIRECT-RECOVERY-20261104`  
-GOAL: Validate the focused single-cadet Direct grounded pursuit and bounded opposite-side recovery change, verify Hold interruption and the Engine comparison, and evaluate Flight Recorder performance, timing, and watcher persistence. This card does not authorize multi-cadet, rescue, personality, or M3 gameplay.  
-SOURCE BRANCH / BASE HEAD: `feat/m2-exploration-and-orders` / `0f10ef1c7e73dfb3c02ec69499e73851a1954787` (seven local commits ahead of PR #6 head `027ac43`; local changes pending).  
-REPORTED M2 BUILD: `M2-locomotion-1-f8combo-4-opposite-retry-gate`  
-RECORDER BUILD: pending; the previously supplied run used plugin `0.1.10` and did not pass performance or timing gates.  
+SESSION: `M2-DIRECT-RECOVERY-20261104`
+GOAL: Validate the focused single-cadet Direct grounded pursuit and bounded opposite-side recovery change, verify Hold interruption and the Engine comparison, and evaluate Flight Recorder performance, timing, and watcher persistence. This card does not authorize multi-cadet, rescue, personality, or M3 gameplay.
+SOURCE BRANCH / BASE HEAD: `feat/m2-exploration-and-orders` / `0f10ef1c7e73dfb3c02ec69499e73851a1954787` (seven local commits ahead of PR #6 head `027ac43`; local changes pending).
+REPORTED M2 BUILD: `M2-locomotion-1-f8combo-4-opposite-retry-gate`
+RECORDER BUILD: pending; the previously supplied run used plugin `0.1.10` and did not pass performance or timing gates.
 TEST PROFILE: single owned cadet; private master-host; City 1 / Training / Waves; one ordinary Titan; comparable start geometry.
 
 ## Preflight record
