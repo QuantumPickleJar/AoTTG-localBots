@@ -1,0 +1,21 @@
+# Validation result — M2-L0 steering and Engage
+
+- Session ID: M2-L0-20261102
+- Profile: M2-L0
+- Date: 2026-11-02
+- AoTTG2 build / map / mode / host: City 1 / Training / Waves; build and lobby privacy not present in the supplied logs.
+- Commit / build tag: `ba0ba05469f604496680e972bbcb2cafee8e9bf7` / `M2-locomotion-1`
+- Installed files and enabled add-ons: Watcher header indicates the M2 watcher ran; uploaded logs report `build=M2-locomotion-1` and Direct or Engine steering. The source version of the three M2 files had been hash-verified before these runs.
+- Explicitly disabled add-ons: Not established by the supplied telemetry.
+- Relevant saved settings: Earlier preflight found saved `GroundSteering=Engine`, `RecordDecisionTrace=true`, `SaveRunReport=false`; the active runtime profile in these logs reports both drivers. Saved settings were not changed during preflight.
+- Test actions and observed physical outcomes:
+  - `AICadetsM2Watch23.txt`, Direct: target 1009's planar distance was 763.08 at one ground segment start; at game time 29.08 the controller recorded `displacement=67.98`, `path=76.59`, `distance=556.71`, and `target_gain=57.92`. It also recorded 18 blocked ground routes, 12 reposition starts, and eventually `recover_exhausted` on a blocked route.
+  - `AICadetsM2Watch24.txt`, Direct: at game time 52.38 it recorded `displacement=58.52`, `path=58.62`, `distance=85.54`, and `target_gain=58.52` in a ground-pursuit observation. Later attack animations were observed, but all three corresponding results reported `confirmed_damage=false`.
+  - `AICadetsM2Watch25.txt`, Engine: the run switched from Direct to Engine at game time 6.96. Subsequent Engine samples recorded target gains of -1.22, +19.74, +14.20, and -29.56, with physical displacement in each observation. The final sample moved 75.44 units with 106.40 units of path while losing 29.56 units of target distance.
+  - No `circling_detected` or Hold order was recorded in Watch22–Watch25. Direct had logged blocked-route recovery; the Engine portion did not log a blocked ground route.
+- Watcher logs / video filenames: `AICadetsM2Watch22.txt`–`AICadetsM2Watch25.txt`; `direct-engage-2026.11.02 - 12.28.30.50.mp4`; `engine-engage-2026.11.02 - 12.31.53.53.mp4`; `engine-engage-2026.11.02 - 12.32.05.54.mp4`; `engine-engage-2026.11.02 - 12.32.18.55.mp4`. The Direct and Engine clips appear to overlap their corresponding watcher sessions by file times, but there is no shared frame/game clock for exact event matching. `direct-engage-2026.10.31 - 10.46.38.44.mp4` predates this build and is not M2-locomotion-1 evidence.
+- Code-reported commands vs observed motion: Direct `Human.Move` and Engine `Human.MoveTo` are logged. Position deltas and target-distance gains independently establish physical movement in both modes. Engine's `ai_state_after=MoveTo` is not treated as movement proof.
+- Outcome: PARTIAL for physical-movement evidence; INCONCLUSIVE for the Direct-versus-Engine comparison and the full M2-L0 acceptance.
+- Verified / observed / inferred: observed physical ground movement in both modes; positive Direct target gain in the recorded intervals; variable Engine target gain including a negative interval; Direct blocked-route and recovery telemetry. No controlled matched A/B result, Hold interruption, or circling conclusion was established.
+- Remaining issue and next action: use the new atomic F8 presets in matched fresh lobbies; verify the acknowledged build, steering mode, actual displacement and target gain. Exercise Hold separately if desired.
+- Rollback status: this report records M2-locomotion-1 evidence only. The new F8 preset change is separate and has its own rollback files in the current deployment backup.

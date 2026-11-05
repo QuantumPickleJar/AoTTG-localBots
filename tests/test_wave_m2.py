@@ -451,6 +451,41 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._orderMode, "Engage")
         self.assertEqual(w.controller._state, "PlanApproach")
 
+    def test_combined_engage_presets_set_driver_and_ack_requested_mode(self):
+        w = World()
+        w.tick()
+        for sequence, preset, driver in (
+            (1, "EngageEngine", "Engine"),
+            (2, "EngageDirect", "Direct"),
+        ):
+            w.persistent.update({
+                "AICadetsCmdSequence": sequence,
+                "AICadetsCmdMode": preset,
+                "AICadetsCmdScope": "all",
+            })
+            w.tick()
+            self.assertEqual(w.controller.GroundSteering, driver)
+            self.assertEqual(w.controller._orderMode, "Engage")
+            self.assertEqual(w.persistent["AICadetsM2AckMode-AICadetsM2-1"], preset)
+
+    def test_manual_recovery_order_resumes_autonomous_engage(self):
+        w = World()
+        w.tick()
+        w.controller._target = w.titan
+        w.controller._targetViewId = w.titan.ViewID
+        w.controller._orderMode = "Hold"
+        w.controller.Enter("Hold", "test_hold")
+        w.persistent.update({
+            "AICadetsCmdSequence": 1,
+            "AICadetsCmdMode": "Recovery",
+            "AICadetsCmdScope": "all",
+        })
+        w.tick()
+        self.assertEqual(w.controller._orderMode, "Engage")
+        self.assertEqual(w.persistent["AICadetsM2AckMode-AICadetsM2-1"], "Recovery")
+        self.assertTrue(any("manual_recovery_requested" in message for message in w.messages))
+        self.assertNotEqual(w.controller._state, "Hold")
+
     def test_low_gas_enters_resupply_instead_of_terminating(self):
         w = World()
         w.tick()
@@ -781,7 +816,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-4-opposite-retry-gate")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -809,7 +844,7 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.cadet.ai_state, "Idle")
-        self.assertTrue(any("motion_cancelled" in m and "reason=state_exit_Hold" in m and "request=Human.Idle" in m and "ai_state_after=Idle" in m for m in w.messages))
+        self.assertTrue(any("event=motion_cancelled" in m and "reason=order_Hold" in m and "request=Human.Idle" in m and "ai_state_after=Idle" in m for m in w.messages))
 
     def test_circle_path_uses_bounded_recovery_before_any_target_ban_and_hold_interrupts(self):
         w = World()
@@ -1265,7 +1300,12 @@ class WaveM2Tests(unittest.TestCase):
         w.controller._targetTraverseCount = 2
         w.controller._targetRecoveries = 1
         w.controller._orbitAttempts = 2
-        w.controller._groundStartPosition = Vector(4, 0, 0)
+        w.controller._groundRecoveryAttempt = 1
+        w.controller._groundRecoveryTargetId = w.titan.ViewID
+        w.controller._groundRecoveryStartPosition = Vector(4, 0, 0)
+        w.controller._groundRecoveryStartDistance = w.controller.GroundDistanceToTarget()
+        w.controller._groundRecoveryGoal = Vector(20, 0, 0)
+        w.controller._groundRecoveryActive = True
         w.controller._groundGoal = Vector(20, 0, 0)
         w.cadet.Position = Vector(20, 0, 0)
         w.controller.Enter("RecoverGround", "test")
@@ -1374,16 +1414,88 @@ class WaveM2Tests(unittest.TestCase):
         self.assertTrue(any("escape_route candidate=4" in x for x in w.messages))
         self.assertTrue(any(x[0] == "move_to" for x in w.cadet.calls))
 
-    def test_failed_escape_pauses_instead_of_repeating_same_route(self):
+    def test_failed_escape_tries_one_alternate_route_then_pauses_if_still_stuck(self):
         w = World()
         w.tick()
+        w.controller.Persistence = 3
+        self.assertEqual(w.controller.RecoveryBudget(), 2)
         w.controller.AcquireTarget()
         w.controller.Enter("Recover", "test")
         w.tick()
+        first_goal = w.controller._groundGoal
+        first_side = w.controller._groundRecoverySelectedSide
+        self.assertEqual(w.controller._targetRecoveries, 1)
+
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+        self.assertEqual(w.controller._targetRecoveries, 1)
+        self.assertEqual(w.controller._bannedTargetViewId, 0)
+        first_end = next(x for x in w.messages if "event=reposition_end" in x)
+        self.assertIn("run=", first_end)
+        self.assertIn("cadet=AICadetsM2-1", first_end)
+        self.assertIn("target_id=101", first_end)
+        self.assertIn("order_seq=", first_end)
+        self.assertIn("attempt=1", first_end)
+        self.assertIn("start_pos=", first_end)
+        self.assertIn("end_pos=", first_end)
+        self.assertIn("moved=", first_end)
+        self.assertIn("movement_result=moved<2", first_end)
+        self.assertIn("goal=", first_end)
+        self.assertIn("target_gain=", first_end)
+        self.assertIn("ai_state=Idle", first_end)
+        self.assertIn("termination_reason=timeout", first_end)
+        self.assertFalse(any("event=reposition_retry" in x for x in w.messages))
+
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        second_goal = w.controller._groundGoal
+        self.assertNotEqual(second_goal, first_goal)
+        self.assertEqual(w.controller._groundRecoverySelectedSide, -first_side)
+        self.assertEqual(w.controller._targetRecoveries, 2)
+        retry = next(x for x in w.messages if "event=reposition_retry" in x)
+        self.assertIn("target_id=101", retry)
+        self.assertIn("attempt=2", retry)
+        self.assertIn("opposite_side=true", retry)
+        self.assertIn("first_goal=", retry)
+        self.assertIn("goal=", retry)
+
         w.tick(6.1)
         self.assertEqual(w.controller._state, "Observe")
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
         self.assertTrue(any("escape_no_displacement" in x for x in w.messages))
+        self.assertEqual(len([x for x in w.messages if "event=reposition_start" in x]), 2)
+
+    def test_successful_opposite_retry_requires_same_target_progress(self):
+        w = World()
+        w.tick()
+        w.titan.Position = Vector(4, 0, 600)
+        w.titan.NapePosition = Vector(4, 8, 602)
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_retry_progress")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        retry_goal = w.controller._groundGoal
+        w.cadet.Position = retry_goal
+        w.tick(0.02)
+        self.assertEqual(w.controller._state, "PlanApproach")
+        self.assertTrue(w.controller._groundRecoveryRetryProgressPending)
+
+        w.controller.StartGroundApproach(False)
+        self.assertEqual(w.controller._state, "ApproachGround")
+        w.cadet.Position = w.cadet.Position + Vector(0, 0, 10)
+        w.tick(5.1)
+        self.assertEqual(w.controller._state, "ApproachGround")
+        self.assertFalse(w.controller._groundRecoveryRetryProgressPending)
+        progress = next(x for x in w.messages if "event=reposition_retry_progress" in x)
+        self.assertIn("target_id=101", progress)
+        self.assertIn("attempt=2", progress)
+        self.assertIn("target_gain=", progress)
+        self.assertIn("termination_reason=same_target_progress_confirmed", progress)
 
     def test_tactic_catalog_matches_runtime_capabilities_and_fails_closed(self):
         import json
