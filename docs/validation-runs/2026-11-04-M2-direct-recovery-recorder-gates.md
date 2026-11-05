@@ -4,7 +4,7 @@ SESSION: `M2-DIRECT-RECOVERY-20261104`
 GOAL: Validate the focused single-cadet Direct grounded pursuit and bounded opposite-side recovery change, verify Hold interruption and the Engine comparison, and evaluate Flight Recorder performance, timing, and watcher persistence. This card does not authorize multi-cadet, rescue, personality, or M3 gameplay.
 SOURCE BRANCH / M2 GAMEPLAY COMMIT: `feat/m2-exploration-and-orders` / `7c19f75217af57a6ff895c0452266363ea07b5dc`. Docs-only commits followed; the pre-task feature head was `0f10ef1c7e73dfb3c02ec69499e73851a1954787`, and the original seven commits beyond PR #6 head `027ac43` are preserved.
 REPORTED M2 BUILD: `M2-locomotion-1-f8combo-4-opposite-retry-gate`
-RECORDER BUILD: `0.1.11`, source commit `db2a57a6bc62211844b988e24f373dff246763a4`; installed DLLs loaded after the restart, but the runtime capture is still open and is not a completed acceptance run.
+RECORDER BUILD: installed `0.1.11`, source commit `db2a57a6bc62211844b988e24f373dff246763a4`; the installed run completed structurally but failed the performance gate. A 0.1.12 unsorted-discovery candidate was built afterward and is not installed or runtime-tested.
 TEST PROFILE: single owned cadet; private master-host; City 1 / Training / Waves; one ordinary Titan; comparable start geometry.
 
 ## Preflight record
@@ -25,14 +25,16 @@ TEST PROFILE: single owned cadet; private master-host; City 1 / Training / Waves
 - Recorder package ZIP SHA-256: `96BDE8B78E0AE84A5F0A36A8180F8552FAA37D2E0AE12505E0AA5E82E1E32521`. All 49 manifest-listed files and hashes match; the ZIP contains those files plus `package-manifest.json`.
 - Installed recorder DLL SHA-256: plugin `0AAB6C3F0FF99111652797DD34EA968FB4B47B2591A15523F20C09FECDD5F061`; transport `91F47BEACC12351C4E2CD9B7370C54F6B9F67802C30E8076C14A0AAD9BA0DF5B`.
 - Pre-run add-on and recorder backups: `C:\Users\vmorr\Documents\Aottg2\Recorders\validation\M2-DIRECT-RECOVERY-20261104\rollback`.
-- Save video, watcher files, recorder ZIP, receiver output, console log, settings snapshot, deployed hashes, and this card when a lobby run can be observed.
+- Save video, watcher files, recorder ZIP, receiver output, console log, settings snapshot, deployed hashes, and this card when a lobby run can be observed. The recorder-only run artifacts are preserved now; no game video or watcher files exist because no lobby was entered.
 
 ## Deployment and capture attempt
 
-- A clean game restart loaded `AoTTG2 Flight Recorder 0.1.11`; BepInEx logged recorder run `1ad84008622a4d4d9e06cae2a25ffac6` and `Chainloader startup complete`. The local receiver connected and received the hello record.
-- At the 2026-11-04 18:32 local snapshot, `writer_state.json` reported 15,393 accepted frames, last durable/submitted step 15,393, and `is_final=false`. One 2,040,567-byte `.partial` chunk was still open. There is no `capture_complete` result, clean producer stop, receiver shutdown, recorder ZIP, or performance analysis for this run.
-- UI observation is blocked: the game window exposes only an empty pane to accessibility and its screenshot capture times out. No active add-on list, lobby privacy, map/mode, settings, F8 driver, movement, watcher output, or video was observed.
-- The plugin reports `fixed_update_pre_physics`; `sample_phase_verified=false`. No controlled collision or ground-contact calibration was performed. This attempt does not pass the recorder timing or performance gate.
+- A clean game restart loaded `AoTTG2 Flight Recorder 0.1.11`; BepInEx logged run `1ad84008622a4d4d9e06cae2a25ffac6` and `Chainloader startup complete`. The local receiver connected, received hello, and received the producer stop record. `writer_state.json` finalized with `capture_complete=true`, `is_final=true`, 39,509 accepted frames, and one sealed chunk.
+- Offline analysis verified the chunk SHA-256 and complete 39,509-frame coverage; no frame-step gaps, declared frame/sample drops, parse errors, or incomplete reasons were found. The capture includes 158 events and zero tracked entities.
+- Performance: **fail** — 156 health windows after the first 15 monotonic seconds; 2 exceeded 1.0 ms p95. Worst p95 was 2.8658 ms; worst individual reported sample was 91.2873 ms. Maximum observed producer queue was depth 14 / 3,451 bytes; writer queue high-water was depth 14 / 5,721 bytes, within limits. No drops or fatal errors were reported. Since there were no tracked actors, M2 workload performance remains unmeasured.
+- Timing: **inconclusive** — frame ordinals were continuous; fixed delta was 0.019999992 s; frame/game-time anomalies were zero. Producer health wall time was monotonic and correlated with game time (Pearson r=0.9999999997; slope 1.00000058 game seconds per wall second). There were no collision calibration candidates or M2 watcher/controller events, so `sample_phase_verified=false` remains.
+- UI observation is blocked: the game window exposes only an empty pane to accessibility and its screenshot capture times out. No active add-on list, lobby privacy, map/mode, effective F8 driver, movement, watcher output, or video was observed.
+- Candidate 0.1.12 replaces sorted discovery with `FindObjectsByType(..., FindObjectsSortMode.None)`, preserving inactive-object coverage and explicit entity-ID output ordering. It built against the installed interop but has not been installed or measured. This does not clear the performance gate.
 
 ## Fresh-lobby run matrix
 
@@ -66,11 +68,13 @@ If locomotion reaches an attack window, record attack attempts and observed anim
 
 - Static/API: **pass** — `python scripts/check_probe.py`, `python scripts/check_traversal.py`, `python scripts/check_traversal_reliable.py`, `python scripts/check_wave_m2.py`, `python -m unittest discover -s tests -v` (141 tests), `python tools/recovery_preflight.py --addons addons --persistent <empty-test-directory>`, and whitespace checks. These are source/mock checks, not game execution.
 - Direct clear-ground / recovery / Hold / Engine: **not run; UI access blocked before lobby setup**.
-- Recorder loading: **pass**; clean restart logged 0.1.11 loading and local receiver hello.
-- Recorder stop / complete ZIP / performance: **not established**; one partial capture remains open and has no stop record or analysis.
-- Recorder phase calibration: **not performed; `sample_phase_verified=false`**.
+- Recorder loading and shutdown: **pass** for 0.1.11; clean restart, hello, producer stop, receiver shutdown, and final capture state were observed.
+- Recorder structure: **pass**; one SHA-256-verified chunk, 39,509 frames, no gaps or declared drops, `capture_complete=true`.
+- Recorder performance: **fail**; 2 of 156 post-start p95 windows exceed 1.0 ms, and the worst sample is 91.2873 ms (>60 ms). No actors were tracked, so this is not an M2 workload measurement.
+- Recorder phase calibration: **inconclusive / not performed**; no independently observable physics transition or M2 events, and `sample_phase_verified=false`.
+- Timing continuity/correlation: **partial pass** for ordinal/time continuity and monotonic wall correlation only; it does not establish sample phase.
 - Watcher persistence rotation: **not run**.
-- Package integrity: **pass**; installed DLL hashes match the verified 0.1.11 package manifest.
+- Package integrity: **pass** for installed 0.1.11; its DLL hashes match the verified package manifest. Candidate 0.1.12 was only built; its runtime and installed-package gates are open.
 - Physical movement, combat, and M2 live recovery: **no live evidence**. The user-supplied prior trace is failure evidence, not a result for this build.
 - Active runtime add-ons, actual in-game product build, lobby state, effective driver, and video: **not observed**.
 
