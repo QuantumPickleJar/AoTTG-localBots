@@ -67,6 +67,7 @@ def validate(source):
             "horizontalAway": "Vector3",
             "retreatPoint": "Vector3",
             "recoverGoal": "Vector3",
+            "goal": "Vector3",
             "radial": "Vector3",
             "self._direction": "Vector3",
             "self._orbitStartRadial": "Vector3",
