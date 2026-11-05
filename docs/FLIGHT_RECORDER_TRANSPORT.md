@@ -20,7 +20,7 @@ Producer defaults are 512 queue slots and 4 MiB, with 32 slots and 256 KiB held 
 
 ## Windows pipe security and operation
 
-The receiver uses a duplex Windows named pipe, a protected DACL granting the current Windows user, and PIPE_REJECT_REMOTE_CLIENTS. It does not bind a TCP socket or upload data. The producer uses a background thread for pipe I/O; the frame DTO contains copied primitive values and no Unity object references. No transport call waits for pipe availability on the Unity callback thread. Queued `ReadOnlyMemory<byte>` is backed by an immutable-per-message `ArrayBufferWriter<byte>` retained until acknowledgement.
+The receiver uses a duplex Windows named pipe, a protected DACL granting the current Windows user, and PIPE_REJECT_REMOTE_CLIENTS. It does not bind a TCP socket or upload data. The producer uses a background thread for pipe I/O; the frame DTO contains copied primitive values and no Unity object references. No transport call waits for pipe availability on the Unity callback thread. Each queued UTF-8 envelope owns an `ArrayPool<byte>` buffer that is not reused while pending. The buffer is cleared and returned after its matching acknowledgement; rejected messages return it immediately, and shutdown returns queued buffers only after the worker stops. Queue byte limits use the serialized envelope length.
 
 Copy configs/flight-recorder-transport.example.json to a local private config, select a new empty output directory, and set recording_enabled=true only for an opted-in private capture. The package includes Python 3.14.10 x64 embeddable plus a launcher; this does not change PATH or install a system-wide Python. Start the receiver from the extracted package:
 

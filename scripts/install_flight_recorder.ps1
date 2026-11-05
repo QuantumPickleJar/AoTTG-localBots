@@ -21,7 +21,7 @@ $source = Join-Path $package "plugin"
 $packageManifestPath = Join-Path $package "package-manifest.json"
 if (-not (Test-Path -LiteralPath $packageManifestPath -PathType Leaf)) { throw "Package manifest is missing: $packageManifestPath" }
 $packageManifest = Get-Content -LiteralPath $packageManifestPath -Raw | ConvertFrom-Json
-if ($packageManifest.schema -ne "aicadets.flight.package.v1" -or $packageManifest.plugin_version -ne "0.1.10") {
+if ($packageManifest.schema -ne "aicadets.flight.package.v1" -or $packageManifest.plugin_version -ne "0.1.11") {
     throw "Package manifest schema or plugin version is not supported."
 }
 foreach ($file in $packageManifest.files) {
@@ -87,13 +87,13 @@ try {
     }
     $manifest = [ordered]@{
         schema = "aicadets.flight.plugin-install.v1"
-        plugin_version = "0.1.10"
+        plugin_version = "0.1.11"
         install_root_relative = "BepInEx/plugins/AoTTG2FlightRecorder"
         files = $records
     }
     $manifestPath = Join-Path $target "install-manifest.json"
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
-    Write-Host "Installed Flight Recorder 0.1.10. Only the two recorder DLLs were added; the BepInEx configuration was left unchanged."
+    Write-Host "Installed Flight Recorder 0.1.11. Only the two recorder DLLs were added; the BepInEx configuration was left unchanged."
     Write-Host "Rollback manifest: $manifestPath"
 }
 catch {

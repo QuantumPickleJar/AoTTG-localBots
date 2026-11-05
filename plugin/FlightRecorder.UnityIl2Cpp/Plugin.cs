@@ -21,9 +21,9 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.10";
+    public const string PluginVersion = "0.1.11";
     private const string RequiredUnityVersion = "2023.1.22f1";
-    private const string CapturePhase = "fixed_update_pre_physics_order_unspecified";
+    internal const string CapturePhaseName = "fixed_update_pre_physics";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -41,6 +41,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
     private Harmony? _harmony;
     private long _clockOrigin;
     private long _fixedStep;
+    private long _lastCapturedFixedStep = -1;
     private double _nextHealthAt = 5d;
     private readonly double[] _captureWorkWindowMs = new double[256];
     private int _captureWorkCount;
@@ -52,6 +53,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
     internal static FlightRecorderPlugin? Instance => _instance;
     internal PipePublisher? Publisher => _publisher;
     internal long FixedStep => _fixedStep;
+    internal long LastCapturedFixedStep => Interlocked.Read(ref _lastCapturedFixedStep);
     internal bool IsCapturing => _publisher is not null && !_captureFailed && Volatile.Read(ref _shutdownStarted) == 0;
     internal int MaxEntities => Math.Clamp(_maxEntities?.Value ?? 512, 1, 4096);
     internal double DiscoveryInterval => _discoveryInterval?.Value ?? 0.5;
@@ -60,6 +62,8 @@ public sealed class FlightRecorderPlugin : BasePlugin
     {
         checked { _fixedStep++; }
     }
+
+    internal void MarkFixedUpdateSampled(long step) => Interlocked.Exchange(ref _lastCapturedFixedStep, step);
 
     public override void Load()
     {
@@ -105,7 +109,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
                 ProducerVersion = PluginVersion,
                 CaptureTier = "partial_il2cpp_periodic_discovery_v1",
                 InstalledBuildFingerprint = new { unity_version = Application.unityVersion, architecture = "x64" },
-                RuntimeObservationPhase = CapturePhase,
+                RuntimeObservationPhase = CapturePhaseName,
                 TimestampClock = "UnityEngine.Time.fixedTimeAsDouble; fixed simulation clock; wall monotonic elapsed is carried separately",
                 StepSource = "adapter FixedUpdate callback ordinal",
                 DiscoveryIntervalSeconds = Math.Clamp(DiscoveryInterval, 0.2d, 5d),
@@ -165,13 +169,14 @@ public sealed class FlightRecorderPlugin : BasePlugin
     private (double Last, double P95, double Maximum, int Count) CaptureWorkStatistics()
     {
         if (_captureWorkCount == 0) return (0d, 0d, 0d, 0);
-        var ordered = new double[_captureWorkCount];
+        Span<double> ordered = stackalloc double[256];
         var start = _captureWorkCount == _captureWorkWindowMs.Length ? _captureWorkWriteIndex : 0;
         for (var i = 0; i < _captureWorkCount; i++)
             ordered[i] = _captureWorkWindowMs[(start + i) % _captureWorkWindowMs.Length];
-        Array.Sort(ordered);
-        var p95Index = Math.Max(0, (int)Math.Ceiling(ordered.Length * 0.95d) - 1);
-        return (_captureWorkLastMs, ordered[p95Index], ordered[^1], ordered.Length);
+        var window = ordered[.._captureWorkCount];
+        window.Sort();
+        var p95Index = Math.Max(0, (int)Math.Ceiling(window.Length * 0.95d) - 1);
+        return (_captureWorkLastMs, window[p95Index], window[^1], window.Length);
     }
 
     internal bool IsAllowed(BaseCharacter actor)
@@ -198,6 +203,8 @@ public sealed class FlightRecorderPlugin : BasePlugin
             var otherId = otherCharacter == null ? null : FindEntityId(otherCharacter.GetInstanceID());
             var relative = collision.relativeVelocity;
             var impulse = collision.impulse;
+            var sampledStep = LastCapturedFixedStep;
+            var sampledSameStep = sampledStep >= 0 && sampledStep == _fixedStep;
             var eventPayload = new EventPayload
             {
                 Event = "collision",
@@ -210,6 +217,11 @@ public sealed class FlightRecorderPlugin : BasePlugin
                     ["callback_type"] = "UnityEngine.Collision",
                     ["callback_source"] = "Characters.Human.OnCollisionEnter(UnityEngine.Collision); Harmony postfix",
                     ["actor_source_instance_id"] = actor.GetInstanceID(),
+                    ["sample_phase"] = CapturePhaseName,
+                    ["fixed_update_sample_step"] = sampledStep >= 0 ? sampledStep : null,
+                    ["same_step_sample_precedes_collision_callback"] = sampledSameStep,
+                    ["phase_calibration_candidate"] = sampledSameStep && actorId != null && collision.contactCount > 0,
+                    ["wall_monotonic_elapsed_seconds"] = MonotonicElapsedSeconds(),
                     ["relative_velocity"] = new[] { relative.x, relative.y, relative.z },
                     ["impulse"] = new[] { impulse.x, impulse.y, impulse.z },
                     ["contact_count"] = collision.contactCount,
@@ -366,7 +378,8 @@ public sealed class FlightRecorderDriver : MonoBehaviour
             if (!plugin.IsCapturing) return;
             var frame = _registry.CaptureFrame(plugin.FixedStep, plugin.NowSeconds(), Time.fixedDeltaTime,
                 plugin.MonotonicElapsedSeconds());
-            var frameCapacityHint = Math.Clamp(2048 + frame.Samples.Length * 1024, 4096, 256 * 1024);
+            plugin.MarkFixedUpdateSampled(plugin.FixedStep);
+            var frameCapacityHint = Math.Clamp(2048 + frame.Samples.Count * 1024, 4096, 256 * 1024);
             if (plugin.Publisher?.TryPublishFrame(frame, plugin.FixedStep, frame.T,
                     FlightRecorderPlugin.SerializerOptions, frameCapacityHint) != true)
                 plugin.CheckTransportHealth();
@@ -401,7 +414,10 @@ internal sealed class CaptureRegistry
     private readonly Dictionary<(string Kind, int SourceId), TrackedEntity> _entities = new();
     private readonly Dictionary<(string Kind, int SourceId), int> _generations = new();
     private readonly Dictionary<int, string> _idsByInstance = new();
-    private readonly List<TrackedEntity> _ordered = new();
+    private readonly List<TrackedEntity> _ordered;
+    private readonly List<TrackedEntity> _entityScratch;
+    private readonly List<EntitySamplePayload> _frameSamples;
+    private readonly FramePayload _framePayload;
     private readonly List<EventPayload> _observationEvents = new();
     private double _nextDiscoveryAt;
     private int _activeSceneHandle;
@@ -410,6 +426,11 @@ internal sealed class CaptureRegistry
     internal CaptureRegistry(FlightRecorderPlugin plugin)
     {
         _plugin = plugin;
+        var capacity = plugin.MaxEntities;
+        _ordered = new List<TrackedEntity>(capacity);
+        _entityScratch = new List<TrackedEntity>(capacity);
+        _frameSamples = new List<EntitySamplePayload>(capacity);
+        _framePayload = new FramePayload { Samples = _frameSamples };
         var scene = SceneManager.GetActiveScene();
         _activeSceneHandle = scene.handle;
         _activeSceneName = scene.name;
@@ -464,20 +485,19 @@ internal sealed class CaptureRegistry
         if (now < _nextDiscoveryAt) return;
         _nextDiscoveryAt = now + Math.Clamp(_plugin.DiscoveryInterval, 0.2d, 5d);
 
-        var observed = new HashSet<(string Kind, int SourceId)>();
         foreach (var human in Object.FindObjectsOfType<Human>(true))
         {
             if (!_plugin.IsCapturing) return;
             if (human == null || !_plugin.IsAllowed(human) || !human.FinishSetup) continue;
-            Track(human, "human", observed);
+            Track(human, "human");
             if (!_plugin.IsCapturing) return;
-            TrackHooks(human, observed);
+            TrackHooks(human);
         }
         foreach (var titan in Object.FindObjectsOfType<BaseTitan>(true))
         {
             if (!_plugin.IsCapturing) return;
             if (titan == null || !_plugin.IsAllowed(titan)) continue;
-            Track(titan, "titan", observed);
+            Track(titan, "titan");
         }
         foreach (var projectile in Object.FindObjectsOfType<BaseProjectile>(true))
         {
@@ -485,10 +505,12 @@ internal sealed class CaptureRegistry
             if (projectile == null) continue;
             var owner = projectile._owner;
             if (owner == null || !_plugin.IsAllowed(owner)) continue;
-            Track(projectile, "projectile", observed, owner.GetInstanceID());
+            Track(projectile, "projectile", owner.GetInstanceID());
         }
 
-        foreach (var entry in _entities.Values.ToArray())
+        _entityScratch.Clear();
+        _entityScratch.AddRange(_entities.Values);
+        foreach (var entry in _entityScratch)
         {
             if (entry.Component == null)
             {
@@ -512,13 +534,13 @@ internal sealed class CaptureRegistry
             _plugin.FailCapture("tracked_entity_limit_exceeded", new InvalidOperationException($"tracked={_entities.Count}, limit={_plugin.MaxEntities}"));
     }
 
-    private void TrackHooks(Human owner, HashSet<(string Kind, int SourceId)> observed)
+    private void TrackHooks(Human owner)
     {
-        TrackHookList(owner.HookLeft, owner, observed);
-        TrackHookList(owner.HookRight, owner, observed);
+        TrackHookList(owner.HookLeft, owner);
+        TrackHookList(owner.HookRight, owner);
     }
 
-    private void TrackHookList(HookUseable? useable, Human owner, HashSet<(string Kind, int SourceId)> observed)
+    private void TrackHookList(HookUseable? useable, Human owner)
     {
         if (useable == null || useable.Hooks == null) return;
         var hooks = useable.Hooks;
@@ -527,16 +549,15 @@ internal sealed class CaptureRegistry
             if (!_plugin.IsCapturing) return;
             var hook = hooks[i];
             if (hook == null) continue;
-            Track(hook, "odm_hook", observed, owner.GetInstanceID(), owner.GetInstanceID());
+            Track(hook, "odm_hook", owner.GetInstanceID(), owner.GetInstanceID());
         }
     }
 
-    private void Track(Component component, string kind, HashSet<(string Kind, int SourceId)> observed,
+    private void Track(Component component, string kind,
         int? ownerSourceId = null, int? ownerHumanSourceId = null)
     {
         var sourceId = component.GetInstanceID();
         var key = (kind, sourceId);
-        observed.Add(key);
         if (_entities.TryGetValue(key, out var priorEntry) && priorEntry.Component == null)
         {
             PublishLifecycle("despawn", priorEntry, "observed_unity_object_destroyed_before_instance_id_reuse", _plugin.NowSeconds());
@@ -565,6 +586,11 @@ internal sealed class CaptureRegistry
                 OwnerSourceId = ownerSourceId,
                 OwnerHumanSourceId = ownerHumanSourceId,
                 OwnerCharacter = component is BaseProjectile projectile ? projectile._owner : null,
+                Sample = new EntitySamplePayload
+                {
+                    Id = $"{kind}:instance-{sourceId}:{generation}",
+                    Kind = kind,
+                },
             };
             try { entry.RootRigidbody = component.GetComponent<Rigidbody>(); }
             catch (Exception exception) { _plugin.FailCapture("rigidbody_lookup_failed", exception); return; }
@@ -606,7 +632,7 @@ internal sealed class CaptureRegistry
 
     internal FramePayload CaptureFrame(long step, double t, float fixedDeltaTime, double monotonicElapsed)
     {
-        var samples = new List<EntitySamplePayload>(_ordered.Count);
+        _frameSamples.Clear();
         foreach (var entity in _ordered)
         {
             var component = entity.Component;
@@ -616,61 +642,64 @@ internal sealed class CaptureRegistry
             var transform = component.transform;
             var position = transform.position;
             var rotation = transform.rotation;
-            var sample = new EntitySamplePayload
-            {
-                Id = entity.Id,
-                Kind = entity.Kind,
-                Pos = new[] { position.x, position.y, position.z },
-                Rot = new[] { rotation.x, rotation.y, rotation.z, rotation.w },
-                Extra = new Dictionary<string, object?>
-                {
-                    ["entity_class"] = entity.ClassName,
-                    ["source_instance_id"] = entity.SourceId,
-                    ["scene"] = component.gameObject.scene.name,
-                    ["owner_id"] = entity.OwnerSourceId is { } ownerId ? FindId(ownerId) : null,
-                    ["pose_source"] = "UnityEngine.Transform",
-                    ["wall_monotonic_elapsed_seconds"] = monotonicElapsed,
-                }
-            };
+            var sample = entity.Sample;
+            var extra = sample.Extra;
+            extra.Reset();
+            sample.State = null;
+            sample.Vel = null;
+            sample.AngVel = null;
+            sample.Pos[0] = position.x;
+            sample.Pos[1] = position.y;
+            sample.Pos[2] = position.z;
+            sample.Rot[0] = rotation.x;
+            sample.Rot[1] = rotation.y;
+            sample.Rot[2] = rotation.z;
+            sample.Rot[3] = rotation.w;
+            extra.EntityClass = entity.ClassName;
+            extra.SourceInstanceId = entity.SourceId;
+            extra.Scene = component.gameObject.scene.name;
+            extra.OwnerId = entity.OwnerSourceId is { } ownerId ? FindId(ownerId) : null;
+            extra.PoseSource = "UnityEngine.Transform";
+            extra.WallMonotonicElapsedSeconds = monotonicElapsed;
 
             var body = entity.RootRigidbody;
             if (body != null)
             {
                 var kinematic = body.isKinematic;
-                sample.Extra["motion_mode"] = kinematic ? "root_rigidbody_kinematic" : "root_rigidbody_dynamic";
-                sample.Extra["rigidbody_source"] = "Component.GetComponent<Rigidbody> on root object";
+                extra.MotionMode = kinematic ? "root_rigidbody_kinematic" : "root_rigidbody_dynamic";
+                extra.RigidbodySource = "Component.GetComponent<Rigidbody> on root object";
                 if (!kinematic)
                 {
                     var velocity = body.velocity;
                     var angularVelocity = body.angularVelocity;
-                    sample.Vel = new[] { velocity.x, velocity.y, velocity.z };
-                    sample.AngVel = new[] { angularVelocity.x, angularVelocity.y, angularVelocity.z };
-                    sample.Extra["velocity_source"] = "UnityEngine.Rigidbody.velocity";
-                    sample.Extra["angular_velocity_source"] = "UnityEngine.Rigidbody.angularVelocity";
+                    sample.SetVelocity(velocity.x, velocity.y, velocity.z);
+                    sample.SetAngularVelocity(angularVelocity.x, angularVelocity.y, angularVelocity.z);
+                    extra.VelocitySource = "UnityEngine.Rigidbody.velocity";
+                    extra.AngularVelocitySource = "UnityEngine.Rigidbody.angularVelocity";
                 }
             }
             else
             {
-                sample.Extra["motion_mode"] = "root_transform_no_rigidbody";
-                sample.Extra["velocity_unavailable_reason"] = "no root Rigidbody component found";
+                extra.MotionMode = "root_transform_no_rigidbody";
+                extra.VelocityUnavailableReason = "no root Rigidbody component found";
             }
 
             if (component is BaseCharacter character)
             {
-                sample.Extra["ai_controlled"] = character.AI;
-                sample.Extra["team"] = character.Team;
-                sample.Extra["current_health"] = character.CurrentHealth;
-                sample.Extra["dead_flag"] = character.Dead;
-                sample.Extra["grounded_game_field"] = character.Grounded;
-                sample.Extra["current_speed_game_field"] = character.CurrentSpeed;
-                sample.Extra["animation_game_method"] = character.GetCurrentAnimation();
+                extra.AiControlled = character.AI;
+                extra.Team = character.Team;
+                extra.CurrentHealth = character.CurrentHealth;
+                extra.DeadFlag = character.Dead;
+                extra.GroundedGameField = character.Grounded;
+                extra.CurrentSpeedGameField = character.CurrentSpeed;
+                extra.AnimationGameMethod = character.GetCurrentAnimation();
                 if (character is Human human)
                 {
                     sample.State = human.State.ToString();
                     if (human.Stats != null)
                     {
-                        sample.Extra["current_gas_game_property"] = human.Stats.CurrentGas;
-                        sample.Extra["max_gas_game_property"] = human.Stats.MaxGas;
+                        extra.CurrentGasGameProperty = human.Stats.CurrentGas;
+                        extra.MaxGasGameProperty = human.Stats.MaxGas;
                     }
                 }
                 else if (character is BaseTitan titan)
@@ -701,35 +730,32 @@ internal sealed class CaptureRegistry
                 }
                 entity.LastSampledState = hookState;
                 var hookPoint = hook.GetHookPosition();
-                sample.Extra["hook_point_game_method"] = new[] { hookPoint.x, hookPoint.y, hookPoint.z };
-                sample.Extra["hook_state_source"] = "Characters.Hook.State";
+                extra.SetHookPoint(hookPoint.x, hookPoint.y, hookPoint.z);
+                extra.HookStateSource = "Characters.Hook.State";
                 var anchor = hook.Anchor;
                 if (anchor != null)
                 {
                     var anchorPosition = anchor.position;
-                    sample.Extra["anchor_transform_position"] = new[] { anchorPosition.x, anchorPosition.y, anchorPosition.z };
+                    extra.SetAnchorPosition(anchorPosition.x, anchorPosition.y, anchorPosition.z);
                 }
                 var target = hook.HookCharacter;
                 if (target != null && _plugin.IsAllowed(target))
-                    sample.Extra["hook_character_id"] = FindId(target.GetInstanceID());
+                    extra.HookCharacterId = FindId(target.GetInstanceID());
             }
             else if (component is BaseProjectile projectile)
             {
-                sample.Extra["projectile_team_game_property"] = projectile._team;
+                extra.ProjectileTeamGameProperty = projectile._team;
                 var gameVelocity = projectile._velocity;
-                sample.Extra["projectile_velocity_game_property"] = new[] { gameVelocity.x, gameVelocity.y, gameVelocity.z };
-                sample.Extra["projectile_velocity_provenance"] = "Projectiles.BaseProjectile._velocity; not substituted for Rigidbody.velocity";
+                extra.SetProjectileVelocity(gameVelocity.x, gameVelocity.y, gameVelocity.z);
+                extra.ProjectileVelocityProvenance = "Projectiles.BaseProjectile._velocity; not substituted for Rigidbody.velocity";
             }
-            samples.Add(sample);
+            _frameSamples.Add(sample);
         }
-        return new FramePayload
-        {
-            Step = step,
-            T = t,
-            Phase = "fixed_update_pre_physics_order_unspecified",
-            FixedDeltaTime = fixedDeltaTime,
-            Samples = samples.ToArray(),
-        };
+        _framePayload.Step = step;
+        _framePayload.T = t;
+        _framePayload.Phase = FlightRecorderPlugin.CapturePhaseName;
+        _framePayload.FixedDeltaTime = fixedDeltaTime;
+        return _framePayload;
     }
 
     private string? FindId(int sourceId) => _idsByInstance.TryGetValue(sourceId, out var id) ? id : null;
@@ -760,6 +786,7 @@ internal sealed class TrackedEntity
     internal BaseCharacter? OwnerCharacter { get; set; }
     internal Rigidbody? RootRigidbody { get; set; }
     internal string? LastSampledState { get; set; }
+    internal EntitySamplePayload Sample { get; init; } = new();
 }
 
 internal sealed class HelloPayload
@@ -778,23 +805,106 @@ internal sealed class HelloPayload
 
 internal sealed class FramePayload
 {
-    [JsonPropertyName("step")] public long Step { get; init; }
-    [JsonPropertyName("t")] public double T { get; init; }
-    [JsonPropertyName("phase")] public string Phase { get; init; } = "";
-    [JsonPropertyName("fixed_delta_time")] public float FixedDeltaTime { get; init; }
-    [JsonPropertyName("samples")] public EntitySamplePayload[] Samples { get; init; } = Array.Empty<EntitySamplePayload>();
+    [JsonPropertyName("step")] public long Step { get; set; }
+    [JsonPropertyName("t")] public double T { get; set; }
+    [JsonPropertyName("phase")] public string Phase { get; set; } = "";
+    [JsonPropertyName("fixed_delta_time")] public float FixedDeltaTime { get; set; }
+    [JsonPropertyName("samples")] public List<EntitySamplePayload> Samples { get; set; } = new();
 }
 
 internal sealed class EntitySamplePayload
 {
     [JsonPropertyName("id")] public string Id { get; init; } = "";
     [JsonPropertyName("kind")] public string Kind { get; init; } = "";
-    [JsonPropertyName("pos")] public float[] Pos { get; init; } = Array.Empty<float>();
+    [JsonPropertyName("pos")] public float[] Pos { get; } = new float[3];
     [JsonPropertyName("vel")] public float[]? Vel { get; set; }
-    [JsonPropertyName("rot")] public float[]? Rot { get; init; }
+    [JsonPropertyName("rot")] public float[] Rot { get; } = new float[4];
     [JsonPropertyName("ang_vel")] public float[]? AngVel { get; set; }
     [JsonPropertyName("state")] public string? State { get; set; }
-    [JsonPropertyName("extra")] public Dictionary<string, object?> Extra { get; init; } = new();
+    [JsonPropertyName("extra")] public EntityExtraPayload Extra { get; init; } = new();
+    private readonly float[] _velocity = new float[3];
+    private readonly float[] _angularVelocity = new float[3];
+
+    internal void SetVelocity(float x, float y, float z)
+    {
+        _velocity[0] = x; _velocity[1] = y; _velocity[2] = z;
+        Vel = _velocity;
+    }
+
+    internal void SetAngularVelocity(float x, float y, float z)
+    {
+        _angularVelocity[0] = x; _angularVelocity[1] = y; _angularVelocity[2] = z;
+        AngVel = _angularVelocity;
+    }
+}
+
+internal sealed class EntityExtraPayload
+{
+    private readonly float[] _hookPoint = new float[3];
+    private readonly float[] _anchorPosition = new float[3];
+    private readonly float[] _projectileVelocity = new float[3];
+    private bool _hasHookPoint;
+    private bool _hasAnchorPosition;
+    private bool _hasProjectileVelocity;
+
+    [JsonPropertyName("entity_class")] public string? EntityClass { get; set; }
+    [JsonPropertyName("source_instance_id")] public int? SourceInstanceId { get; set; }
+    [JsonPropertyName("scene")] public string? Scene { get; set; }
+    [JsonPropertyName("owner_id")] public string? OwnerId { get; set; }
+    [JsonPropertyName("pose_source")] public string? PoseSource { get; set; }
+    [JsonPropertyName("wall_monotonic_elapsed_seconds")] public double? WallMonotonicElapsedSeconds { get; set; }
+    [JsonPropertyName("motion_mode")] public string? MotionMode { get; set; }
+    [JsonPropertyName("rigidbody_source")] public string? RigidbodySource { get; set; }
+    [JsonPropertyName("velocity_source")] public string? VelocitySource { get; set; }
+    [JsonPropertyName("angular_velocity_source")] public string? AngularVelocitySource { get; set; }
+    [JsonPropertyName("velocity_unavailable_reason")] public string? VelocityUnavailableReason { get; set; }
+    [JsonPropertyName("ai_controlled")] public bool? AiControlled { get; set; }
+    [JsonPropertyName("team")] public string? Team { get; set; }
+    [JsonPropertyName("current_health")] public float? CurrentHealth { get; set; }
+    [JsonPropertyName("dead_flag")] public bool? DeadFlag { get; set; }
+    [JsonPropertyName("grounded_game_field")] public bool? GroundedGameField { get; set; }
+    [JsonPropertyName("current_speed_game_field")] public float? CurrentSpeedGameField { get; set; }
+    [JsonPropertyName("animation_game_method")] public string? AnimationGameMethod { get; set; }
+    [JsonPropertyName("current_gas_game_property")] public float? CurrentGasGameProperty { get; set; }
+    [JsonPropertyName("max_gas_game_property")] public float? MaxGasGameProperty { get; set; }
+    [JsonPropertyName("hook_point_game_method")] public float[]? HookPointGameMethod => _hasHookPoint ? _hookPoint : null;
+    [JsonPropertyName("hook_state_source")] public string? HookStateSource { get; set; }
+    [JsonPropertyName("anchor_transform_position")] public float[]? AnchorTransformPosition => _hasAnchorPosition ? _anchorPosition : null;
+    [JsonPropertyName("hook_character_id")] public string? HookCharacterId { get; set; }
+    [JsonPropertyName("projectile_team_game_property")] public object? ProjectileTeamGameProperty { get; set; }
+    [JsonPropertyName("projectile_velocity_game_property")] public float[]? ProjectileVelocityGameProperty => _hasProjectileVelocity ? _projectileVelocity : null;
+    [JsonPropertyName("projectile_velocity_provenance")] public string? ProjectileVelocityProvenance { get; set; }
+
+    internal void Reset()
+    {
+        EntityClass = Scene = OwnerId = PoseSource = MotionMode = RigidbodySource = null;
+        VelocitySource = AngularVelocitySource = VelocityUnavailableReason = null;
+        AiControlled = null; Team = null; CurrentHealth = null; DeadFlag = null;
+        GroundedGameField = null; CurrentSpeedGameField = null; AnimationGameMethod = null;
+        CurrentGasGameProperty = MaxGasGameProperty = null;
+        HookStateSource = HookCharacterId = null;
+        ProjectileTeamGameProperty = ProjectileVelocityProvenance = null;
+        SourceInstanceId = null; WallMonotonicElapsedSeconds = null;
+        _hasHookPoint = _hasAnchorPosition = _hasProjectileVelocity = false;
+    }
+
+    internal void SetHookPoint(float x, float y, float z)
+    {
+        _hookPoint[0] = x; _hookPoint[1] = y; _hookPoint[2] = z;
+        _hasHookPoint = true;
+    }
+
+    internal void SetAnchorPosition(float x, float y, float z)
+    {
+        _anchorPosition[0] = x; _anchorPosition[1] = y; _anchorPosition[2] = z;
+        _hasAnchorPosition = true;
+    }
+
+    internal void SetProjectileVelocity(float x, float y, float z)
+    {
+        _projectileVelocity[0] = x; _projectileVelocity[1] = y; _projectileVelocity[2] = z;
+        _hasProjectileVelocity = true;
+    }
 }
 
 internal sealed class LifecyclePayload

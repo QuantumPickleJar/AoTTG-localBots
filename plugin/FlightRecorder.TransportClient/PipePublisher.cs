@@ -23,7 +23,7 @@ public sealed class PipePublisher : IAsyncDisposable
     private readonly int _criticalReserveSlots;
     private readonly int _criticalReserveBytes;
     private readonly object _gate = new();
-    private readonly Queue<ReadOnlyMemory<byte>> _queue = new();
+    private readonly Queue<PooledMessage> _queue = new();
     private readonly SemaphoreSlim _available = new(0);
     private readonly CancellationTokenSource _cancel = new();
     private readonly Task _worker;
@@ -267,7 +267,7 @@ public sealed class PipePublisher : IAsyncDisposable
     private bool TryEnqueueLocked(string kind, string payloadJson, bool isControl, long sequence,
         bool isCritical = false)
     {
-        var encoded = new ArrayBufferWriter<byte>(256);
+        using var encoded = new PooledBufferWriter(256);
         try
         {
             using var payload = JsonDocument.Parse(payloadJson, new JsonDocumentOptions { MaxDepth = 32 });
@@ -291,13 +291,13 @@ public sealed class PipePublisher : IAsyncDisposable
             _failure ??= "invalid_payload_json";
             return false;
         }
-        return TryQueueLineLocked(encoded.WrittenMemory, isControl, isCritical);
+        return TryQueueLineLocked(encoded.Detach(), isControl, isCritical);
     }
 
     private bool TryEnqueueObjectLocked<T>(string kind, T payload, bool isControl, long sequence,
         JsonSerializerOptions? serializerOptions, int initialCapacityHint)
     {
-        var encoded = new ArrayBufferWriter<byte>(initialCapacityHint);
+        using var encoded = new PooledBufferWriter(initialCapacityHint);
         try
         {
             using (var writer = new Utf8JsonWriter(encoded))
@@ -318,23 +318,31 @@ public sealed class PipePublisher : IAsyncDisposable
             _failure ??= $"frame_serialization_failed: {ex.GetType().Name}";
             return false;
         }
-        return TryQueueLineLocked(encoded.WrittenMemory, isControl, isCritical: false);
+        return TryQueueLineLocked(encoded.Detach(), isControl, isCritical: false);
     }
 
-    private static void AppendNewline(ArrayBufferWriter<byte> encoded)
+    private static void AppendNewline(PooledBufferWriter encoded)
     {
         encoded.GetSpan(1)[0] = (byte)'\n';
         encoded.Advance(1);
     }
 
-    private bool TryQueueLineLocked(ReadOnlyMemory<byte> line, bool isControl, bool isCritical)
+    private bool TryQueueLineLocked(PooledMessage line, bool isControl, bool isCritical)
     {
-        if (line.Length > MaxEnvelopeBytes) return false;
+        if (line.Length > MaxEnvelopeBytes)
+        {
+            line.Return();
+            return false;
+        }
         var itemLimit = isCritical ? _queueCapacity :
             isControl ? _queueCapacity - _criticalReserveSlots : _queueCapacity - _controlReserveSlots;
         var byteLimit = isCritical ? _maxQueueBytes :
             isControl ? _maxQueueBytes - _criticalReserveBytes : _maxQueueBytes - _controlReserveBytes;
-        if (_queue.Count >= itemLimit || _queuedBytes + line.Length > byteLimit) return false;
+        if (_queue.Count >= itemLimit || _queuedBytes + line.Length > byteLimit)
+        {
+            line.Return();
+            return false;
+        }
         _queue.Enqueue(line);
         _queuedBytes += line.Length;
         _maxQueueDepth = Math.Max(_maxQueueDepth, _queue.Count);
@@ -368,7 +376,7 @@ public sealed class PipePublisher : IAsyncDisposable
         {
             while (!_cancel.IsCancellationRequested)
             {
-                ReadOnlyMemory<byte> head = default;
+                PooledMessage head = default;
                 bool hasHead;
                 bool completed;
                 lock (_gate)
@@ -401,9 +409,9 @@ public sealed class PipePublisher : IAsyncDisposable
                     }
                     using var acknowledgementReader = new StreamReader(pipe, new UTF8Encoding(false, true),
                         detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
-                    using var sent = JsonDocument.Parse(head);
+                    using var sent = JsonDocument.Parse(head.Memory);
                     var expectedSequence = sent.RootElement.GetProperty("sequence").GetInt64();
-                    await pipe.WriteAsync(head, _cancel.Token).ConfigureAwait(false);
+                    await pipe.WriteAsync(head.Memory, _cancel.Token).ConfigureAwait(false);
                     await pipe.FlushAsync(_cancel.Token).ConfigureAwait(false);
                     var acknowledgementLine = await acknowledgementReader.ReadLineAsync()
                         .WaitAsync(TimeSpan.FromSeconds(2), _cancel.Token).ConfigureAwait(false);
@@ -431,7 +439,7 @@ public sealed class PipePublisher : IAsyncDisposable
                     {
                         if (_queue.Count > 0 && _queue.Peek().Equals(head))
                         {
-                            _queue.Dequeue();
+                            _queue.Dequeue().Return();
                             _queuedBytes -= head.Length;
                         }
                         if (_queue.Count == 0 && _completed) _drained.TrySetResult();
@@ -470,7 +478,78 @@ public sealed class PipePublisher : IAsyncDisposable
         {
             if (pipe is not null) await pipe.DisposeAsync().ConfigureAwait(false);
             lock (_gate)
+            {
+                while (_queue.Count > 0) _queue.Dequeue().Return();
+                _queuedBytes = 0;
                 if (_queue.Count == 0) _drained.TrySetResult();
+            }
+        }
+    }
+
+    private readonly record struct PooledMessage(byte[] Buffer, int Length)
+    {
+        internal ReadOnlyMemory<byte> Memory => Buffer.AsMemory(0, Length);
+        internal void Return() => ArrayPool<byte>.Shared.Return(Buffer, clearArray: true);
+    }
+
+    private sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
+    {
+        private byte[]? _buffer;
+        private int _written;
+
+        internal PooledBufferWriter(int initialCapacity)
+        {
+            _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(256, initialCapacity));
+        }
+
+        public void Advance(int count)
+        {
+            if (count < 0 || _buffer is null || count > _buffer.Length - _written)
+                throw new ArgumentOutOfRangeException(nameof(count));
+            _written += count;
+        }
+
+        public Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            EnsureCapacity(sizeHint);
+            return _buffer!.AsMemory(_written);
+        }
+
+        public Span<byte> GetSpan(int sizeHint = 0)
+        {
+            EnsureCapacity(sizeHint);
+            return _buffer!.AsSpan(_written);
+        }
+
+        internal PooledMessage Detach()
+        {
+            if (_buffer is null) throw new InvalidOperationException("The message buffer was already detached.");
+            var message = new PooledMessage(_buffer, _written);
+            _buffer = null;
+            _written = 0;
+            return message;
+        }
+
+        public void Dispose()
+        {
+            if (_buffer is not { } buffer) return;
+            _buffer = null;
+            _written = 0;
+            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
+        }
+
+        private void EnsureCapacity(int sizeHint)
+        {
+            if (sizeHint < 0) throw new ArgumentOutOfRangeException(nameof(sizeHint));
+            sizeHint = Math.Max(1, sizeHint);
+            if (_buffer is not { } buffer) throw new InvalidOperationException("The message buffer was already detached.");
+            if (sizeHint <= buffer.Length - _written) return;
+
+            var required = checked(_written + sizeHint);
+            var replacement = ArrayPool<byte>.Shared.Rent(Math.Max(required, checked(buffer.Length * 2)));
+            Buffer.BlockCopy(buffer, 0, replacement, 0, _written);
+            _buffer = replacement;
+            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
         }
     }
 
