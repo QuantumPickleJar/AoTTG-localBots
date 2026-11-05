@@ -44,4 +44,13 @@ DEPLOYED ADD-ONS: WaveCadet `866C3BC8B3C9DDA0465633EB85B5B4E7D8C188B79CDD14FA53F
 
 ## Results
 
-Static checks and local builds are not live evidence. Record each run above as pass, fail, partial, or inconclusive with artifact names. The prior `m2-0` recovery had a first under-2 displacement of 1.527 units; the opposite-side candidates were blocked and no second command/goal was issued. The 0.1.12 actor-loaded recorder run completed structurally but failed performance (14/67 post-start windows over 1.0 ms p95; worst 2.8867 ms). This card tests the focused shorter opposite-goal search and the separate 0.1.13 performance candidate.
+Static checks and local builds are not live evidence. Record each run above as pass, fail, partial, or inconclusive with artifact names.
+
+- Earlier c4 `m2-0` recovery was a live failure: first-attempt displacement was 1.527 units; all opposite-side candidates were blocked, no second command/goal was issued, and the bounded safe-observation path ended without a third retry. User confirmed that lobby was private with only them present; whether the close-building spawn issue affected it is unknown.
+- A separate earlier actor-loaded 0.1.12 run completed structurally but failed performance: 14/67 post-start health windows exceeded 1.0 ms p95; worst p95 was 2.8867 ms.
+- Supplied run `a19d79cbcb9a4ecbbec2e5dd9a07def2` is a structural pass and performance/timing failure: 20 hash-verified chunks, 20,878 frames, 18 tracked entities, 901 events, 417.54 fixed-step seconds, zero dropped frames or entity samples, zero per-entity step gaps, and `capture_complete=true`. The current analyzer produced `prior-run-a19-reanalysis/report.md` in the local follow-up folder.
+- The 15-second performance filter differs by clock: game time `t > 15` gives 59/81 windows above 1.0 ms p95 (the user-supplied count); recorder-start-relative monotonic wall time `> 15` gives 60/82, which is the analyzer gate. Both fail. Worst p95 is 5.7656 ms and maximum sample 65.7773 ms.
+- Wall-clock health points are monotonic, game/wall correlation is 0.9999702499 with slope 1.0102223, and the trace has zero ordinal gaps, nonmonotonic game-time incidents, or fixed-step mismatches. Phase remains `fixed_update_pre_physics_order_unspecified` with `sample_phase_verified=false`; there were zero same-step collision calibration candidates and zero M2 controller/watcher events.
+- Producer queue high-water was 53 entries / 573,489 bytes, but its configured caps are missing from metadata, so boundedness against limits is unverified. Writer queue high-water was 3 entries / 112,768 bytes against 256 / 64 MiB.
+
+The current card tests the focused shorter opposite-goal search and the separate 0.1.13 performance candidate. Do not claim complete actor coverage, collision/attack causality, damage, or kills from this recorder alone.
