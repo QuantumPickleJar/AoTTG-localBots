@@ -150,7 +150,8 @@ class FlightTest(unittest.TestCase):
         (src / "metadata.json").write_text(json.dumps(metadata))
         (src / "000001.jsonl").write_text("\n".join(json.dumps(row) for row in [frame, *health]) + "\n")
 
-        result = analyze(src, self.root / "health_gate_report")
+        result = analyze(src, self.root / "health_gate_report",
+                         producer_queue_capacity=512, producer_queue_max_bytes=4 * 1024 * 1024)
         report = (self.root / "health_gate_report/report.md").read_text()
         performance = result["producer_performance"]
         self.assertEqual(performance["post_15s_windows"], 2)
@@ -158,6 +159,9 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(performance["maximum_reported_sample_ms"], 70.0)
         self.assertEqual(performance["gate_status"], "fail")
         self.assertTrue(performance["queue_bounded"])
+        self.assertEqual(performance["producer_queue_max_sampled_depth"], 4)
+        self.assertEqual(performance["writer_queue_high_water_depth"], 4)
+        self.assertEqual(performance["writer_queue_high_water_bytes"], 2048)
         self.assertFalse(result["sample_phase_verified"])
         self.assertIn("Calibration result: not performed; observation phase remains unverified.", report)
         self.assertIn("maximum reported capture-work sample exceeds 60.0 ms", report)

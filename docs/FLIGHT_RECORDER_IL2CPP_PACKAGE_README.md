@@ -61,6 +61,8 @@ Unavailable or unverified: moving world geometry, Titan-side collision callbacks
 
        .\runtime\python.exe .\tools\analyze_flight.py "C:\Local\Path\recordings\run-<run-id>" --out "C:\Local\Path\analysis"
 
+   To check the game-side producer queue against its configured caps, also pass `--producer-queue-capacity` and `--producer-queue-max-bytes` from the exact recorder config used for that run. The report distinguishes those readings from the receiver writer queue. If the limits are not supplied, producer queue boundedness remains unverified.
+
 The bundled receiver runs without changing PATH or installing system-wide Python. It uses a current-user DACL and rejects remote named-pipe clients; no external network or cloud telemetry is used. If the game disconnects without a stop message, the run is marked incomplete and is not resumed or overwritten.
 
 ## Rollback

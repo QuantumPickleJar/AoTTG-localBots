@@ -59,7 +59,8 @@ def nonnegative_count(value):
     return max(0, int(number)) if number is not None else 0
 
 
-def producer_health_summary(records, metadata, fixed_delta_times, entity_count):
+def producer_health_summary(records, metadata, fixed_delta_times, entity_count,
+                            producer_queue_capacity=None, producer_queue_max_bytes=None):
     valid = []
     for record in records:
         game_time = finite_number(record.get("t"))
@@ -96,22 +97,29 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count):
                        + nonnegative_count(writer_stats.get("storage_dropped_entity_samples")))
     queue_depth = max((nonnegative_count(record.get("queue_depth")) for record in post_start), default=0)
     queue_bytes = max((nonnegative_count(record.get("queue_bytes")) for record in post_start), default=0)
-    queue_high_water_depth = max(
-        queue_depth,
-        nonnegative_count(writer_stats.get("max_queue_depth")),
-        max((nonnegative_count(record.get("queue_high_water_depth")) for record in valid), default=0),
-    )
-    queue_high_water_bytes = max(
-        queue_bytes,
-        nonnegative_count(writer_stats.get("max_queue_bytes")),
-        max((nonnegative_count(record.get("queue_high_water_bytes")) for record in valid), default=0),
-    )
+    producer_queue_depth_max_sampled = max(
+        (nonnegative_count(record.get("queue_depth")) for record in valid), default=0)
+    producer_queue_high_water_bytes = max(
+        (nonnegative_count(record.get("queue_high_water_bytes")) for record in valid), default=0)
+    writer_queue_high_water_depth = nonnegative_count(writer_stats.get("max_queue_depth"))
+    writer_queue_high_water_bytes = nonnegative_count(writer_stats.get("max_queue_bytes"))
     queue_capacity = finite_number(writer_limits.get("queue_capacity"))
     max_queue_bytes = finite_number(writer_limits.get("max_queue_bytes"))
-    queue_bounded = ((queue_capacity is None or queue_high_water_depth <= queue_capacity)
-                     and (max_queue_bytes is None or queue_high_water_bytes <= max_queue_bytes)
-                     and not writer_stats.get("storage_exhausted", False)
-                     and writer_stats.get("fatal_error") in (None, ""))
+    writer_queue_bounded = ((queue_capacity is None or writer_queue_high_water_depth <= queue_capacity)
+                            and (max_queue_bytes is None or writer_queue_high_water_bytes <= max_queue_bytes)
+                            and not writer_stats.get("storage_exhausted", False)
+                            and writer_stats.get("fatal_error") in (None, ""))
+    producer_queue_capacity = finite_number(producer_queue_capacity)
+    producer_queue_max_bytes = finite_number(producer_queue_max_bytes)
+    producer_queue_limits_recorded = (producer_queue_capacity is not None
+                                      and producer_queue_max_bytes is not None)
+    producer_queue_within_limits = None
+    if producer_queue_limits_recorded:
+        producer_queue_within_limits = (
+            producer_queue_depth_max_sampled <= producer_queue_capacity
+            and producer_queue_high_water_bytes <= producer_queue_max_bytes)
+    queue_bounded = (writer_queue_bounded and producer_queue_within_limits
+                     if producer_queue_within_limits is not None else None)
 
     reasons = []
     if not valid:
@@ -124,8 +132,12 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count):
         reasons.append(f"maximum reported capture-work sample exceeds {CAPTURE_SAMPLE_MAX_LIMIT_MS:.1f} ms")
     if dropped_frames or dropped_controls or dropped_samples:
         reasons.append("producer or writer reported dropped frames, samples, or control messages")
-    if not queue_bounded:
-        reasons.append("queue or writer storage/fatal-error bounds failed")
+    if not writer_queue_bounded:
+        reasons.append("writer queue or storage/fatal-error bounds failed")
+    if producer_queue_within_limits is False:
+        reasons.append("observed producer queue exceeded the configured capacity or byte limit")
+    elif producer_queue_within_limits is None:
+        reasons.append("producer queue limits were not provided; producer queue boundedness is unverified")
     if not metadata.get("capture_complete", False):
         reasons.append("capture is incomplete")
     if entity_count < 2:
@@ -137,11 +149,12 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count):
         threshold_or_transport_failure = (bool(p95_failures)
                                           or bool(worst_sample and worst_sample["capture_work_ms_maximum"] > CAPTURE_SAMPLE_MAX_LIMIT_MS)
                                           or bool(dropped_frames or dropped_controls or dropped_samples)
-                                          or not queue_bounded
+                                          or not writer_queue_bounded
+                                          or producer_queue_within_limits is False
                                           or not metadata.get("capture_complete", False))
         if threshold_or_transport_failure:
             gate_status = "fail"
-        elif entity_count < 2:
+        elif producer_queue_within_limits is None or entity_count < 2:
             gate_status = "inconclusive"
         else:
             gate_status = "pass"
@@ -169,8 +182,14 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count):
                                                    if max_sample_post_start else None),
         "post_15s_max_queue_depth": queue_depth,
         "post_15s_max_queue_bytes": queue_bytes,
-        "writer_queue_high_water_depth": queue_high_water_depth,
-        "writer_queue_high_water_bytes": queue_high_water_bytes,
+        "producer_queue_max_sampled_depth": producer_queue_depth_max_sampled,
+        "producer_queue_high_water_bytes": producer_queue_high_water_bytes,
+        "producer_queue_capacity": producer_queue_capacity,
+        "producer_queue_max_bytes": producer_queue_max_bytes,
+        "producer_queue_limits_recorded": producer_queue_limits_recorded,
+        "producer_queue_within_limits": producer_queue_within_limits,
+        "writer_queue_high_water_depth": writer_queue_high_water_depth,
+        "writer_queue_high_water_bytes": writer_queue_high_water_bytes,
         "writer_queue_capacity": queue_capacity,
         "writer_max_queue_bytes": max_queue_bytes,
         "reported_dropped_frames": dropped_frames,
@@ -180,6 +199,7 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count):
         "writer_storage_exhausted": bool(writer_stats.get("storage_exhausted", False)),
         "capture_complete": bool(metadata.get("capture_complete", False)),
         "tracked_entities": entity_count,
+        "writer_queue_bounded": writer_queue_bounded,
         "queue_bounded": queue_bounded,
         "gate_status": gate_status,
         "gate_reasons": reasons,
@@ -417,7 +437,8 @@ def expanded(raw):
         yield raw
 
 
-def analyze(source, out, focus_time=None, focus_window=2.0):
+def analyze(source, out, focus_time=None, focus_window=2.0,
+            producer_queue_capacity=None, producer_queue_max_bytes=None):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     reader = Reader(source)
@@ -777,7 +798,8 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
         incomplete_reasons = [item for item in incomplete_reasons
                               if isinstance(item, dict) and isinstance(item.get("reason"), str)]
         performance = producer_health_summary(producer_health_records, metadata,
-                                              frame_fixed_delta_times, len(track_stats))
+                                              frame_fixed_delta_times, len(track_stats),
+                                              producer_queue_capacity, producer_queue_max_bytes)
         timing = timing_summary(producer_health_records, observed_frame_steps, counters,
                                 frame_fixed_delta_times, phase_calibration_candidates,
                                 same_step_collision_events, m2_event_record_count,
@@ -858,7 +880,8 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                  f"- Post-start windows above {perf['p95_limit_ms']:.1f} ms p95: {perf['post_15s_windows_over_p95_limit']}",
                  f"- Worst post-start p95: {perf['worst_post_15s_p95_ms']} ms",
                  f"- Maximum reported individual capture-work sample: {perf['maximum_reported_sample_ms']} ms",
-                 f"- Post-start queue maximum: depth {perf['post_15s_max_queue_depth']}, {perf['post_15s_max_queue_bytes']} bytes; writer high-water depth {perf['writer_queue_high_water_depth']}, {perf['writer_queue_high_water_bytes']} bytes",
+                 f"- Producer queue: maximum sampled depth {perf['producer_queue_max_sampled_depth']}; high-water bytes {perf['producer_queue_high_water_bytes']}; configured caps {perf['producer_queue_capacity']} entries / {perf['producer_queue_max_bytes']} bytes",
+                 f"- Writer queue: high-water depth {perf['writer_queue_high_water_depth']}, {perf['writer_queue_high_water_bytes']} bytes against {perf['writer_queue_capacity']} entries / {perf['writer_max_queue_bytes']} bytes; post-start sampled depth/bytes maximum {perf['post_15s_max_queue_depth']} / {perf['post_15s_max_queue_bytes']}",
                  f"- Reported drops: frames {perf['reported_dropped_frames']}, entity samples {perf['reported_dropped_entity_samples']}, control messages {perf['reported_dropped_control_messages']}",
                  f"- Tracked entities: {perf['tracked_entities']}"]
         rows += [f"- Gate finding: {reason}" for reason in perf["gate_reasons"]] or ["- Gate findings: all recorded thresholds passed."]
@@ -891,8 +914,13 @@ def main():
     parser.add_argument("--out", default="flight_report")
     parser.add_argument("--focus-time", type=float, help="Export entity samples around a game time")
     parser.add_argument("--focus-window", type=float, default=2.0)
+    parser.add_argument("--producer-queue-capacity", type=int,
+                        help="producer queue entry cap from the local configuration used for this run")
+    parser.add_argument("--producer-queue-max-bytes", type=int,
+                        help="producer queue byte cap from the local configuration used for this run")
     args = parser.parse_args()
-    summary = analyze(args.source, args.out, args.focus_time, args.focus_window)
+    summary = analyze(args.source, args.out, args.focus_time, args.focus_window,
+                      args.producer_queue_capacity, args.producer_queue_max_bytes)
     print(json.dumps(summary, indent=2))
     print(f"Report: {Path(args.out) / 'report.md'}")
 
