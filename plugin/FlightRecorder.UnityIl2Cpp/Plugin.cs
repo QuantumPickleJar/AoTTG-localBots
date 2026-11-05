@@ -21,9 +21,10 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.13";
+    public const string PluginVersion = "0.1.14";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
+    internal const int AnimationSampleIntervalFixedSteps = 5;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -126,6 +127,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
                     transforms = new[] { "position", "rotation" },
                     rigidbody = "root Rigidbody only; velocity fields emitted only when present and non-kinematic",
                     game_fields = new[] { "AI", "team", "health", "dead", "grounded", "current_speed", "current_animation", "human_state", "human_current_gas", "titan_state", "hook_state", "hook_anchor", "projectile_velocity_field" },
+                    game_field_sampling = new { animation_game_method = "sampled_at_most_every_5_fixed_update_steps; animation_source_step identifies the source step" },
                     collisions = "Human.OnCollisionEnter Harmony postfix; only locally owned actors or AI on the local Photon master, and non-character world colliders",
                     entity_lifecycle = new { first_seen = "inferred_first_seen_by_periodic_census", destroyed = "observed_unity_object_destroyed", transient_between_censuses = "may_be_missed" },
                     scene_changes = "active scene name and handle compared at each FixedUpdate callback; transition timestamp is sampling time",
@@ -452,6 +454,7 @@ internal sealed class CaptureRegistry
     private readonly List<EntitySamplePayload> _frameSamples;
     private readonly FramePayload _framePayload;
     private readonly List<EventPayload> _observationEvents = new();
+    private readonly Dictionary<int, bool> _captureScopeByCharacter;
     private bool _entityOrderDirty = true;
     private double _nextDiscoveryAt;
     private int _activeSceneHandle;
@@ -465,6 +468,7 @@ internal sealed class CaptureRegistry
         _entityScratch = new List<TrackedEntity>(capacity);
         _frameSamples = new List<EntitySamplePayload>(capacity);
         _framePayload = new FramePayload { Samples = _frameSamples };
+        _captureScopeByCharacter = new Dictionary<int, bool>(capacity);
         var scene = SceneManager.GetActiveScene();
         _activeSceneHandle = scene.handle;
         _activeSceneName = scene.name;
@@ -518,6 +522,7 @@ internal sealed class CaptureRegistry
         var now = _plugin.NowSeconds();
         if (now < _nextDiscoveryAt) return;
         _nextDiscoveryAt = now + Math.Clamp(_plugin.DiscoveryInterval, 0.2d, 5d);
+        _captureScopeByCharacter.Clear();
 
         foreach (var character in Object.FindObjectsByType<BaseCharacter>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
@@ -677,6 +682,7 @@ internal sealed class CaptureRegistry
     internal FramePayload CaptureFrame(long step, double t, float fixedDeltaTime, double monotonicElapsed)
     {
         _frameSamples.Clear();
+        _captureScopeByCharacter.Clear();
         foreach (var entity in _ordered)
         {
             var component = entity.Component;
@@ -736,10 +742,22 @@ internal sealed class CaptureRegistry
                 extra.DeadFlag = character.Dead;
                 extra.GroundedGameField = character.Grounded;
                 extra.CurrentSpeedGameField = character.CurrentSpeed;
-                extra.AnimationGameMethod = character.GetCurrentAnimation();
+                if (entity.AnimationSampleStep < 0 || step - entity.AnimationSampleStep >= FlightRecorderPlugin.AnimationSampleIntervalFixedSteps)
+                {
+                    entity.LastSampledAnimation = character.GetCurrentAnimation();
+                    entity.AnimationSampleStep = step;
+                }
+                extra.AnimationGameMethod = entity.LastSampledAnimation;
+                extra.AnimationSourceStep = entity.AnimationSampleStep;
                 if (character is Human human)
                 {
-                    sample.State = human.State.ToString();
+                    var stateCode = human.State.GetHashCode();
+                    if (entity.LastSampledState is null || entity.LastSampledStateCode != stateCode)
+                    {
+                        entity.LastSampledState = human.State.ToString();
+                        entity.LastSampledStateCode = stateCode;
+                    }
+                    sample.State = entity.LastSampledState;
                     if (human.Stats != null)
                     {
                         extra.CurrentGasGameProperty = human.Stats.CurrentGas;
@@ -748,15 +766,22 @@ internal sealed class CaptureRegistry
                 }
                 else if (character is BaseTitan titan)
                 {
-                    sample.State = titan.State.ToString();
+                    var stateCode = titan.State.GetHashCode();
+                    if (entity.LastSampledState is null || entity.LastSampledStateCode != stateCode)
+                    {
+                        entity.LastSampledState = titan.State.ToString();
+                        entity.LastSampledStateCode = stateCode;
+                    }
+                    sample.State = entity.LastSampledState;
                 }
             }
             else if (component is Hook hook)
             {
-                var hookState = hook.State.ToString();
-                sample.State = hookState;
-                if (entity.LastSampledState is { } previousState && !string.Equals(previousState, hookState, StringComparison.Ordinal))
+                var currentHookState = hook.State;
+                var hookStateCode = currentHookState.GetHashCode();
+                if (entity.LastSampledState is { } previousState && entity.LastSampledStateCode != hookStateCode)
                 {
+                    var hookState = currentHookState.ToString();
                     _observationEvents.Add(new EventPayload
                     {
                         Event = "hook_state_sampled_change",
@@ -771,8 +796,15 @@ internal sealed class CaptureRegistry
                             ["observation_mode"] = "sampled_game_field_transition; not a direct hook callback",
                         }
                     });
+                    entity.LastSampledState = hookState;
+                    entity.LastSampledStateCode = hookStateCode;
                 }
-                entity.LastSampledState = hookState;
+                else if (entity.LastSampledState is null)
+                {
+                    entity.LastSampledState = currentHookState.ToString();
+                    entity.LastSampledStateCode = hookStateCode;
+                }
+                sample.State = entity.LastSampledState;
                 var hookPoint = hook.GetHookPosition();
                 extra.SetHookPoint(hookPoint.x, hookPoint.y, hookPoint.z);
                 extra.HookStateSource = "Characters.Hook.State";
@@ -783,7 +815,7 @@ internal sealed class CaptureRegistry
                     extra.SetAnchorPosition(anchorPosition.x, anchorPosition.y, anchorPosition.z);
                 }
                 var target = hook.HookCharacter;
-                if (target != null && _plugin.IsAllowed(target))
+                if (target != null && IsAllowedForCurrentSample(target))
                     extra.HookCharacterId = FindId(target.GetInstanceID());
             }
             else if (component is BaseProjectile projectile)
@@ -806,14 +838,23 @@ internal sealed class CaptureRegistry
 
     private bool StillWithinCaptureScope(TrackedEntity entry)
     {
-        if (entry.Component is BaseCharacter character) return _plugin.IsAllowed(character);
-        if (entry.Component is Hook) return entry.OwnerCharacter != null && _plugin.IsAllowed(entry.OwnerCharacter);
+        if (entry.Component is BaseCharacter character) return IsAllowedForCurrentSample(character);
+        if (entry.Component is Hook) return entry.OwnerCharacter != null && IsAllowedForCurrentSample(entry.OwnerCharacter);
         if (entry.Component is BaseProjectile projectile)
         {
             var owner = projectile._owner;
-            return owner != null && _plugin.IsAllowed(owner);
+            return owner != null && IsAllowedForCurrentSample(owner);
         }
         return false;
+    }
+
+    private bool IsAllowedForCurrentSample(BaseCharacter character)
+    {
+        var sourceId = character.GetInstanceID();
+        if (_captureScopeByCharacter.TryGetValue(sourceId, out var allowed)) return allowed;
+        allowed = _plugin.IsAllowed(character);
+        _captureScopeByCharacter[sourceId] = allowed;
+        return allowed;
     }
 }
 
@@ -830,6 +871,9 @@ internal sealed class TrackedEntity
     internal BaseCharacter? OwnerCharacter { get; set; }
     internal Rigidbody? RootRigidbody { get; set; }
     internal string? LastSampledState { get; set; }
+    internal int? LastSampledStateCode { get; set; }
+    internal string? LastSampledAnimation { get; set; }
+    internal long AnimationSampleStep { get; set; } = -1;
     internal EntitySamplePayload Sample { get; init; } = new();
 }
 
@@ -910,6 +954,7 @@ internal sealed class EntityExtraPayload
     [JsonPropertyName("grounded_game_field")] public bool? GroundedGameField { get; set; }
     [JsonPropertyName("current_speed_game_field")] public float? CurrentSpeedGameField { get; set; }
     [JsonPropertyName("animation_game_method")] public string? AnimationGameMethod { get; set; }
+    [JsonPropertyName("animation_source_step")] public long? AnimationSourceStep { get; set; }
     [JsonPropertyName("current_gas_game_property")] public float? CurrentGasGameProperty { get; set; }
     [JsonPropertyName("max_gas_game_property")] public float? MaxGasGameProperty { get; set; }
     [JsonPropertyName("hook_point_game_method")] public float[]? HookPointGameMethod => _hasHookPoint ? _hookPoint : null;
@@ -926,6 +971,7 @@ internal sealed class EntityExtraPayload
         VelocitySource = AngularVelocitySource = VelocityUnavailableReason = null;
         AiControlled = null; Team = null; CurrentHealth = null; DeadFlag = null;
         GroundedGameField = null; CurrentSpeedGameField = null; AnimationGameMethod = null;
+        AnimationSourceStep = null;
         CurrentGasGameProperty = MaxGasGameProperty = null;
         HookStateSource = HookCharacterId = null;
         ProjectileTeamGameProperty = ProjectileVelocityProvenance = null;

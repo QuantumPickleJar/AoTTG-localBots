@@ -1,4 +1,14 @@
-# REC-I status: 0.1.12 actor-loaded performance failed; 0.1.13 installed for retest
+# REC-I status: 0.1.13 actor-loaded performance failed; 0.1.14 candidate pending package and retest
+
+## 2026-11-05 update — installed 0.1.13 failed; 0.1.14 is an unvalidated candidate
+
+The corrected private Direct run `0f641e245f0f4c0a9c3dab23d08c355e` loaded plugin 0.1.13 after a clean restart, connected to the local receiver, and stopped cleanly after the user exited the game. The finalized capture has `capture_complete=true`, 24,846 durable frames, 24/24 verified chunks, zero frame-step gaps or fixed-time mismatches, zero declared frame/entity drops, bounded queues, and no fatal writer error. These are structural and shutdown passes only.
+
+The unchanged performance gate failed: 51/97 post-15-second health windows exceeded 1.0 ms p95, worst p95 was 4.311 ms, and the maximum individual capture-work sample was 87.7007 ms. The phase metadata reads `fixed_update_pre_physics`; `sample_phase_verified=false` remains. The controlled independent transition needed to establish pre/post-physics ordering was not performed. The report records game/wall correlation `0.9999924733` and slope `1.0022686138`, but continuity does not calibrate phase.
+
+Recorder source candidate 0.1.14 adds per-fixed-step capture-scope memoization, caches state enum names until the underlying state changes, and calls the current-animation getter at most once every five fixed steps with `animation_source_step` provenance. It retains the `aicadets.flight.v1` schema, local named pipe, queue and recovery limits, and producer-work thresholds. It is **not yet packaged or installed**. Local validation so far: 123 Python tests, Python compile checks, .NET 6/.NET 8 transport builds, transport smoke, Windows pipe/writer/analyzer smoke, PowerShell parsing, and Unity IL2CPP plugin build passed. These do not establish 0.1.14 installed performance or timing.
+
+PR #16 remains open and unmerged. Do not merge until a fresh actor-loaded 0.1.14 installed capture passes the unchanged performance limits, clean stop/receiver shutdown, chunk/package gates, and a controlled timing calibration. Keep `sample_phase_verified=false` and the PR gated if calibration is inconclusive.
 
 ## 2026-11-04 status update
 
@@ -43,14 +53,14 @@ The installed 0.1.11 and 0.1.12 DLLs were observed loading after clean restarts;
 - PR #15 is merged into `main`; PR #16 targets `main` and retains the adapter-only diff.
 - The offline analyzer emits `kill_attributions.json` and a report section. It uses sampled alive→dead transitions, observed target-specific collisions, sampled AI/attack state, and explicitly correlated direct events when present. It preserves the provenance of each signal and labels contact-based attribution as inference.
 - The Unity adapter and writer schema remain unchanged by the analyzer output. No M2 gameplay code or installed game file is changed by this work.
-- Installed candidate version is 0.1.13. Its rollback copy of the receipt-verified 0.1.12 install/config is under `rollback/installed-0.1.12-before-0.1.13`. Keep recording disabled except during the deliberately opted-in private validation session; 0.1.13 is installed with `Enabled=false`.
+- Installed baseline before the 0.1.14 candidate is 0.1.13. Its rollback copy of the receipt-verified 0.1.12 install/config is under `rollback/installed-0.1.12-before-0.1.13`. Keep recording disabled outside a deliberately opted-in private validation session. A new 0.1.14 rollback must preserve the current 0.1.13 DLLs, receipt, and configuration before installation.
 
 ## REC-I validation card
 
     SESSION: REC-I short passive capture and performance check
-    SOURCE: PR #16 branch codex/flight-recorder-il2cpp-adapter; installed commit e0e216dd518cad9569447cd18e7bccc206d94aac is recorded in package-manifest.json
-    PACKAGE: AoTTG2 Flight Recorder 0.1.13 candidate, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
-    DEPLOY: Close the game copy, then run the 0.1.13 install_flight_recorder.ps1. It automatically replaces a prior install only when its receipt and DLL hashes verify and the folder contains no extra files. It refuses modified or unmanaged folders for manual review.
+    SOURCE: PR #16 branch codex/flight-recorder-il2cpp-adapter; record the clean committed 0.1.14 source commit in package-manifest.json
+    PACKAGE: AoTTG2 Flight Recorder 0.1.14 candidate, x64, Unity 2023.1.22f1, BepInEx 6.0.0-be.791, .NET 6
+    DEPLOY: Close the game copy, then run the 0.1.14 install_flight_recorder.ps1. It replaces a prior install only when its receipt and DLL hashes verify and the folder contains no extra files. It refuses modified or unmanaged folders for manual review.
     GAME CONFIG: BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg; set Enabled=true only for this capture and restore false afterward
     RECEIVER: Pass the private JSON file under Documents/AoTTG2/Recorders to start_flight_recorder_receiver.ps1. The launcher prints the resolved output directory; use a new local output folder and verify the pipe-ready message before launching the game
     ADD-ONS: Enable exactly AICadetsWaveCadet, AICadetsCommandPanel, and AICadetsM2Watcher. Disable AICadetsProbe, AICadetsTraversal, AICadetsTraversalReliable, AICadetsWatcher, and every other test add-on.
@@ -65,8 +75,8 @@ The installed 0.1.11 and 0.1.12 DLLs were observed loading after clean restarts;
 
 ## Acceptance boundary
 
-The supplied 0.1.5 recording establishes successful writer/transport operation and gives strong, non-causal evidence consistent with a cadet kill. It does not establish direct damage attribution, calibrated physics phase, REC-I performance acceptance, or M2 decision quality. The supplied 0.1.10 and installed 0.1.11 captures fail the performance gate; the 0.1.11 run contains no tracked actors. The installed, actor-loaded 0.1.12 run is structurally complete but fails performance. Version 0.1.13 is installed and awaiting the next diagnostic capture. Keep `sample_phase_verified=false` and PR #16 open. The 174 unmatched velocity changes remain explicit review findings.
+The supplied 0.1.5 recording establishes successful writer/transport operation and gives strong, non-causal evidence consistent with a cadet kill. It does not establish direct damage attribution, calibrated physics phase, REC-I performance acceptance, or M2 decision quality. The installed, actor-loaded 0.1.12 and 0.1.13 runs are structurally complete but fail performance. Version 0.1.14 is the next source candidate and has not yet been packaged or installed. Keep `sample_phase_verified=false` and PR #16 open. The 174 unmatched velocity changes remain explicit review findings.
 
 ## Installed-machine handling
 
-Version 0.1.9 was installed and exercised in-game; the run exposed the disconnect-finalization gap. Version 0.1.10 was installed and produced a complete structural capture, but failed performance and timing gates. Version 0.1.11 loaded cleanly and finalized, but failed performance and tracked no entities. Version 0.1.12 loaded cleanly and finalized with actors, but failed performance. Version 0.1.13 is built, statically tested, packaged with a verified manifest, and installed with capture disabled. Its actor-loaded runtime and timing gates remain. The prior install/config backup is under `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261104/rollback`; restore it through the guarded removal/installation procedure if rollback is needed, preserving BepInEx and generated interop.
+Version 0.1.9 was installed and exercised in-game; the run exposed the disconnect-finalization gap. Version 0.1.10 was installed and produced a complete structural capture, but failed performance and timing gates. Version 0.1.11 loaded cleanly and finalized, but failed performance and tracked no entities. Version 0.1.12 loaded cleanly and finalized with actors, but failed performance. Version 0.1.13 loaded cleanly, connected, and finalized with actors, but failed performance and timing calibration. Version 0.1.14 is only built and statically validated so far; it still requires a clean-source package, verified manifest, guarded install, actor-loaded runtime capture, and controlled phase calibration. Preserve the 0.1.13 install/config backup before upgrading; restore through the guarded removal/installation procedure if rollback is needed, preserving BepInEx and generated interop.

@@ -1,12 +1,18 @@
 # AoTTG2 IL2CPP Flight Recorder package
 
-**Build:** 0.1.13 performance-diagnostic candidate, compiled against interop generated from the installed AoTTG2 build
+**Build:** 0.1.14 hot-path optimization candidate, compiled against interop generated from the installed AoTTG2 build
 
 **Runtime:** x64, Unity 2023.1.22f1, IL2CPP metadata 29.1, BepInEx 6.0.0-be.791, .NET 6
 
 **Capture default:** disabled
 
-This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Version 0.1.11 retained the 0.1.10 queue, stop, and reconnect behavior and reused per-entity sample buffers and frame storage while preserving the `aicadets.flight.v1` payload fields. Version 0.1.12 removed Unity's implicit InstanceID sort from periodic discovery, preserving inactive-object discovery and explicit entity-ID output ordering; its installed actor-loaded test still failed the performance gate. Version 0.1.13 combines Human/Titan discovery into one `BaseCharacter` census plus a separate projectile census, rebuilds sorted output order only when entity membership changes, records discovery/frame-sampling/serialization-and-queue timings, and records Unity's reported physics simulation mode. It preserves `aicadets.flight.v1` and all existing loss/recovery behavior. Unity documents the two-argument `FindObjectsByType<T>` overload and notes that disabling sort makes discovery significantly faster ([`FindObjectsByType`](https://docs.unity3d.com/2023.1/Documentation/ScriptReference/Object.FindObjectsByType.html)). Version 0.1.13 is a candidate only; no runtime performance improvement is claimed.
+This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Version 0.1.11 retained the 0.1.10 queue, stop, and reconnect behavior and reused per-entity sample buffers and frame storage while preserving the `aicadets.flight.v1` payload fields. Version 0.1.12 removed Unity's implicit InstanceID sort from periodic discovery, preserving inactive-object discovery and explicit entity-ID output ordering; its installed actor-loaded test still failed the performance gate. Version 0.1.13 combines Human/Titan discovery into one `BaseCharacter` census plus a separate projectile census, rebuilds sorted output order only when entity membership changes, records discovery/frame-sampling/serialization-and-queue timings, and records Unity's reported physics simulation mode. The latest installed 0.1.13 actor-loaded capture remained above the unchanged performance gate. Version 0.1.14 caches capture-scope checks within each fixed-step sample, avoids repeated enum-to-string conversions while state is unchanged, and samples the game animation getter at most once per five fixed steps while recording `animation_source_step`. It preserves the `aicadets.flight.v1` schema, local transport, and loss/recovery behavior. The 0.1.14 package and runtime remain unvalidated; no performance improvement is claimed.
+
+## Latest installed 0.1.13 capture
+
+Run `0f641e245f0f4c0a9c3dab23d08c355e` loaded the installed plugin after a clean restart, connected to the local receiver, and finalized after the game exited. The writer accepted 24,846 durable frames and stopped cleanly; 24/24 chunks validate, frame coverage is 1.0, and there are no frame-step gaps, fixed-time mismatches, dropped frames/entity samples, source-missing frames, queue overflows, or fatal writer errors. Queue high-water stayed within configured bounds.
+
+The performance gate failed: 51 of 97 post-15-second health windows exceeded 1.0 ms p95; worst p95 was 4.311 ms and the maximum individual capture-work sample was 87.7007 ms. Timing continuity was structurally clean, but the phase is unverified: the metadata says `fixed_update_pre_physics` and `sample_phase_verified=false`. No controlled independent transition calibrated the phase. Recorder evidence does not establish complete actor coverage, collision or attack causality, damage, or kills. The package source changes for 0.1.14 are intended to reduce repeated capture cost and need a fresh installed-runtime measurement.
 
 The 0.1.11 clean-start run `1ad84008622a4d4d9e06cae2a25ffac6` loaded and stopped cleanly with `capture_complete=true`, 39,509 frames, one verified chunk, no frame gaps or declared drops, and bounded queues. It tracked zero entities and had no M2 events, so it was not an M2 workload or phase-calibration run. Of 156 producer-health windows after 15 monotonic seconds, 2 exceeded the 1.0 ms p95 limit; the worst p95 was 2.8658 ms and the worst reported individual sample was 91.2873 ms. The performance gate therefore failed. The `fixed_update_pre_physics` phase label is descriptive only; `sample_phase_verified=false` remains until a controlled natural physics transition establishes phase.
 
@@ -35,7 +41,7 @@ In that 0.1.5 gameplay capture, a later health window reached 1.8008 ms capture-
 - Samples Human/Titan state, AI/team, health, dead/grounded flags, current speed and animation, Human gas, Hook state, and the projectile game velocity field.
 - Emits Human.OnCollisionEnter Harmony postfix events with callback provenance, relative velocity, impulse, contact count, and collider identity. This callback fired in the supplied run, but coverage is not complete and player-versus-player collisions are omitted.
 - Polls active scene changes at FixedUpdate boundaries. Scene and Hook transition times are detection/sample times; brief transitions may be missed.
-- Measures capture-work last/p95/max over a rolling 256-callback window. Version 0.1.13 also reports discovery, frame-sampling, and serialization/queue stage p95/max diagnostics. The capture-work gate still covers all work performed for each sampled callback; stage readings do not replace or weaken it and do not measure total game frame time.
+- Measures capture-work last/p95/max over a rolling 256-callback window. Version 0.1.13 also reports discovery, frame-sampling, and serialization/queue stage p95/max diagnostics. Version 0.1.14 samples `GetCurrentAnimation()` at most every five fixed steps and records the source step; all callback work remains inside the capture-work measurement. Stage readings and lower-rate optional fields do not replace or weaken the gate and do not measure total game frame time.
 
 Entity first-seen lifecycle is inferred from the 0.5-second discovery census. Destruction is recorded when Unity's object-null state is observed; transient objects between censuses may be missed. IDs are stable within one run and are not cross-run identities.
 
@@ -49,12 +55,12 @@ Unavailable or unverified: moving world geometry, Titan-side collision callbacks
 2. Extract the reviewed package to a local directory.
 3. Run the guarded installer. It automatically removes a previous recorder install after verifying its receipt, DLL hashes, and folder contents. It refuses modified or unmanaged installations for manual review:
 
-       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.13"
+       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.14"
 
 4. Leave BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg at `Enabled = false` for the startup check. Launch to the menu, verify plug-in version and disabled-capture log entries, then close the game.
 5. Copy `configs/flight-recorder-transport.example.json` to a private local config, set `recording_enabled=true`, and choose a new empty output directory. Start the receiver first:
 
-       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.13" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
+       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.14" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
 
    `ConfigPath` must be the JSON file. A relative `output_dir` is resolved beside that file, and the launcher prints the resolved directory. For output in `Documents\AoTTG2\Recorders\recordings`, use the JSON in that `Recorders` folder, not the package's `configs` directory.
 
@@ -73,4 +79,4 @@ Close the game and run the package's `remove_flight_recorder.ps1` against the sa
 
 ## Validation boundary
 
-The supplied 0.1.5 run proves a complete writer/transport recording and observed Human/Hook/Titan data. It gives strong but non-causal evidence consistent with a cadet kill. It does not prove direct damage attribution, M2 decision quality, or calibrated physics phase. Installed 0.1.11 and actor-loaded 0.1.12 runs fail the 1.0 ms p95 performance criterion. Version 0.1.13 has not yet had an installed-runtime test. Timing calibration remains open. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the repository's 2026-11-04 M2/recorder Validation Card for acceptance limits and rollback steps.
+The supplied 0.1.5 run proves a complete writer/transport recording and observed Human/Hook/Titan data. It gives strong but non-causal evidence consistent with a cadet kill. It does not prove direct damage attribution, M2 decision quality, or calibrated physics phase. Installed 0.1.11, 0.1.12, and the latest actor-loaded 0.1.13 run fail the 1.0 ms p95 performance criterion. Version 0.1.14 is an unvalidated optimization candidate. Timing calibration remains open. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the 2026-11-05 M2/recorder Validation Card for acceptance limits and rollback steps.
