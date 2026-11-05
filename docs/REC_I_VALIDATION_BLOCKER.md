@@ -6,6 +6,14 @@ The supplied 0.1.10 run is structurally complete (20 verified chunks, 20,878 fra
 
 The 0.1.11 candidate reuses the per-entity sample DTOs, arrays, extra payload, and frame list, and labels samples `fixed_update_pre_physics`. Unity 2023.1 documents that physics calculations occur after `FixedUpdate` ([API](https://docs.unity3d.com/2023.1/Documentation/ScriptReference/MonoBehaviour.FixedUpdate.html), [execution-order manual](https://docs.unity3d.com/2023.1/Documentation/Manual/ExecutionOrder.html)). The controlled runtime correlation with an ordinary physics transition and same-step M2 watcher/controller events is still pending. Keep `sample_phase_verified=false` and PR #16 open until that calibration and the performance/package gates pass.
 
+## 2026-11-04 installed 0.1.11 attempt
+
+Package source commit `db2a57a6bc62211844b988e24f373dff246763a4` was packaged and installed through the guarded installer after backing up the prior 0.1.10 DLLs, install manifest, and config. The package ZIP SHA-256 is `96BDE8B78E0AE84A5F0A36A8180F8552FAA37D2E0AE12505E0AA5E82E1E32521`; all 49 manifest-listed files and hashes verified, and the ZIP contains those files plus `package-manifest.json`. Installed DLL hashes are plugin `0aab6c3f0ff99111652797dd34ea968fb4b47b2591a15523f20c09fecdd5f061` and transport `91f47beacc12351c4e2cd9b7370c54f6b9f67802c30e8076c14a0aad9ba0df5b`.
+
+A fresh restart logged `AoTTG2 Flight Recorder 0.1.11`, Unity `2023.1.22f1`, run `1ad84008622a4d4d9e06cae2a25ffac6`, and `Chainloader startup complete`. The local named-pipe receiver connected and received the hello record. At 2026-11-04 18:32 local time, `writer_state.json` reported 15,393 accepted frames and `is_final=false`; one 2,040,567-byte chunk remained `.partial`. No producer stop, final capture marker, analysis report, or performance gate result is available.
+
+The game process did not expose a screenshot or menu state through the desktop UI control. No lobby was entered, no active add-on list or runtime movement was observed, and there is no calibration/video evidence. The plugin's `Enabled` setting was already `true` before this attempt and the installer preserved it; the receiver was started before the game. Do not treat this open partial run as a clean recorder acceptance capture. Its output, receiver logs, BepInEx logs, settings snapshot, and rollback files are under `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261104`; preserve the partial chunk.
+
 ## Current evidence
 
 The owner-supplied 0.1.5 gameplay recording completed cleanly through the writer and transport: 56,970 ordered frame markers, 779 events, 54 lifecycle records, 35/35 SHA-256-verified chunks, 27 entity IDs, no reported frame or entity drops, and `capture_complete=true`. It contains Humans, Titans, Hooks, 209 observed Human collision callbacks, and 340 sampled Hook state transitions.
@@ -16,14 +24,14 @@ The prior analyzer counted 277 `unexplained_velocity_change` findings because it
 
 The same 0.1.5 capture's later health window reached 1.8008 ms capture-work p95 at a 20 ms fixed step, above the 1.0 ms criterion; maximum was 53.6163 ms, below the 60 ms limit. A later installed-game log from plugin 0.1.5 reports `control_reserve_exhausted_before_frame_gap`; treat that separate attempt as incomplete. A subsequent 0.1.8 run connected and wrote 8,197 durable frames and 282 events in six verified chunks, but stopped incomplete after `PermissionError` replacing `writer_state.json`; one submitted frame was not durable. A 0.1.9 installed-game session wrote many verified chunks, but the game disconnected without a stop envelope and the receiver left its latest chunk partial. Version 0.1.10 retains the earlier writer fixes and adds a five-second reconnect window; it seals the durable prefix and marks the run incomplete if the producer does not return. **No completed 0.1.10 gameplay performance result exists yet.** Sample phase remains `fixed_update_pre_physics_order_unspecified`, map/mode is unknown, and no video was included.
 
-The 0.1.7 DLLs are now installed on disk in the inspected game copy, but the current game process started before installation and logged `0 plugins to load`. Runtime loading remains unconfirmed until the game is restarted.
+The installed 0.1.11 DLLs were observed loading after a clean restart. Startup and local-pipe handshake are verified; clean producer stop, final chunk integrity, steady-state performance, and controlled timing calibration remain open.
 
 ## Current implementation state
 
 - PR #15 is merged into `main`; PR #16 targets `main` and retains the adapter-only diff.
 - The offline analyzer emits `kill_attributions.json` and a report section. It uses sampled alive→dead transitions, observed target-specific collisions, sampled AI/attack state, and explicitly correlated direct events when present. It preserves the provenance of each signal and labels contact-based attribution as inference.
 - The Unity adapter and writer schema remain unchanged by the analyzer output. No M2 gameplay code or installed game file is changed by this work.
-- The current candidate package version is 0.1.11. Keep game recording disabled except during the deliberately opted-in private validation session.
+- The current candidate package version is 0.1.11. Keep game recording disabled except during the deliberately opted-in private validation session. The installed config currently remains enabled for the open capture; set `Enabled=false` after closing the game and finalizing or preserving the incomplete output.
 
 ## REC-I validation card
 
@@ -45,8 +53,8 @@ The 0.1.7 DLLs are now installed on disk in the inspected game copy, but the cur
 
 ## Acceptance boundary
 
-The supplied 0.1.5 recording establishes successful writer/transport operation and gives strong, non-causal evidence consistent with a cadet kill. It does not establish direct damage attribution, calibrated physics phase, REC-I performance acceptance, or M2 decision quality. The supplied 0.1.10 capture fails the performance and timing gates. The 0.1.11 reusable storage changes must be measured in the installed game before the performance gate is called resolved. The 174 unmatched velocity changes remain explicit review findings.
+The supplied 0.1.5 recording establishes successful writer/transport operation and gives strong, non-causal evidence consistent with a cadet kill. It does not establish direct damage attribution, calibrated physics phase, REC-I performance acceptance, or M2 decision quality. The supplied 0.1.10 capture fails the performance and timing gates. The 0.1.11 plugin load and local-pipe handshake pass, but its current run is still partial and has no performance or calibration result. Keep `sample_phase_verified=false` and PR #16 open. The 174 unmatched velocity changes remain explicit review findings.
 
 ## Installed-machine handling
 
-Version 0.1.9 was installed and exercised in-game; the run exposed the disconnect-finalization gap. Version 0.1.10 was installed and produced the supplied complete structural capture, but it failed the current performance and timing gates. Version 0.1.11 is being prepared with a package manifest and hashes; verify upgrade/rollback through its guarded installer and preserve BepInEx and generated interop during rollback.
+Version 0.1.9 was installed and exercised in-game; the run exposed the disconnect-finalization gap. Version 0.1.10 was installed and produced the supplied complete structural capture, but it failed the current performance and timing gates. Version 0.1.11 was installed with a verified package manifest and receipt-checked upgrade. Its clean-start load is observed, but the current run is incomplete. The prior install/config backup is under `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261104/rollback`; restore it through the guarded removal/installation procedure if rollback is needed, preserving BepInEx and generated interop.
