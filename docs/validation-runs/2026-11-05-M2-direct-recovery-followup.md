@@ -1,7 +1,7 @@
 # Validation Card — M2 Direct movement and recovery follow-up
 
 SESSION: `M2-DIRECT-RECOVERY-20261105-016`
-STATUS: Card created before the next gameplay run. No post-patch live result is claimed.
+STATUS: Candidate installed; fresh 0.1.16 launch and receiver handshake pass. Lobby, movement, recovery, and final recorder results are pending.
 SCOPE: Single-cadet M2 `Engage + Direct`, grounded pursuit, bounded opposite-side recovery, Hold interruption, Engine comparison, recorder performance/timing, and watcher rotation. No multi-cadet, rescue, personality, or M3 gameplay.
 NON-GOALS: No mission-script or M1 changes, no attack/damage semantics changes, no synthetic movement/physics, no recorder or watcher implementation mixed into the gameplay change.
 
@@ -18,7 +18,7 @@ NON-GOALS: No mission-script or M1 changes, no attack/damage semantics changes, 
 | Active settings | Snapshot from the running setup; do not infer from the saved preset | Pending |
 | Effective driver | Watcher/controller event confirms Direct or Engine after the command | Pending |
 | Deployed files | SHA-256 for all three enabled add-ons plus recorder/plugin/transport/package manifests | WaveCadet `051CE53B037F18B8AF685ADD569ADDADDC98B2F65DE76831E7574C5C812E2093`; CommandPanel `8E6EB2B708F6A67BF7C9D5D7E0BD23B9DCBA1418910239CBDAAE6AE96EC1E17C`; M2Watcher `B6BD148511EA59203F6A3ACBFE0C8886E73C32C6CF4E71D08D9DBE15CCC24489`. |
-| Recorder | Version, run ID, receiver handshake, final ZIP, analyzer report, clean stop | 0.1.16 installed; package ZIP SHA-256 `9DEFA3806B2A145624C31C82AD53AB0D3B80D4296CA1E3583FB42DCF2A7CFD30`; 50/50 manifest files and 51 ZIP entries verified. Plugin `DECD0BCEB5307730A510608319F8470C696D5E12EFE4668BCC4C3DCCEDBACE49`; transport `638D2FBCF3A50EEE60319402656EF13CFE0DA5E2E5DDCE0B2C846CB9B9FAFD98`; install manifest `54E71E36EF2EB3A7224148D3A79339ABED436DA1B33D71C3741D212972BC6AE7`. Enabled for opt-in run 07 (config SHA-256 `E6B8288D2B5C2D916ED53121DC1BEECB3BADFE340F24C961C6C22B692D833C3`). Receiver PID 31900 is listening on local pipe `aicadets-flight-recorder-v1`; clean launch/handshake pending. |
+| Recorder | Version, run ID, receiver handshake, final ZIP, analyzer report, clean stop | 0.1.16 installed; package ZIP SHA-256 `9DEFA3806B2A145624C31C82AD53AB0D3B80D4296CA1E3583FB42DCF2A7CFD30`; 50/50 manifest files and 51 ZIP entries verified. Plugin `DECD0BCEB5307730A510608319F8470C696D5E12EFE4668BCC4C3DCCEDBACE49`; transport `638D2FBCF3A50EEE60319402656EF13CFE0DA5E2E5DDCE0B2C846CB9B9FAFD98`; install manifest `54E71E36EF2EB3A7224148D3A79339ABED436DA1B33D71C3741D212972BC6AE7`. Enabled for opt-in run 07 (config SHA-256 `E6B8288D2B5C2D916ED53121DC1BEECB3BADFE340F24C961C6C22B692D833C3`). Run `ad80bbf379bd4ff9ba36c64172cd8b71`: BepInEx logged version 0.1.16 / Unity 2023.1.22f1; receiver accepted hello sequence 1. Capture is in progress; clean stop, final analysis, performance, queue, and timing gates pending. |
 | Watcher | Run ID, segment manifest, saved game/Custom Logic console logs | Pending |
 | Artifacts | Video if available, settings snapshot, deployed hashes, Validation Card | Run directory `Documents/Aottg2/Recorders/validation/M2-DIRECT-RECOVERY-20261105/m2-direct-recovery-run-07`; WaveCadet and recorder rollback copies captured before install; gameplay and recorder run IDs pending. |
 
@@ -38,7 +38,7 @@ Raw watcher, recorder, video, and game logs remain local. Do not place player di
 
 - Gameplay source is feature commit `d61be0fb42ba5a9f3a59325ba69ee686179526b3` on PR #6 head `fb793e33c16c357adf4d7825213377059c300864`. The installed WaveCadet hash matches the committed source. The pre-candidate installed file (hash `965E5B57A19917302F089EBB90902A2C637E096D245B3AC173EE3EF3DEC0B752`) is retained at `m2-direct-recovery-run-07/rollback/AICadetsWaveCadet.before-odm-retry.cl`.
 - Flight Recorder source is commit `404a40f23268b53b6e0ff01ed459e6d3c7e53246`; version 0.1.16 package manifest and ZIP hashes were verified before guarded install. The 0.1.15 DLLs, manifest, and disabled config are retained at `m2-direct-recovery-run-07/rollback/installed-0.1.15-before-0.1.16`. The current config is opted in only for run 07 and must be restored from that exact backup after capture.
-- At card update time, the game has not yet completed a fresh startup. The recorder receiver is listening locally and the game-side capture setting is enabled; no run ID, lobby, movement, or timing result is claimed.
+- The user confirmed the fresh game launch is paused at the main menu. BepInEx and the local receiver confirm the 0.1.16 startup/handshake pass, run ID `ad80bbf379bd4ff9ba36c64172cd8b71`. The receiver remains active; lobby, actor, order, movement, and timing results are not yet claimed.
 
 ## Gameplay run matrix
 
