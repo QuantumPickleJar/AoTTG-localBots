@@ -816,7 +816,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-5-shorter-opposite-retry")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-6-opposite-back-diagonal-retry")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1514,6 +1514,50 @@ class WaveM2Tests(unittest.TestCase):
                             and "command_dispatched=false" in line for line in w.messages))
         self.assertFalse(any("event=reposition_retry " in line for line in w.messages))
         self.assertEqual(len([line for line in w.messages if "event=reposition_start" in line]), 1)
+
+    def test_opposite_retry_can_use_back_diagonal_when_other_opposite_routes_are_blocked(self):
+        w = World()
+        w.tick()
+        w.controller.Persistence = 3
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_opposite_back_diagonal_retry")
+        w.tick()
+        first_goal = w.controller._groundGoal
+        first_side = w.controller._groundRecoverySelectedSide
+        self.assertEqual(first_side, 1)
+
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+        first_end = next(x for x in w.messages if "event=reposition_end" in x)
+        self.assertIn("movement_result=moved<2", first_end)
+
+        def block_except_opposite_back_diagonal(start, end, layer):
+            to_target = w.titan.Position - w.cadet.Position
+            distance = (to_target.X * to_target.X + to_target.Z * to_target.Z) ** 0.5
+            forward_x = to_target.X / distance
+            forward_z = to_target.Z / distance
+            right_x = forward_z
+            right_z = -forward_x
+            dx = end.X - start.X
+            dz = end.Z - start.Z
+            forward_amount = dx * forward_x + dz * forward_z
+            side_amount = dx * right_x + dz * right_z
+            if forward_amount < -4.0 and side_amount < -4.0:
+                return None
+            return NS(Point=end, Distance=2.0)
+
+        w.hit = block_except_opposite_back_diagonal
+        w.tick()
+
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertEqual(w.controller._groundRecoverySelectedCandidate, 6)
+        self.assertEqual(w.controller._groundRecoverySelectedSide, -first_side)
+        self.assertNotEqual(w.controller._groundGoal, first_goal)
+        retry = next(x for x in w.messages if "event=reposition_retry " in x)
+        self.assertIn("candidate=6", retry)
+        self.assertIn("opposite_side=true", retry)
+        self.assertIn("goal=", retry)
 
     def test_successful_opposite_retry_requires_same_target_progress(self):
         w = World()

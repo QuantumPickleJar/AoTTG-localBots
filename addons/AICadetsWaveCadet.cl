@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-locomotion-1-f8combo-5-shorter-opposite-retry";
+    _buildTag = "M2-locomotion-1-f8combo-6-opposite-back-diagonal-retry";
     # Ground Titan pursuit uses explicit planar steering. The native MoveTo
     # angle offsets are retained only as an opt-in comparison driver.
     GroundSteering = "Direct";
@@ -1391,14 +1391,14 @@ addon AICadetsWaveCadet
 
     function ChooseWallEscape(direction, right, requiredSide)
     {
-        for (candidate in Range(0, 5, 1))
+        for (candidate in Range(0, 7, 1))
         {
             side = 0;
-            if (candidate == 0 || candidate == 2)
+            if (candidate == 0 || candidate == 2 || candidate == 5)
             {
                 side = 1;
             }
-            elif (candidate == 1 || candidate == 3)
+            elif (candidate == 1 || candidate == 3 || candidate == 6)
             {
                 side = -1;
             }
@@ -1422,6 +1422,14 @@ addon AICadetsWaveCadet
             elif (candidate == 4)
             {
                 offset = direction * -12.0;
+            }
+            elif (candidate == 5)
+            {
+                offset = direction * -8.0 + right * (8.0 + self.RepositionSkill * 3.0);
+            }
+            elif (candidate == 6)
+            {
+                offset = direction * -8.0 - right * (8.0 + self.RepositionSkill * 3.0);
             }
             for (scaleIndex in Range(0, 3, 1))
             {
