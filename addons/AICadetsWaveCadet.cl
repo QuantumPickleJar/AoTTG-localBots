@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-locomotion-1-f8combo-4-opposite-retry-gate";
+    _buildTag = "M2-locomotion-1-f8combo-5-shorter-opposite-retry";
     # Ground Titan pursuit uses explicit planar steering. The native MoveTo
     # angle offsets are retained only as an opt-in comparison driver.
     GroundSteering = "Direct";
@@ -88,6 +88,7 @@ addon AICadetsWaveCadet
     _groundRecoveryRetryTargetId = 0;
     _groundRecoverySelectedCandidate = -1;
     _groundRecoverySelectedSide = 0;
+    _groundRecoverySelectedScale = 1.0;
     _groundProgressPosition = null;
     _groundPreviousTargetDistance = 0.0;
     _groundMovementStartedAt = 0.0;
@@ -713,6 +714,7 @@ addon AICadetsWaveCadet
         self._groundRecoveryRetryRequested = false;
         self._groundRecoveryRetryProgressPending = false;
         self._groundRecoveryRetryTargetId = 0;
+        self._groundRecoverySelectedScale = 1.0;
         self._hookWaitTimedOut = false;
         self._lastFailureReason = "none";
         self._orbitAttempts = 0;
@@ -1404,31 +1406,49 @@ addon AICadetsWaveCadet
             {
                 continue;
             }
-            goal = self._cadet.Position + direction * 8.0 + right * (8.0 + self.RepositionSkill * 3.0);
+            offset = direction * 8.0 + right * (8.0 + self.RepositionSkill * 3.0);
             if (candidate == 1)
             {
-                goal = self._cadet.Position + direction * 8.0 - right * (8.0 + self.RepositionSkill * 3.0);
+                offset = direction * 8.0 - right * (8.0 + self.RepositionSkill * 3.0);
             }
             elif (candidate == 2)
             {
-                goal = self._cadet.Position + right * 12.0;
+                offset = right * 12.0;
             }
             elif (candidate == 3)
             {
-                goal = self._cadet.Position - right * 12.0;
+                offset = right * -12.0;
             }
             elif (candidate == 4)
             {
-                goal = self._cadet.Position - direction * 12.0;
+                offset = direction * -12.0;
             }
-            if (self.EscapeRouteClear(goal))
+            for (scaleIndex in Range(0, 3, 1))
             {
-                self._groundGoal = Vector3(goal.X, self._cadet.Position.Y, goal.Z);
-                self._groundRecoverySelectedCandidate = candidate;
-                self._groundRecoverySelectedSide = side;
-                details = self.RecoveryRecordDetails(self._targetRecoveries + 1, self._targetViewId, self._cadet.Position, self._cadet.Position, 0.0, self._groundGoal, 0.0, self._cadet.GetAIState(), "route_selected");
-                self.LogEvent("escape_route", "candidate=" + Convert.ToString(candidate) + " " + details + " side=" + Convert.ToString(side) + " required_side=" + Convert.ToString(requiredSide));
-                return true;
+                scale = 1.0;
+                if (scaleIndex == 1)
+                {
+                    scale = 0.75;
+                }
+                elif (scaleIndex == 2)
+                {
+                    scale = 0.65;
+                }
+                goal = self._cadet.Position + offset * scale;
+                if (Vector3.Distance(self._cadet.Position, goal) <= 5.5)
+                {
+                    continue;
+                }
+                if (self.EscapeRouteClear(goal))
+                {
+                    self._groundGoal = Vector3(goal.X, self._cadet.Position.Y, goal.Z);
+                    self._groundRecoverySelectedCandidate = candidate;
+                    self._groundRecoverySelectedSide = side;
+                    self._groundRecoverySelectedScale = scale;
+                    details = self.RecoveryRecordDetails(self._targetRecoveries + 1, self._targetViewId, self._cadet.Position, self._cadet.Position, 0.0, self._groundGoal, 0.0, self._cadet.GetAIState(), "route_selected");
+                    self.LogEvent("escape_route", "candidate=" + Convert.ToString(candidate) + " " + details + " side=" + Convert.ToString(side) + " required_side=" + Convert.ToString(requiredSide) + " scale=" + Convert.ToString(scale));
+                    return true;
+                }
             }
         }
         return false;
@@ -1575,7 +1595,7 @@ addon AICadetsWaveCadet
                 if (retryAttempt)
                 {
                     details = self.RecoveryRecordDetails(self._targetRecoveries, self._targetViewId, self._cadet.Position, self._cadet.Position, 0.0, null, 0.0, self._cadet.GetAIState(), "opposite_side_blocked");
-                    self.LogEvent("reposition_retry", details + " first_goal=" + Convert.ToString(self._groundRecoveryFirstGoal) + " next_attempt=2");
+                    self.LogEvent("reposition_retry_blocked", details + " first_goal=" + Convert.ToString(self._groundRecoveryFirstGoal) + " required_side=" + Convert.ToString(requiredSide) + " next_attempt=2 command_dispatched=false");
                     self._groundRecoveryRetryRequested = false;
                 }
                 details = self.RecoveryRecordDetails(self._targetRecoveries, self._targetViewId, self._cadet.Position, self._cadet.Position, 0.0, null, 0.0, self._cadet.GetAIState(), "escape_corridors_blocked");
@@ -1607,7 +1627,7 @@ addon AICadetsWaveCadet
             details = self.RecoveryRecordDetails(self._groundRecoveryAttempt, self._groundRecoveryTargetId, self._groundRecoveryStartPosition, "pending", 0.0, self._groundRecoveryGoal, 0.0, aiState, "command_issued");
             if (retryAttempt)
             {
-                self.LogEvent("reposition_retry", details + " first_goal=" + Convert.ToString(self._groundRecoveryFirstGoal) + " first_candidate=" + Convert.ToString(self._groundRecoveryFirstCandidate) + " candidate=" + Convert.ToString(self._groundRecoverySelectedCandidate) + " opposite_side=true next_attempt=2");
+                self.LogEvent("reposition_retry", details + " first_goal=" + Convert.ToString(self._groundRecoveryFirstGoal) + " first_candidate=" + Convert.ToString(self._groundRecoveryFirstCandidate) + " candidate=" + Convert.ToString(self._groundRecoverySelectedCandidate) + " scale=" + Convert.ToString(self._groundRecoverySelectedScale) + " opposite_side=true next_attempt=2");
                 self._groundRecoveryRetryRequested = false;
             }
             self.LogEvent("reposition_start", details);

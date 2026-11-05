@@ -816,7 +816,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-4-opposite-retry-gate")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-5-shorter-opposite-retry")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1464,6 +1464,56 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
         self.assertTrue(any("escape_no_displacement" in x for x in w.messages))
         self.assertEqual(len([x for x in w.messages if "event=reposition_start" in x]), 2)
+
+    def test_opposite_retry_uses_shorter_clear_goal_when_full_corridors_are_blocked(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_shorter_opposite_goal")
+        w.tick()
+        first_goal = w.controller._groundGoal
+        first_side = w.controller._groundRecoverySelectedSide
+        self.assertEqual(first_side, 1)
+
+        w.hit = lambda start, end, layer: (
+            NS(Point=end, Distance=2)
+            if ((end.X - start.X) ** 2 + (end.Z - start.Z) ** 2) ** 0.5 > 10.0 else None)
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+        w.tick()
+
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertEqual(w.controller._groundRecoverySelectedSide, -first_side)
+        self.assertEqual(w.controller._groundRecoverySelectedScale, 0.75)
+        self.assertNotEqual(w.controller._groundGoal, first_goal)
+        retry = next(x for x in w.messages if "event=reposition_retry" in x)
+        self.assertIn("opposite_side=true", retry)
+        self.assertIn("scale=0.75", retry)
+        self.assertNotIn("goal=none", retry)
+
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(len([x for x in w.messages if "event=reposition_start" in x]), 2)
+
+    def test_blocked_opposite_retry_is_reported_without_claiming_a_command(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_blocked_opposite_retry")
+        w.tick()
+        move_calls_before_retry = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        w.hit = NS(Point=Vector(4, 1, 3), Distance=3.0)
+
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+        w.tick()
+
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls_before_retry)
+        self.assertTrue(any("event=reposition_retry_blocked" in line
+                            and "command_dispatched=false" in line for line in w.messages))
+        self.assertFalse(any("event=reposition_retry " in line for line in w.messages))
+        self.assertEqual(len([line for line in w.messages if "event=reposition_start" in line]), 1)
 
     def test_successful_opposite_retry_requires_same_target_progress(self):
         w = World()
