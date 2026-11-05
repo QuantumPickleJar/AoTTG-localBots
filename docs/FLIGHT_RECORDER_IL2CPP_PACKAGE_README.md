@@ -1,12 +1,14 @@
 # AoTTG2 IL2CPP Flight Recorder package
 
-**Build:** 0.1.11 candidate, compiled against interop generated from the installed AoTTG2 build
+**Build:** 0.1.12 candidate, compiled against interop generated from the installed AoTTG2 build
 
 **Runtime:** x64, Unity 2023.1.22f1, IL2CPP metadata 29.1, BepInEx 6.0.0-be.791, .NET 6
 
 **Capture default:** disabled
 
-This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Version 0.1.11 retains the 0.1.10 queue, stop, and reconnect behavior and reuses per-entity sample buffers and frame storage while preserving the `aicadets.flight.v1` payload fields. Its phase label is `fixed_update_pre_physics`; Unity 2023.1 documents physics calculations after `FixedUpdate`. A controlled live transition is still required before `sample_phase_verified` can be set true. A disconnected capture is explicitly marked incomplete; its durable chunks are sealed and the receiver exits. A persistent filesystem denial or queue exhaustion still marks the capture incomplete. The installer replaces a prior manifest-verified recorder automatically, while refusing modified files, unrecognized files, or installs without a valid receipt. Close the game before installing. The 0.1.11 capture-work thresholds still need an installed-game measurement.
+This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Version 0.1.11 retained the 0.1.10 queue, stop, and reconnect behavior and reused per-entity sample buffers and frame storage while preserving the `aicadets.flight.v1` payload fields. Version 0.1.12 removes Unity's implicit InstanceID sort from the periodic discovery census while preserving inactive-object discovery and the explicit entity-ID ordering used for output. Unity documents `FindObjectsSortMode.None` as the least resource-intensive option and notes that result order is not guaranteed ([`FindObjectsByType`](https://docs.unity3d.com/ja/2023.1/ScriptReference/Object.FindObjectsByType.html), [`FindObjectsSortMode.None`](https://docs.unity3d.com/ja/2023.1/ScriptReference/FindObjectsSortMode.None.html)). This optimization has not yet had an installed-runtime performance retest.
+
+The 0.1.11 clean-start run `1ad84008622a4d4d9e06cae2a25ffac6` loaded and stopped cleanly with `capture_complete=true`, 39,509 frames, one verified chunk, no frame gaps or declared drops, and bounded queues. It tracked zero entities and had no M2 events, so it was not an M2 workload or phase-calibration run. Of 156 producer-health windows after 15 monotonic seconds, 2 exceeded the 1.0 ms p95 limit; the worst p95 was 2.8658 ms and the worst reported individual sample was 91.2873 ms. The performance gate therefore failed. The `fixed_update_pre_physics` phase label is descriptive only; `sample_phase_verified=false` remains until a controlled natural physics transition establishes phase.
 
 This is a client startup plug-in, not an AoTTG Custom Logic `.cl` add-on selected in a lobby. Keep the game folder writable because BepInEx writes configuration, logs, and generated interop. The guarded recorder installer writes only its two DLLs and receipt into its dedicated plug-in folder. The game does not start the Python receiver; the game plug-in only connects to its local named pipe, so start the receiver before launching AoTTG2 with capture enabled.
 
@@ -45,12 +47,12 @@ Unavailable or unverified: moving world geometry, Titan-side collision callbacks
 2. Extract the reviewed package to a local directory.
 3. Run the guarded installer. It automatically removes a previous recorder install after verifying its receipt, DLL hashes, and folder contents. It refuses modified or unmanaged installations for manual review:
 
-       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.11"
+       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.12"
 
 4. Leave BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg at `Enabled = false` for the startup check. Launch to the menu, verify plug-in version and disabled-capture log entries, then close the game.
 5. Copy `configs/flight-recorder-transport.example.json` to a private local config, set `recording_enabled=true`, and choose a new empty output directory. Start the receiver first:
 
-       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.11" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
+       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.12" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
 
    `ConfigPath` must be the JSON file. A relative `output_dir` is resolved beside that file, and the launcher prints the resolved directory. For output in `Documents\AoTTG2\Recorders\recordings`, use the JSON in that `Recorders` folder, not the package's `configs` directory.
 
@@ -67,4 +69,4 @@ Close the game and run the package's `remove_flight_recorder.ps1` against the sa
 
 ## Validation boundary
 
-The supplied 0.1.5 run proves a complete writer/transport recording and observed Human/Hook/Titan data. It gives strong but non-causal evidence consistent with a cadet kill. It does not prove direct damage attribution, M2 decision quality, or calibrated physics phase. The supplied 0.1.10 p95 performance result failed the 1.0 ms criterion; 0.1.11's reusable sample storage and pre-physics phase label still need a fresh installed private-game capture and controlled phase calibration. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the repository's 2026-11-04 M2/recorder Validation Card for acceptance limits and rollback steps.
+The supplied 0.1.5 run proves a complete writer/transport recording and observed Human/Hook/Titan data. It gives strong but non-causal evidence consistent with a cadet kill. It does not prove direct damage attribution, M2 decision quality, or calibrated physics phase. Both the supplied 0.1.10 run and the installed 0.1.11 run fail the 1.0 ms p95 performance criterion; 0.1.12 removes discovery sorting but still needs an installed private-game performance retest. Timing calibration also remains open. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the repository's 2026-11-04 M2/recorder Validation Card for acceptance limits and rollback steps.

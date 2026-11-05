@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.11";
+    public const string PluginVersion = "0.1.12";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -485,7 +485,7 @@ internal sealed class CaptureRegistry
         if (now < _nextDiscoveryAt) return;
         _nextDiscoveryAt = now + Math.Clamp(_plugin.DiscoveryInterval, 0.2d, 5d);
 
-        foreach (var human in Object.FindObjectsOfType<Human>(true))
+        foreach (var human in Object.FindObjectsByType<Human>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (!_plugin.IsCapturing) return;
             if (human == null || !_plugin.IsAllowed(human) || !human.FinishSetup) continue;
@@ -493,13 +493,13 @@ internal sealed class CaptureRegistry
             if (!_plugin.IsCapturing) return;
             TrackHooks(human);
         }
-        foreach (var titan in Object.FindObjectsOfType<BaseTitan>(true))
+        foreach (var titan in Object.FindObjectsByType<BaseTitan>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (!_plugin.IsCapturing) return;
             if (titan == null || !_plugin.IsAllowed(titan)) continue;
             Track(titan, "titan");
         }
-        foreach (var projectile in Object.FindObjectsOfType<BaseProjectile>(true))
+        foreach (var projectile in Object.FindObjectsByType<BaseProjectile>(FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             if (!_plugin.IsCapturing) return;
             if (projectile == null) continue;

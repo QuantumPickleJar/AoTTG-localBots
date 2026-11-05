@@ -31,6 +31,9 @@ SCHEMA = "aicadets.flight.v1"
 CHUNK_INDEX_SCHEMA = "aicadets.flight.chunk-index.v1"
 CHUNK_INDEX_NAME = "chunk_manifest.json"
 MAX_ANOMALIES = 2000
+CAPTURE_PERFORMANCE_STARTUP_SECONDS = 15.0
+CAPTURE_P95_LIMIT_MS = 1.0
+CAPTURE_SAMPLE_MAX_LIMIT_MS = 60.0
 
 
 def vec(value):
@@ -42,6 +45,191 @@ def vec(value):
 
 def distance(a, b):
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+
+def finite_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def nonnegative_count(value):
+    number = finite_number(value)
+    return max(0, int(number)) if number is not None else 0
+
+
+def producer_health_summary(records, metadata, fixed_delta_times, entity_count):
+    valid = []
+    for record in records:
+        game_time = finite_number(record.get("t"))
+        wall_time = finite_number(record.get("wall_monotonic_elapsed_seconds"))
+        p95 = finite_number(record.get("capture_work_ms_p95"))
+        maximum = finite_number(record.get("capture_work_ms_maximum"))
+        if game_time is None or wall_time is None or p95 is None or maximum is None:
+            continue
+        valid.append({**record, "t": game_time,
+                      "wall_monotonic_elapsed_seconds": wall_time,
+                      "capture_work_ms_p95": p95,
+                      "capture_work_ms_maximum": maximum})
+
+    post_start = [record for record in valid
+                  if record["wall_monotonic_elapsed_seconds"] > CAPTURE_PERFORMANCE_STARTUP_SECONDS]
+    worst_p95 = max(post_start, key=lambda record: record["capture_work_ms_p95"], default=None)
+    worst_sample = max(valid, key=lambda record: record["capture_work_ms_maximum"], default=None)
+    max_sample_post_start = max(post_start, key=lambda record: record["capture_work_ms_maximum"], default=None)
+    writer_stats = metadata.get("writer_stats", {})
+    writer_limits = metadata.get("writer_limits", {})
+    if not isinstance(writer_stats, dict):
+        writer_stats = {}
+    if not isinstance(writer_limits, dict):
+        writer_limits = {}
+
+    p95_failures = [record for record in post_start
+                    if record["capture_work_ms_p95"] > CAPTURE_P95_LIMIT_MS]
+    dropped_frames = max((nonnegative_count(record.get("dropped_frames")) for record in valid), default=0)
+    dropped_controls = max((nonnegative_count(record.get("dropped_control_messages")) for record in valid), default=0)
+    dropped_frames = max(dropped_frames,
+                         nonnegative_count(writer_stats.get("queue_dropped_frames"))
+                         + nonnegative_count(writer_stats.get("storage_dropped_frames")))
+    dropped_samples = (nonnegative_count(writer_stats.get("queue_dropped_entity_samples"))
+                       + nonnegative_count(writer_stats.get("storage_dropped_entity_samples")))
+    queue_depth = max((nonnegative_count(record.get("queue_depth")) for record in post_start), default=0)
+    queue_bytes = max((nonnegative_count(record.get("queue_bytes")) for record in post_start), default=0)
+    queue_high_water_depth = max(
+        queue_depth,
+        nonnegative_count(writer_stats.get("max_queue_depth")),
+        max((nonnegative_count(record.get("queue_high_water_depth")) for record in valid), default=0),
+    )
+    queue_high_water_bytes = max(
+        queue_bytes,
+        nonnegative_count(writer_stats.get("max_queue_bytes")),
+        max((nonnegative_count(record.get("queue_high_water_bytes")) for record in valid), default=0),
+    )
+    queue_capacity = finite_number(writer_limits.get("queue_capacity"))
+    max_queue_bytes = finite_number(writer_limits.get("max_queue_bytes"))
+    queue_bounded = ((queue_capacity is None or queue_high_water_depth <= queue_capacity)
+                     and (max_queue_bytes is None or queue_high_water_bytes <= max_queue_bytes)
+                     and not writer_stats.get("storage_exhausted", False)
+                     and writer_stats.get("fatal_error") in (None, ""))
+
+    reasons = []
+    if not valid:
+        reasons.append("no valid producer-health records")
+    if not post_start:
+        reasons.append("no producer-health windows after the first 15 seconds of monotonic capture time")
+    if p95_failures:
+        reasons.append(f"{len(p95_failures)} post-start producer-health windows exceed {CAPTURE_P95_LIMIT_MS:.1f} ms p95")
+    if worst_sample and worst_sample["capture_work_ms_maximum"] > CAPTURE_SAMPLE_MAX_LIMIT_MS:
+        reasons.append(f"maximum reported capture-work sample exceeds {CAPTURE_SAMPLE_MAX_LIMIT_MS:.1f} ms")
+    if dropped_frames or dropped_controls or dropped_samples:
+        reasons.append("producer or writer reported dropped frames, samples, or control messages")
+    if not queue_bounded:
+        reasons.append("queue or writer storage/fatal-error bounds failed")
+    if not metadata.get("capture_complete", False):
+        reasons.append("capture is incomplete")
+    if entity_count < 2:
+        reasons.append("fewer than one Human and one Titan were tracked; M2 workload performance is unverified")
+
+    thresholds_available = bool(valid and post_start)
+    gate_status = "unavailable"
+    if thresholds_available:
+        threshold_or_transport_failure = (bool(p95_failures)
+                                          or bool(worst_sample and worst_sample["capture_work_ms_maximum"] > CAPTURE_SAMPLE_MAX_LIMIT_MS)
+                                          or bool(dropped_frames or dropped_controls or dropped_samples)
+                                          or not queue_bounded
+                                          or not metadata.get("capture_complete", False))
+        if threshold_or_transport_failure:
+            gate_status = "fail"
+        elif entity_count < 2:
+            gate_status = "inconclusive"
+        else:
+            gate_status = "pass"
+
+    return {
+        "producer_health_records": len(records),
+        "valid_producer_health_records": len(valid),
+        "post_15s_windows": len(post_start),
+        "post_15s_windows_over_p95_limit": len(p95_failures),
+        "p95_limit_ms": CAPTURE_P95_LIMIT_MS,
+        "individual_sample_limit_ms": CAPTURE_SAMPLE_MAX_LIMIT_MS,
+        "worst_post_15s_p95_ms": worst_p95["capture_work_ms_p95"] if worst_p95 else None,
+        "worst_post_15s_p95_window": ({"step": worst_p95.get("step"), "t": worst_p95.get("t"),
+                                        "wall_monotonic_elapsed_seconds": worst_p95.get("wall_monotonic_elapsed_seconds"),
+                                        "capture_work_ms_p95": worst_p95.get("capture_work_ms_p95"),
+                                        "capture_work_ms_maximum": worst_p95.get("capture_work_ms_maximum")}
+                                       if worst_p95 else None),
+        "maximum_reported_sample_ms": worst_sample["capture_work_ms_maximum"] if worst_sample else None,
+        "maximum_reported_sample_window": ({"step": worst_sample.get("step"), "t": worst_sample.get("t"),
+                                             "wall_monotonic_elapsed_seconds": worst_sample.get("wall_monotonic_elapsed_seconds"),
+                                             "capture_work_ms_p95": worst_sample.get("capture_work_ms_p95"),
+                                             "capture_work_ms_maximum": worst_sample.get("capture_work_ms_maximum")}
+                                            if worst_sample else None),
+        "maximum_reported_sample_after_15s_ms": (max_sample_post_start["capture_work_ms_maximum"]
+                                                   if max_sample_post_start else None),
+        "post_15s_max_queue_depth": queue_depth,
+        "post_15s_max_queue_bytes": queue_bytes,
+        "writer_queue_high_water_depth": queue_high_water_depth,
+        "writer_queue_high_water_bytes": queue_high_water_bytes,
+        "writer_queue_capacity": queue_capacity,
+        "writer_max_queue_bytes": max_queue_bytes,
+        "reported_dropped_frames": dropped_frames,
+        "reported_dropped_entity_samples": dropped_samples,
+        "reported_dropped_control_messages": dropped_controls,
+        "writer_fatal_error": writer_stats.get("fatal_error"),
+        "writer_storage_exhausted": bool(writer_stats.get("storage_exhausted", False)),
+        "capture_complete": bool(metadata.get("capture_complete", False)),
+        "tracked_entities": entity_count,
+        "queue_bounded": queue_bounded,
+        "gate_status": gate_status,
+        "gate_reasons": reasons,
+        "fixed_delta_time_seconds": (sorted(set(fixed_delta_times)) if fixed_delta_times else []),
+    }
+
+
+def timing_summary(health_records, frame_count, counters, fixed_delta_times, calibration_candidates,
+                   same_step_collision_events, m2_event_count, sample_phase_verified):
+    valid = []
+    for record in health_records:
+        game_time = finite_number(record.get("t"))
+        wall_time = finite_number(record.get("wall_monotonic_elapsed_seconds"))
+        if game_time is not None and wall_time is not None:
+            valid.append((game_time, wall_time))
+    valid.sort(key=lambda pair: pair[1])
+    wall_monotonic = all(right[1] > left[1] for left, right in zip(valid, valid[1:]))
+    correlation = None
+    slope = None
+    if len(valid) >= 2:
+        game = [pair[0] for pair in valid]
+        wall = [pair[1] for pair in valid]
+        mean_game = sum(game) / len(game)
+        mean_wall = sum(wall) / len(wall)
+        covariance = sum((g - mean_game) * (w - mean_wall) for g, w in valid)
+        game_variance = sum((g - mean_game) ** 2 for g in game)
+        wall_variance = sum((w - mean_wall) ** 2 for w in wall)
+        if game_variance > 0:
+            slope = covariance / game_variance
+        if game_variance > 0 and wall_variance > 0:
+            correlation = covariance / math.sqrt(game_variance * wall_variance)
+    return {
+        "frame_markers": frame_count,
+        "frame_step_gap_occurrences": counters.get("anomaly_missing_frame_steps", 0),
+        "nonmonotonic_frame_time_occurrences": counters.get("anomaly_nonmonotonic_frame_time", 0),
+        "fixed_step_time_mismatch_occurrences": counters.get("anomaly_fixed_step_time_mismatch", 0),
+        "fixed_delta_time_seconds": sorted(set(fixed_delta_times)),
+        "producer_health_wall_clock_points": len(valid),
+        "producer_health_wall_clock_monotonic": wall_monotonic if len(valid) >= 2 else None,
+        "producer_health_game_time_wall_time_correlation": correlation,
+        "game_seconds_per_wall_second_slope": slope,
+        "first_health_game_time": valid[0][0] if valid else None,
+        "last_health_game_time": valid[-1][0] if valid else None,
+        "first_health_wall_elapsed_seconds": valid[0][1] if valid else None,
+        "last_health_wall_elapsed_seconds": valid[-1][1] if valid else None,
+        "phase_calibration_candidate_events": calibration_candidates,
+        "same_step_sample_precedes_collision_events": same_step_collision_events,
+        "m2_controller_or_watcher_event_records": m2_event_count,
+        "runtime_observation_phase_calibrated": bool(sample_phase_verified),
+    }
 
 
 def magnitude(v):
@@ -261,6 +449,11 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
         parse_errors = 0
         focus_count = 0
         event_rows = []
+        producer_health_records = []
+        frame_fixed_delta_times = []
+        phase_calibration_candidates = 0
+        same_step_collision_events = 0
+        m2_event_record_count = 0
         started = set()
         ended = set()
         observed_kinds = set()
@@ -338,6 +531,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                                         fixed_dt = float(fixed_dt)
                                         if not math.isfinite(fixed_dt) or fixed_dt <= 0:
                                             raise ValueError("fixed_delta_time must be finite and positive")
+                                        frame_fixed_delta_times.append(fixed_dt)
                                         if (last_frame_step is not None and step == last_frame_step + 1
                                                 and last_frame_time is not None and t is not None):
                                             elapsed = t - last_frame_time
@@ -398,6 +592,26 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                                                    json.dumps(event_ids, separators=(",", ":"))])
                                 counters["event_" + name_of_event] += 1
                                 attribution.observe_event(rec)
+                                event_fields = rec.get("fields")
+                                event_fields = event_fields if isinstance(event_fields, dict) else {}
+                                if name_of_event == "producer_health":
+                                    producer_health_records.append(rec)
+                                if name_of_event == "collision":
+                                    candidate = rec.get("phase_calibration_candidate", event_fields.get("phase_calibration_candidate"))
+                                    same_step = rec.get("same_step_sample_precedes_collision_callback",
+                                                        event_fields.get("same_step_sample_precedes_collision_callback"))
+                                    if candidate is True:
+                                        phase_calibration_candidates += 1
+                                    if same_step is True:
+                                        same_step_collision_events += 1
+                                event_name_lower = name_of_event.lower()
+                                m2_named = any(marker in event_name_lower for marker in
+                                               ("aicadetsm2", "m2_", "watcher", "controller", "reposition", "ground_route"))
+                                m2_structured = ("cadet" in rec or "cadet" in event_fields
+                                                 or ("order_seq" in rec and "target_id" in rec)
+                                                 or ("order_seq" in event_fields and "target_id" in event_fields))
+                                if m2_named or m2_structured:
+                                    m2_event_record_count += 1
                                 involved = list(event_ids) + ([entity] if entity else [])
                                 actor_id = rec.get("actor")
                                 if isinstance(actor_id, str) and actor_id:
@@ -562,6 +776,12 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
             incomplete_reasons = []
         incomplete_reasons = [item for item in incomplete_reasons
                               if isinstance(item, dict) and isinstance(item.get("reason"), str)]
+        performance = producer_health_summary(producer_health_records, metadata,
+                                              frame_fixed_delta_times, len(track_stats))
+        timing = timing_summary(producer_health_records, observed_frame_steps, counters,
+                                frame_fixed_delta_times, phase_calibration_candidates,
+                                same_step_collision_events, m2_event_record_count,
+                                metadata.get("sample_phase_verified", False))
         summary = {"schema_version": SCHEMA, "run_id": metadata.get("run_id", "unknown"),
                    "capture_tier": metadata.get("capture_tier", "unverified"),
                    "game_build": build_name,
@@ -588,6 +808,8 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                    "anomalies_returned": len(anomalies), "focus_samples": focus_count,
                    "sampled_titan_death_transitions": len(kill_attributions),
                    "kill_attribution_status_counts": dict(attribution_counts),
+                   "producer_performance": performance,
+                   "timing_and_calibration": timing,
                    "capture_complete": bool(metadata.get("capture_complete", False)),
                    "evidence_limitations": [
                        "Trajectory and command telemetry are not full deterministic Unity physics replay.",
@@ -629,6 +851,26 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                 rows.append("  - Contact and sampled attack state support inference; they do not prove damage causality.")
         else:
             rows.append("- No sampled Titan alive-to-dead transition was found.")
+        perf = summary["producer_performance"]
+        rows += ["", "## Producer performance", "",
+                 f"- Gate status: **{perf['gate_status']}**",
+                 f"- Producer-health windows: {perf['producer_health_records']} total; {perf['post_15s_windows']} after the first {CAPTURE_PERFORMANCE_STARTUP_SECONDS:.0f} monotonic seconds",
+                 f"- Post-start windows above {perf['p95_limit_ms']:.1f} ms p95: {perf['post_15s_windows_over_p95_limit']}",
+                 f"- Worst post-start p95: {perf['worst_post_15s_p95_ms']} ms",
+                 f"- Maximum reported individual capture-work sample: {perf['maximum_reported_sample_ms']} ms",
+                 f"- Post-start queue maximum: depth {perf['post_15s_max_queue_depth']}, {perf['post_15s_max_queue_bytes']} bytes; writer high-water depth {perf['writer_queue_high_water_depth']}, {perf['writer_queue_high_water_bytes']} bytes",
+                 f"- Reported drops: frames {perf['reported_dropped_frames']}, entity samples {perf['reported_dropped_entity_samples']}, control messages {perf['reported_dropped_control_messages']}",
+                 f"- Tracked entities: {perf['tracked_entities']}"]
+        rows += [f"- Gate finding: {reason}" for reason in perf["gate_reasons"]] or ["- Gate findings: all recorded thresholds passed."]
+        timing = summary["timing_and_calibration"]
+        rows += ["", "## Timing and calibration", "",
+                 f"- Frame-step gap incidents: {timing['frame_step_gap_occurrences']}; nonmonotonic game-time incidents: {timing['nonmonotonic_frame_time_occurrences']}; fixed-step time mismatches: {timing['fixed_step_time_mismatch_occurrences']}",
+                 f"- Fixed delta time observed: {timing['fixed_delta_time_seconds']}",
+                 f"- Health wall-clock points: {timing['producer_health_wall_clock_points']}; wall clock monotonic: {timing['producer_health_wall_clock_monotonic']}; Pearson game-time/wall-time correlation: {timing['producer_health_game_time_wall_time_correlation']}; game seconds per wall second slope: {timing['game_seconds_per_wall_second_slope']}",
+                 f"- Same-step collision calibration candidates: {timing['phase_calibration_candidate_events']}; samples observed before collision callback in the same step: {timing['same_step_sample_precedes_collision_events']}",
+                 f"- M2 controller/watcher event records in this trace: {timing['m2_controller_or_watcher_event_records']}",
+                 "- Calibration procedure: correlate a naturally occurring, independently observed collision or ground-contact transition with the actor's same-step and following-step samples and the corresponding callback, then compare fixed-step ordinal, game time, and monotonic wall time. Do not create synthetic physics or alter transforms/velocity.",
+                 f"- Calibration result: {'not performed; observation phase remains unverified' if not summary['sample_phase_verified'] else 'sample phase marked verified in metadata'}."]
         if summary["incomplete_reasons"]:
             rows += ["", "## Incomplete capture reasons", ""]
             rows += [f"- `{item['reason']}` (count: {item.get('count', 1)})"

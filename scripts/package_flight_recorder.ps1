@@ -30,8 +30,8 @@ if ($pythonVersion -notmatch '^Python 3\.14\.10$') { throw "Expected Python 3.14
 & (Join-Path $PSScriptRoot "build_flight_recorder_plugin.ps1") -GameRoot $root -Configuration Release
 if ($LASTEXITCODE -ne 0) { throw "Plugin build script failed." }
 
-$package = Join-Path $out "AoTTG2-FlightRecorder-0.1.11"
-$zipPath = Join-Path $out "AoTTG2-FlightRecorder-0.1.11.zip"
+$package = Join-Path $out "AoTTG2-FlightRecorder-0.1.12"
+$zipPath = Join-Path $out "AoTTG2-FlightRecorder-0.1.12.zip"
 if ((Test-Path -LiteralPath $package) -or (Test-Path -LiteralPath $zipPath)) {
     throw "Package output already exists. Choose a new OutputDirectory; no existing artifact was changed."
 }
@@ -70,7 +70,7 @@ $files = Get-ChildItem -LiteralPath $package -File -Recurse | Sort-Object FullNa
 }
 $manifest = [ordered]@{
     schema = "aicadets.flight.package.v1"
-    plugin_version = "0.1.11"
+    plugin_version = "0.1.12"
     target = [ordered]@{ executable = "Aottg2.exe"; architecture = "x64"; unity = "2023.1.22f1"; il2cpp_metadata = "29.1"; loader = "BepInEx 6.0.0-be.791"; runtime = ".NET 6"; receiver_python = "3.14.10 embeddable x64" }
     source_commit = $sourceCommit
     source_worktree_clean = $true

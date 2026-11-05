@@ -116,6 +116,52 @@ class FlightTest(unittest.TestCase):
             vec([float("nan"), 0, 1])
         self.assertAlmostEqual(distance((0, 0, 0), (3, 4, 0)), 5)
 
+    def test_producer_performance_gate_uses_monotonic_startup_and_all_sample_maxima(self):
+        src = self.root / "health_gate"
+        src.mkdir()
+        metadata = {
+            "schema_version": "aicadets.flight.v1",
+            "run_id": "health-gate",
+            "capture_complete": True,
+            "sample_phase_verified": False,
+            "runtime_observation_phase": "fixed_update_pre_physics",
+            "writer_limits": {"queue_capacity": 256, "max_queue_bytes": 64 * 1024 * 1024},
+            "writer_stats": {"max_queue_depth": 4, "max_queue_bytes": 2048,
+                             "queue_dropped_frames": 0, "storage_dropped_frames": 0,
+                             "queue_dropped_entity_samples": 0, "storage_dropped_entity_samples": 0,
+                             "fatal_error": None, "storage_exhausted": False},
+        }
+        frame = {"type": "frame", "step": 1, "t": 0.02, "fixed_delta_time": 0.02,
+                 "samples": [
+                     {"id": "human:1:1", "kind": "human", "pos": [0, 0, 0]},
+                     {"id": "titan:2:1", "kind": "titan", "pos": [5, 0, 0]},
+                 ]}
+        health = [
+            {"type": "event", "event": "producer_health", "step": 1, "t": 0.02,
+             "wall_monotonic_elapsed_seconds": 10.0, "capture_work_ms_p95": 9.0,
+             "capture_work_ms_maximum": 70.0, "queue_depth": 2, "queue_bytes": 512},
+            {"type": "event", "event": "producer_health", "step": 2, "t": 0.04,
+             "wall_monotonic_elapsed_seconds": 20.0, "capture_work_ms_p95": 1.0,
+             "capture_work_ms_maximum": 59.9, "queue_depth": 3, "queue_bytes": 768},
+            {"type": "event", "event": "producer_health", "step": 3, "t": 0.06,
+             "wall_monotonic_elapsed_seconds": 25.0, "capture_work_ms_p95": 1.001,
+             "capture_work_ms_maximum": 60.1, "queue_depth": 4, "queue_bytes": 1024},
+        ]
+        (src / "metadata.json").write_text(json.dumps(metadata))
+        (src / "000001.jsonl").write_text("\n".join(json.dumps(row) for row in [frame, *health]) + "\n")
+
+        result = analyze(src, self.root / "health_gate_report")
+        report = (self.root / "health_gate_report/report.md").read_text()
+        performance = result["producer_performance"]
+        self.assertEqual(performance["post_15s_windows"], 2)
+        self.assertEqual(performance["post_15s_windows_over_p95_limit"], 1)
+        self.assertEqual(performance["maximum_reported_sample_ms"], 70.0)
+        self.assertEqual(performance["gate_status"], "fail")
+        self.assertTrue(performance["queue_bounded"])
+        self.assertFalse(result["sample_phase_verified"])
+        self.assertIn("Calibration result: not performed; observation phase remains unverified.", report)
+        self.assertIn("maximum reported capture-work sample exceeds 60.0 ms", report)
+
     def test_stalled_command_detection(self):
         src = self.root / "stalled"
         src.mkdir()
