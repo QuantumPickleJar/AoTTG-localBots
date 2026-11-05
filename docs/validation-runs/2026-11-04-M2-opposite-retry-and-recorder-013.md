@@ -3,7 +3,7 @@
 SESSION: `M2-DIRECT-RECOVERY-20261104-FOLLOWUP`
 SCOPE: Single-cadet M2 grounded Direct pursuit, one bounded opposite-side recovery retry, interruption, recorder performance/timing, and watcher rotation. No multi-cadet, rescue, personality, or M3 gameplay.
 GAME: AoTTG2 product build `1.2.3` / Unity `2023.1.22f1` observed in the previous run. Reconfirm the actual build after restart.
-M2: `M2-locomotion-1-f8combo-5-shorter-opposite-retry`; record the exact feature commit and deployed `.cl` SHA-256 before play.
+M2: `M2-locomotion-1-f8combo-5-shorter-opposite-retry`; feature commit `a5c0b81f9bbf13b4ce1be05c02c4a6c9f50cf0dc`; record the deployed `.cl` SHA-256 before play.
 RECORDER: 0.1.13 diagnostic candidate; record the source commit, package ZIP SHA-256, manifest verification, installed DLL hashes, and run IDs before play. Capture disabled outside the opted-in private run.
 
 ## Preconditions
