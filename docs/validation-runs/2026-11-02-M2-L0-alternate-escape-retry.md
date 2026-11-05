@@ -1,8 +1,10 @@
 # Validation Card — M2 alternate-side ground escape retry
 
-SESSION ID: M2-L0-20261102-ESCAPE-RETRY  
-GOAL / CHANGED BEHAVIOR: After the first ground escape route produces less than 2 units of physical displacement, spend the existing second recovery attempt on the opposite-side route. If that route also produces less than 2 units, ban the target temporarily and observe; do not loop.  
-BRANCH / EXACT COMMIT / REPORTED BUILD: `feat/m2-exploration-and-orders` / `1ed9e7666d09b0d47a1b4fe3c01406d65f8459bc` / `M2-locomotion-1-f8combo-3-escape-retry`.  
+SESSION ID: M2-L0-20261102-ESCAPE-RETRY
+
+GOAL / CHANGED BEHAVIOR: After the first ground escape route produces less than 2 units of physical displacement, spend the existing second recovery attempt on the opposite-side route. If that route also produces less than 2 units, ban the target temporarily and observe; do not loop.
+
+BRANCH / EXACT COMMIT / REPORTED BUILD: `feat/m2-exploration-and-orders` / `1ed9e7666d09b0d47a1b4fe3c01406d65f8459bc` / `M2-locomotion-1-f8combo-3-escape-retry`.
 TEST PROFILE: **M2-L0**.
 
 ## Files to deploy and verify
