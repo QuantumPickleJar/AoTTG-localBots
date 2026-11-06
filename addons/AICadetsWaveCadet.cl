@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-locomotion-1-f8combo-7-direct-recovery";
+    _buildTag = "M2-locomotion-1-f8combo-8-opposite-back-diagonal-retry";
     # Ground Titan pursuit and recovery use explicit planar steering. Native
     # MoveTo remains available as an opt-in comparison driver.
     GroundSteering = "Direct";

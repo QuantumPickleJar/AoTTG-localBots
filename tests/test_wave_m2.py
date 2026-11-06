@@ -889,7 +889,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-7-direct-recovery")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-8-opposite-back-diagonal-retry")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
