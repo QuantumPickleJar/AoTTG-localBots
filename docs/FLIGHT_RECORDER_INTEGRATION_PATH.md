@@ -1,60 +1,31 @@
-# Flight Recorder integration path
+# Flight Recorder integration and PR disposition
 
-This document records the non-destructive extraction of the offline Flight
-Recorder work from the stacked draft PRs. It is intentionally separate from
-the unvalidated M2 gameplay branch and does not claim that AoTTG2 can load a
-recorder.
+PR #15 merged into `main` at merge commit `f0f3b2448c2042db8490cf5c640617a256667ae4`. PR #16 was retargeted to `main`; its merge base is the already merged offline foundation, so its review diff contains the IL2CPP adapter follow-on rather than a duplicate writer stack. M2 gameplay remains separate and unchanged.
 
-## Current branch decision
+## PR disposition
 
-The clean integration branch is based on `main` at `39857d9`, not on
-`feat/m2-exploration-and-orders`. It contains the offline dependency closure
-needed by the existing writer and its tests:
-
-- PR #10: the versioned reader/analyzer, synthetic traces, and read-only
-  installed-build preflight;
-- the reusable offline policy/replay support from PRs #12 and #13, including
-  the observation-only M2 trace adapter; and
-- PR #14: the bounded Python writer, recovery path, benchmark, tests, and
-  writer specification.
-
-The extraction includes no `addons/*.cl`, no M2 controller changes, no M2
-gameplay test edits, no PRIM-I probe, and no workflow change. The existing
-Python writer remains runtime-independent: it is not a Unity plugin, IL2CPP
-module, or native recorder.
-
-## Draft PR disposition
-
-| PR | Disposition | Reason |
+| PR | Current GitHub state | Action |
 |---|---|---|
-| #6 | Remain draft, untouched | M2 gameplay and Custom Logic changes still require live physical validation. It is not a recorder prerequisite. |
-| #10 | Supersede with this clean integration PR after review | Its offline recorder files are retained here; its original branch also inherits the M2 feature branch. |
-| #11 | Remain draft, untouched | PRIM-I is an independent opt-in gameplay probe. It is not needed by the Python writer or installed-build audit. |
-| #12 | Supersede with this clean integration PR after review | Its policy module/tests are required by the existing replay test closure, but its stacked branch is not used. |
-| #13 | Supersede with this clean integration PR after review | Its replay conformance and observation-only adapter are included; M2-specific test edits are excluded. |
-| #14 | Supersede with this clean integration PR after review | Its writer and prerequisites are included without the M2 ancestry. |
+| #6 | Open, draft; `feat/m2-exploration-and-orders` | Leave untouched. Use recorder evidence for M2 diagnosis only after calibration; do not merge with #16. |
+| #10 | Closed, not merged | Superseded by the offline analyzer and audit integrated through #15. Leave closed. |
+| #11 | Open, draft; independent PRIM-I branch | Keep draft and separate. It is not a recorder prerequisite; defer its gameplay check until REC-I is calibrated. |
+| #12 | Open, draft; stacked on #11 | Superseded by the offline policy/replay content integrated through #15. Close as superseded; do not retarget or merge its stacked branch. |
+| #13 | Open, draft; stacked combined branch | Superseded by the offline replay/conformance content integrated through #15. Close as superseded; do not retarget or merge its stacked branch. |
+| #14 | Open, draft; stacked on #10–#13 | Its Python writer is integrated through #15. Close as superseded; do not merge its M2-bearing ancestry or retarget it. |
+| #15 | Merged | Offline writer, analyzer, replay adapter, recovery, tests, and documentation are now on `main`. |
+| #16 | Open, ready for review, base `main` | Keep separate from M2. Update review text and CI for the adapter/attribution/performance, critical-queue-reserve, verified installer-upgrade, and 0.1.9 writer-recovery changes. Do not merge until a 0.1.9 private capture measures the performance gate and the remaining review gates are resolved. |
 
-Until this clean PR is accepted, leave #6 and #10–#14 open and draft. Do not
-merge #14 first: its head is based on PR #13, whose ancestry includes the
-69-commit M2 feature branch. Do not retarget the existing stacked PRs directly
-to `main`; that would expose the inherited M2 gameplay diff in their PRs.
+The recommended cleanup is to close #12–#14 as superseded by #15, while leaving #6 and #11 draft. No branch retargeting is needed for those stacked drafts. PR #16 is the only recorder adapter integration candidate.
 
-After the clean PR is accepted, close #10, #12, #13, and #14 as superseded;
-leave #6 and #11 open for their own validation tracks. No PR in this path
-should be marked ready for review until the offline CI is green and the scope
-has been checked for add-on or M2-controller files.
+## Scope boundary
 
-## Verification boundary
+PR #15 supplies the runtime-independent Python writer and offline toolchain. PR #16 adds the BepInEx IL2CPP adapter and local named-pipe transport, and now adds conservative kill-attribution analysis output plus the direct frame-envelope serialization path. It does not modify M2 controller, watcher, or mission logic and does not make native recorder readiness or REC-I calibration claims.
 
-The offline result is limited to Python tests, compile checks, synthetic trace
-analysis/replay, writer stress/fault tests, and a read-only installation
-inventory. It does not establish any of the following:
+## Validation gates before merging #16
 
-- an IL2CPP injection or mod-loader path;
-- a Unity callback/physics-step hook;
-- complete actor or collision coverage;
-- a local transport working from inside AoTTG2; or
-- native recorder readiness or gameplay evidence.
+1. The PR head must pass static-smoke, Windows named-pipe transport checks, Python regression tests, and installed-interop plugin build.
+2. A guarded 0.1.9 package must include its source commit and manifest hashes, exclude proprietary game binaries/interop, and remain reversible. Automatic upgrade must remove only a receipt-verified, unchanged prior recorder installation.
+3. A fresh private installed-game capture must meet the steady-state capture-work p95/max limits with zero unaccounted drops, valid chunks, and no visible control/stutter issue. Any transport/control overflow remains a failed capture even if its gap and incomplete stop are preserved. The prior 0.1.5 p95 breach is historical and cannot be cleared by offline tests.
+4. Keep the callback phase and coverage limits explicit; review the 174 remaining velocity-change findings and use the short video only to calibrate motion/phase. Contact-based kill attribution stays inferred absent a direct damage/death event.
 
-Those are adapter and private-game validation gates described in
-`FLIGHT_RECORDER_ADAPTER_PLAN.md`.
+After these checks pass, the owner can review the updated #16 diff and CI and merge #16 into `main`. Do not merge #6 or start the next gameplay milestone in the same integration. Use the first calibrated recording to select one narrowly scoped M2 stabilization behavior, prepare its own validation card, and keep it on the M2 branch for separate review.

@@ -81,10 +81,113 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(result["parse_errors"], 1)
         self.assertFalse(result["capture_complete"])
 
+    def test_installed_build_provenance_and_incomplete_reason_are_reported(self):
+        src = self.root / "adapter_run"
+        src.mkdir()
+        (src / "metadata.json").write_text(json.dumps({
+            "schema_version": "aicadets.flight.v1",
+            "run_id": "adapter-run",
+            "capture_tier": "partial_il2cpp_periodic_discovery_v1",
+            "capture_complete": False,
+            "installed_build_fingerprint": {"unity_version": "2023.1.22f1", "architecture": "x64"},
+            "runtime_observation_phase": "fixed_update_pre_physics_order_unspecified",
+            "physics_simulation_mode": "FixedUpdate",
+            "sample_phase_verified": "false",
+            "step_source": "adapter FixedUpdate callback ordinal",
+            "timestamp_clock": "UnityEngine.Time.fixedTimeAsDouble",
+            "discovery_interval_seconds": 0.5,
+            "incomplete_reasons": [{"reason": "receiver_interrupted", "count": 1}],
+        }))
+        (src / "000001.jsonl").write_text(json.dumps({
+            "type": "frame", "step": 1, "t": 0.02, "phase": "pre_physics",
+            "samples": [],
+        }) + "\n")
+
+        result = analyze(src, self.root / "adapter_report")
+        report = (self.root / "adapter_report/report.md").read_text()
+        self.assertEqual(result["game_build"], "2023.1.22f1 / x64")
+        self.assertFalse(result["sample_phase_verified"])
+        self.assertFalse(result["timing_and_calibration"]["runtime_observation_phase_calibrated"])
+        self.assertEqual(result["runtime_observation_phase"], "fixed_update_pre_physics_order_unspecified")
+        self.assertEqual(result["physics_simulation_mode"], "FixedUpdate")
+        self.assertEqual(result["incomplete_reasons"][0]["reason"], "receiver_interrupted")
+        self.assertIn("receiver_interrupted", report)
+        self.assertNotIn("has not yet been installed", report)
+
     def test_nonfinite_vectors_rejected(self):
         with self.assertRaises(ValueError):
             vec([float("nan"), 0, 1])
         self.assertAlmostEqual(distance((0, 0, 0), (3, 4, 0)), 5)
+
+    def test_producer_performance_gate_uses_monotonic_startup_and_all_sample_maxima(self):
+        src = self.root / "health_gate"
+        src.mkdir()
+        metadata = {
+            "schema_version": "aicadets.flight.v1",
+            "run_id": "health-gate",
+            "capture_complete": True,
+            "sample_phase_verified": False,
+            "runtime_observation_phase": "fixed_update_pre_physics",
+            "writer_limits": {"queue_capacity": 256, "max_queue_bytes": 64 * 1024 * 1024},
+            "writer_stats": {"max_queue_depth": 4, "max_queue_bytes": 2048,
+                             "queue_dropped_frames": 0, "storage_dropped_frames": 0,
+                             "queue_dropped_entity_samples": 0, "storage_dropped_entity_samples": 0,
+                             "fatal_error": None, "storage_exhausted": False},
+        }
+        frame = {"type": "frame", "step": 1, "t": 0.02, "fixed_delta_time": 0.02,
+                 "samples": [
+                     {"id": "human:1:1", "kind": "human", "pos": [0, 0, 0]},
+                     {"id": "titan:2:1", "kind": "titan", "pos": [5, 0, 0]},
+                 ]}
+        health = [
+            {"type": "event", "event": "producer_health", "step": 1, "t": 0.02,
+             "wall_monotonic_elapsed_seconds": 10.0, "capture_work_ms_p95": 9.0,
+             "capture_work_ms_maximum": 70.0, "queue_depth": 2, "queue_bytes": 512},
+            {"type": "event", "event": "producer_health", "step": 2, "t": 0.04,
+             "wall_monotonic_elapsed_seconds": 20.0, "capture_work_ms_p95": 1.0,
+             "capture_work_ms_maximum": 59.9, "queue_depth": 3, "queue_bytes": 768},
+            {"type": "event", "event": "producer_health", "step": 3, "t": 0.06,
+             "wall_monotonic_elapsed_seconds": 25.0, "capture_work_ms_p95": 1.001,
+             "capture_work_ms_maximum": 60.1, "queue_depth": 4, "queue_bytes": 1024,
+             "capture_discovery_ms_p95": 0.8, "capture_discovery_ms_maximum": 2.0,
+             "capture_frame_sampling_ms_p95": 0.15, "capture_frame_sampling_ms_maximum": 0.3,
+             "capture_transport_ms_p95": 0.04, "capture_transport_ms_maximum": 0.1,
+             "capture_callback_overhead_ms_p95": 0.6,
+             "capture_callback_overhead_ms_maximum": 1.4},
+        ]
+        slow_capture = {
+            "type": "event", "event": "capture_slow_operation", "step": 3, "t": 0.06,
+            "actor": "human:1:1", "evidence": "timed_main_thread_operation_group",
+            "fields": {"operation_group": "animation_game_method", "elapsed_ms": 12.5,
+                       "entity_id": "human:1:1", "entity_class": "Characters.Human"},
+        }
+        (src / "metadata.json").write_text(json.dumps(metadata))
+        (src / "000001.jsonl").write_text("\n".join(json.dumps(row) for row in [frame, *health, slow_capture]) + "\n")
+
+        result = analyze(src, self.root / "health_gate_report",
+                         producer_queue_capacity=512, producer_queue_max_bytes=4 * 1024 * 1024)
+        report = (self.root / "health_gate_report/report.md").read_text()
+        performance = result["producer_performance"]
+        self.assertEqual(performance["post_15s_windows"], 2)
+        self.assertEqual(performance["post_15s_windows_over_p95_limit"], 1)
+        self.assertEqual(performance["maximum_reported_sample_ms"], 70.0)
+        self.assertEqual(performance["gate_status"], "fail")
+        self.assertTrue(performance["queue_bounded"])
+        self.assertEqual(performance["producer_queue_max_sampled_depth"], 4)
+        self.assertEqual(performance["writer_queue_high_water_depth"], 4)
+        self.assertEqual(performance["writer_queue_high_water_bytes"], 2048)
+        self.assertEqual(performance["stage_capture_work"]["discovery"]["worst_post_15s_p95_ms"], 0.8)
+        self.assertEqual(performance["stage_capture_work"]["discovery"]["maximum_rolling_sample_ms"], 2.0)
+        self.assertIn("Capture stage discovery:", report)
+        self.assertEqual(performance["stage_capture_work"]["other_callback_overhead"]["worst_post_15s_p95_ms"], 0.6)
+        self.assertEqual(performance["stage_capture_work"]["other_callback_overhead"]["maximum_rolling_sample_ms"], 1.4)
+        self.assertIn("Capture stage other_callback_overhead:", report)
+        self.assertFalse(result["sample_phase_verified"])
+        self.assertIn("Calibration result: not performed; observation phase remains unverified.", report)
+        self.assertIn("maximum reported capture-work sample exceeds 60.0 ms", report)
+        self.assertEqual(result["slow_capture_operations"][0]["operation_group"], "animation_game_method")
+        self.assertEqual(result["slow_capture_operations"][0]["maximum_ms"], 12.5)
+        self.assertIn("animation_game_method", report)
 
     def test_stalled_command_detection(self):
         src = self.root / "stalled"

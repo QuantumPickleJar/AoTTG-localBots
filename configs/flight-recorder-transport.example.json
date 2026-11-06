@@ -1,0 +1,12 @@
+{
+  "recording_enabled": false,
+  "pipe_name": "aicadets-flight-recorder-v1",
+  "output_dir": "recordings",
+  "writer_limits": {
+    "queue_capacity": 256,
+    "max_queue_bytes": 67108864,
+    "chunk_target_bytes": 8388608,
+    "max_storage_bytes": 1073741824,
+    "max_chunks": 128
+  }
+}

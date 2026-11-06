@@ -1,5 +1,7 @@
 # Flight Recorder writer integration report
 
+**Historical snapshot:** The remaining-work statements below record the PR #13/#14 offline integration review and predate the installed-build audit and adapter implementation. Current runtime findings and REC-I status are in [the adapter audit](FLIGHT_RECORDER_ADAPTER_PLAN.md) and [the REC-I validation card](REC_I_VALIDATION_BLOCKER.md); PR #16 is the separate adapter follow-on to PR #15.
+
 **Status:** offline writer core and fault tests are ready for draft review. This work is based on `codex/2026-11-02-integration-replay-conformance` (PR #13 combined baseline). It does not modify the live M2 controller, merge PR #6, activate experimental maneuvers, or validate Unity physics.
 
 ## Issue and PR review

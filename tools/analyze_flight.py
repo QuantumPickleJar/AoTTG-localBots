@@ -22,12 +22,18 @@ import json
 import math
 from pathlib import Path
 from pathlib import PurePosixPath
+import sys
 import zipfile
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from flight_attribution import KillAttributionCollector
 
 SCHEMA = "aicadets.flight.v1"
 CHUNK_INDEX_SCHEMA = "aicadets.flight.chunk-index.v1"
 CHUNK_INDEX_NAME = "chunk_manifest.json"
 MAX_ANOMALIES = 2000
+CAPTURE_PERFORMANCE_STARTUP_SECONDS = 15.0
+CAPTURE_P95_LIMIT_MS = 1.0
+CAPTURE_SAMPLE_MAX_LIMIT_MS = 60.0
 
 
 def vec(value):
@@ -39,6 +45,238 @@ def vec(value):
 
 def distance(a, b):
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+
+def finite_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def nonnegative_count(value):
+    number = finite_number(value)
+    return max(0, int(number)) if number is not None else 0
+
+
+def producer_health_summary(records, metadata, fixed_delta_times, entity_count,
+                            producer_queue_capacity=None, producer_queue_max_bytes=None):
+    capture_stages = {
+        "discovery": "capture_discovery_ms",
+        "frame_sampling": "capture_frame_sampling_ms",
+        "serialization_and_queue": "capture_transport_ms",
+        "other_callback_overhead": "capture_callback_overhead_ms",
+    }
+    valid = []
+    for record in records:
+        game_time = finite_number(record.get("t"))
+        wall_time = finite_number(record.get("wall_monotonic_elapsed_seconds"))
+        p95 = finite_number(record.get("capture_work_ms_p95"))
+        maximum = finite_number(record.get("capture_work_ms_maximum"))
+        if game_time is None or wall_time is None or p95 is None or maximum is None:
+            continue
+        valid.append({**record, "t": game_time,
+                      "wall_monotonic_elapsed_seconds": wall_time,
+                      "capture_work_ms_p95": p95,
+                      "capture_work_ms_maximum": maximum})
+        for prefix in capture_stages.values():
+            for statistic in ("p95", "maximum"):
+                field = f"{prefix}_{statistic}"
+                value = finite_number(record.get(field))
+                if value is not None:
+                    valid[-1][field] = value
+
+    post_start = [record for record in valid
+                  if record["wall_monotonic_elapsed_seconds"] > CAPTURE_PERFORMANCE_STARTUP_SECONDS]
+    worst_p95 = max(post_start, key=lambda record: record["capture_work_ms_p95"], default=None)
+    worst_sample = max(valid, key=lambda record: record["capture_work_ms_maximum"], default=None)
+    max_sample_post_start = max(post_start, key=lambda record: record["capture_work_ms_maximum"], default=None)
+    stage_capture_work = {}
+    for name, prefix in capture_stages.items():
+        stage_records = [record for record in post_start
+                         if finite_number(record.get(f"{prefix}_p95")) is not None
+                         and finite_number(record.get(f"{prefix}_maximum")) is not None]
+        stage_capture_work[name] = {
+            "worst_post_15s_p95_ms": max(
+                (record[f"{prefix}_p95"] for record in stage_records), default=None),
+            "maximum_rolling_sample_ms": max(
+                (record[f"{prefix}_maximum"] for record in stage_records), default=None),
+        }
+    writer_stats = metadata.get("writer_stats", {})
+    writer_limits = metadata.get("writer_limits", {})
+    if not isinstance(writer_stats, dict):
+        writer_stats = {}
+    if not isinstance(writer_limits, dict):
+        writer_limits = {}
+
+    p95_failures = [record for record in post_start
+                    if record["capture_work_ms_p95"] > CAPTURE_P95_LIMIT_MS]
+    dropped_frames = max((nonnegative_count(record.get("dropped_frames")) for record in valid), default=0)
+    dropped_controls = max((nonnegative_count(record.get("dropped_control_messages")) for record in valid), default=0)
+    dropped_frames = max(dropped_frames,
+                         nonnegative_count(writer_stats.get("queue_dropped_frames"))
+                         + nonnegative_count(writer_stats.get("storage_dropped_frames")))
+    dropped_samples = (nonnegative_count(writer_stats.get("queue_dropped_entity_samples"))
+                       + nonnegative_count(writer_stats.get("storage_dropped_entity_samples")))
+    queue_depth = max((nonnegative_count(record.get("queue_depth")) for record in post_start), default=0)
+    queue_bytes = max((nonnegative_count(record.get("queue_bytes")) for record in post_start), default=0)
+    producer_queue_depth_max_sampled = max(
+        (nonnegative_count(record.get("queue_depth")) for record in valid), default=0)
+    producer_queue_high_water_bytes = max(
+        (nonnegative_count(record.get("queue_high_water_bytes")) for record in valid), default=0)
+    writer_queue_high_water_depth = nonnegative_count(writer_stats.get("max_queue_depth"))
+    writer_queue_high_water_bytes = nonnegative_count(writer_stats.get("max_queue_bytes"))
+    queue_capacity = finite_number(writer_limits.get("queue_capacity"))
+    max_queue_bytes = finite_number(writer_limits.get("max_queue_bytes"))
+    writer_queue_bounded = ((queue_capacity is None or writer_queue_high_water_depth <= queue_capacity)
+                            and (max_queue_bytes is None or writer_queue_high_water_bytes <= max_queue_bytes)
+                            and not writer_stats.get("storage_exhausted", False)
+                            and writer_stats.get("fatal_error") in (None, ""))
+    producer_queue_capacity = finite_number(producer_queue_capacity)
+    producer_queue_max_bytes = finite_number(producer_queue_max_bytes)
+    producer_queue_limits_recorded = (producer_queue_capacity is not None
+                                      and producer_queue_max_bytes is not None)
+    producer_queue_within_limits = None
+    if producer_queue_limits_recorded:
+        producer_queue_within_limits = (
+            producer_queue_depth_max_sampled <= producer_queue_capacity
+            and producer_queue_high_water_bytes <= producer_queue_max_bytes)
+    queue_bounded = (writer_queue_bounded and producer_queue_within_limits
+                     if producer_queue_within_limits is not None else None)
+
+    reasons = []
+    if not valid:
+        reasons.append("no valid producer-health records")
+    if not post_start:
+        reasons.append("no producer-health windows after the first 15 seconds of monotonic capture time")
+    if p95_failures:
+        reasons.append(f"{len(p95_failures)} post-start producer-health windows exceed {CAPTURE_P95_LIMIT_MS:.1f} ms p95")
+    if worst_sample and worst_sample["capture_work_ms_maximum"] > CAPTURE_SAMPLE_MAX_LIMIT_MS:
+        reasons.append(f"maximum reported capture-work sample exceeds {CAPTURE_SAMPLE_MAX_LIMIT_MS:.1f} ms")
+    if dropped_frames or dropped_controls or dropped_samples:
+        reasons.append("producer or writer reported dropped frames, samples, or control messages")
+    if not writer_queue_bounded:
+        reasons.append("writer queue or storage/fatal-error bounds failed")
+    if producer_queue_within_limits is False:
+        reasons.append("observed producer queue exceeded the configured capacity or byte limit")
+    elif producer_queue_within_limits is None:
+        reasons.append("producer queue limits were not provided; producer queue boundedness is unverified")
+    if not metadata.get("capture_complete", False):
+        reasons.append("capture is incomplete")
+    if entity_count < 2:
+        reasons.append("fewer than one Human and one Titan were tracked; M2 workload performance is unverified")
+
+    thresholds_available = bool(valid and post_start)
+    gate_status = "unavailable"
+    if thresholds_available:
+        threshold_or_transport_failure = (bool(p95_failures)
+                                          or bool(worst_sample and worst_sample["capture_work_ms_maximum"] > CAPTURE_SAMPLE_MAX_LIMIT_MS)
+                                          or bool(dropped_frames or dropped_controls or dropped_samples)
+                                          or not writer_queue_bounded
+                                          or producer_queue_within_limits is False
+                                          or not metadata.get("capture_complete", False))
+        if threshold_or_transport_failure:
+            gate_status = "fail"
+        elif producer_queue_within_limits is None or entity_count < 2:
+            gate_status = "inconclusive"
+        else:
+            gate_status = "pass"
+
+    return {
+        "producer_health_records": len(records),
+        "valid_producer_health_records": len(valid),
+        "post_15s_windows": len(post_start),
+        "post_15s_windows_over_p95_limit": len(p95_failures),
+        "p95_limit_ms": CAPTURE_P95_LIMIT_MS,
+        "individual_sample_limit_ms": CAPTURE_SAMPLE_MAX_LIMIT_MS,
+        "worst_post_15s_p95_ms": worst_p95["capture_work_ms_p95"] if worst_p95 else None,
+        "worst_post_15s_p95_window": ({"step": worst_p95.get("step"), "t": worst_p95.get("t"),
+                                        "wall_monotonic_elapsed_seconds": worst_p95.get("wall_monotonic_elapsed_seconds"),
+                                        "capture_work_ms_p95": worst_p95.get("capture_work_ms_p95"),
+                                        "capture_work_ms_maximum": worst_p95.get("capture_work_ms_maximum"),
+                                        **{f"{prefix}_{statistic}": worst_p95.get(f"{prefix}_{statistic}")
+                                           for prefix in capture_stages.values()
+                                           for statistic in ("p95", "maximum")}}
+                                       if worst_p95 else None),
+        "stage_capture_work": stage_capture_work,
+        "maximum_reported_sample_ms": worst_sample["capture_work_ms_maximum"] if worst_sample else None,
+        "maximum_reported_sample_window": ({"step": worst_sample.get("step"), "t": worst_sample.get("t"),
+                                             "wall_monotonic_elapsed_seconds": worst_sample.get("wall_monotonic_elapsed_seconds"),
+                                             "capture_work_ms_p95": worst_sample.get("capture_work_ms_p95"),
+                                             "capture_work_ms_maximum": worst_sample.get("capture_work_ms_maximum")}
+                                            if worst_sample else None),
+        "maximum_reported_sample_after_15s_ms": (max_sample_post_start["capture_work_ms_maximum"]
+                                                   if max_sample_post_start else None),
+        "post_15s_max_queue_depth": queue_depth,
+        "post_15s_max_queue_bytes": queue_bytes,
+        "producer_queue_max_sampled_depth": producer_queue_depth_max_sampled,
+        "producer_queue_high_water_bytes": producer_queue_high_water_bytes,
+        "producer_queue_capacity": producer_queue_capacity,
+        "producer_queue_max_bytes": producer_queue_max_bytes,
+        "producer_queue_limits_recorded": producer_queue_limits_recorded,
+        "producer_queue_within_limits": producer_queue_within_limits,
+        "writer_queue_high_water_depth": writer_queue_high_water_depth,
+        "writer_queue_high_water_bytes": writer_queue_high_water_bytes,
+        "writer_queue_capacity": queue_capacity,
+        "writer_max_queue_bytes": max_queue_bytes,
+        "reported_dropped_frames": dropped_frames,
+        "reported_dropped_entity_samples": dropped_samples,
+        "reported_dropped_control_messages": dropped_controls,
+        "writer_fatal_error": writer_stats.get("fatal_error"),
+        "writer_storage_exhausted": bool(writer_stats.get("storage_exhausted", False)),
+        "capture_complete": bool(metadata.get("capture_complete", False)),
+        "tracked_entities": entity_count,
+        "writer_queue_bounded": writer_queue_bounded,
+        "queue_bounded": queue_bounded,
+        "gate_status": gate_status,
+        "gate_reasons": reasons,
+        "fixed_delta_time_seconds": (sorted(set(fixed_delta_times)) if fixed_delta_times else []),
+    }
+
+
+def timing_summary(health_records, frame_count, counters, fixed_delta_times, calibration_candidates,
+                   same_step_collision_events, m2_event_count, sample_phase_verified):
+    valid = []
+    for record in health_records:
+        game_time = finite_number(record.get("t"))
+        wall_time = finite_number(record.get("wall_monotonic_elapsed_seconds"))
+        if game_time is not None and wall_time is not None:
+            valid.append((game_time, wall_time))
+    valid.sort(key=lambda pair: pair[1])
+    wall_monotonic = all(right[1] > left[1] for left, right in zip(valid, valid[1:]))
+    correlation = None
+    slope = None
+    if len(valid) >= 2:
+        game = [pair[0] for pair in valid]
+        wall = [pair[1] for pair in valid]
+        mean_game = sum(game) / len(game)
+        mean_wall = sum(wall) / len(wall)
+        covariance = sum((g - mean_game) * (w - mean_wall) for g, w in valid)
+        game_variance = sum((g - mean_game) ** 2 for g in game)
+        wall_variance = sum((w - mean_wall) ** 2 for w in wall)
+        if game_variance > 0:
+            slope = covariance / game_variance
+        if game_variance > 0 and wall_variance > 0:
+            correlation = covariance / math.sqrt(game_variance * wall_variance)
+    return {
+        "frame_markers": frame_count,
+        "frame_step_gap_occurrences": counters.get("anomaly_missing_frame_steps", 0),
+        "nonmonotonic_frame_time_occurrences": counters.get("anomaly_nonmonotonic_frame_time", 0),
+        "fixed_step_time_mismatch_occurrences": counters.get("anomaly_fixed_step_time_mismatch", 0),
+        "fixed_delta_time_seconds": sorted(set(fixed_delta_times)),
+        "producer_health_wall_clock_points": len(valid),
+        "producer_health_wall_clock_monotonic": wall_monotonic if len(valid) >= 2 else None,
+        "producer_health_game_time_wall_time_correlation": correlation,
+        "game_seconds_per_wall_second_slope": slope,
+        "first_health_game_time": valid[0][0] if valid else None,
+        "last_health_game_time": valid[-1][0] if valid else None,
+        "first_health_wall_elapsed_seconds": valid[0][1] if valid else None,
+        "last_health_wall_elapsed_seconds": valid[-1][1] if valid else None,
+        "phase_calibration_candidate_events": calibration_candidates,
+        "same_step_sample_precedes_collision_events": same_step_collision_events,
+        "m2_controller_or_watcher_event_records": m2_event_count,
+        "runtime_observation_phase_calibrated": sample_phase_verified is True,
+    }
 
 
 def magnitude(v):
@@ -226,7 +464,8 @@ def expanded(raw):
         yield raw
 
 
-def analyze(source, out, focus_time=None, focus_window=2.0):
+def analyze(source, out, focus_time=None, focus_window=2.0,
+            producer_queue_capacity=None, producer_queue_max_bytes=None):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     reader = Reader(source)
@@ -243,7 +482,8 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
         last = {}
         track_stats = defaultdict(lambda: {"samples": 0, "path": 0., "max_speed": 0., "gaps": 0,
                                            "first_t": None, "last_t": None, "kind": "unknown", "first": None, "last": None})
-        contacts = defaultdict(lambda: deque(maxlen=64))
+        contacts = defaultdict(lambda: deque(maxlen=512))
+        attribution = KillAttributionCollector()
         actions = {}
         latest_step = None
         latest_time = None
@@ -257,6 +497,14 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
         parse_errors = 0
         focus_count = 0
         event_rows = []
+        producer_health_records = []
+        slow_capture_operation_summary = defaultdict(lambda: {
+            "count": 0, "maximum_ms": 0.0, "step": None, "entity_id": "unknown", "entity_class": "unknown"
+        })
+        frame_fixed_delta_times = []
+        phase_calibration_candidates = 0
+        same_step_collision_events = 0
+        m2_event_record_count = 0
         started = set()
         ended = set()
         observed_kinds = set()
@@ -334,6 +582,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                                         fixed_dt = float(fixed_dt)
                                         if not math.isfinite(fixed_dt) or fixed_dt <= 0:
                                             raise ValueError("fixed_delta_time must be finite and positive")
+                                        frame_fixed_delta_times.append(fixed_dt)
                                         if (last_frame_step is not None and step == last_frame_step + 1
                                                 and last_frame_time is not None and t is not None):
                                             elapsed = t - last_frame_time
@@ -387,13 +636,61 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                                 evidence = str(rec.get("evidence", "unknown"))
                                 correlation_id = rec.get("correlation_id")
                                 correlation_id = (str(correlation_id) if correlation_id not in (None, "") else None)
+                                event_ids = rec.get("ids")
+                                event_ids = event_ids if isinstance(event_ids, list) else []
                                 event_rows.append([t, step, typ, entity, name_of_event, evidence,
                                                    correlation_id or "", rec.get("actor", ""),
-                                                   json.dumps(rec.get("ids", []), separators=(",", ":"))])
+                                                   json.dumps(event_ids, separators=(",", ":"))])
                                 counters["event_" + name_of_event] += 1
-                                involved = list(rec.get("ids", [])) + ([entity] if entity else [])
-                                if name_of_event in ("collision", "contact") and evidence == "observed":
-                                    for target in involved:
+                                attribution.observe_event(rec)
+                                event_fields = rec.get("fields")
+                                event_fields = event_fields if isinstance(event_fields, dict) else {}
+                                if name_of_event == "producer_health":
+                                    producer_health_records.append(rec)
+                                if name_of_event == "capture_slow_operation":
+                                    operation = str(event_fields.get("operation_group", "unknown"))
+                                    elapsed = event_fields.get("elapsed_ms")
+                                    try:
+                                        elapsed_ms = float(elapsed) if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) else None
+                                    except (OverflowError, ValueError):
+                                        elapsed_ms = None
+                                    if elapsed_ms is not None and math.isfinite(elapsed_ms) and elapsed_ms >= 0:
+                                        item = slow_capture_operation_summary[operation]
+                                        item["count"] += 1
+                                        if elapsed_ms > item["maximum_ms"]:
+                                            item["maximum_ms"] = elapsed_ms
+                                            item["step"] = step
+                                            item["entity_id"] = str(event_fields.get("entity_id", rec.get("actor", "unknown")))
+                                            item["entity_class"] = str(event_fields.get("entity_class", "unknown"))
+                                if name_of_event == "collision":
+                                    candidate = rec.get("phase_calibration_candidate", event_fields.get("phase_calibration_candidate"))
+                                    same_step = rec.get("same_step_sample_precedes_collision_callback",
+                                                        event_fields.get("same_step_sample_precedes_collision_callback"))
+                                    if candidate is True:
+                                        phase_calibration_candidates += 1
+                                    if same_step is True:
+                                        same_step_collision_events += 1
+                                event_name_lower = name_of_event.lower()
+                                m2_named = any(marker in event_name_lower for marker in
+                                               ("aicadetsm2", "m2_", "watcher", "controller", "reposition", "ground_route"))
+                                m2_structured = ("cadet" in rec or "cadet" in event_fields
+                                                 or ("order_seq" in rec and "target_id" in rec)
+                                                 or ("order_seq" in event_fields and "target_id" in event_fields))
+                                if m2_named or m2_structured:
+                                    m2_event_record_count += 1
+                                involved = list(event_ids) + ([entity] if entity else [])
+                                actor_id = rec.get("actor")
+                                if isinstance(actor_id, str) and actor_id:
+                                    involved.append(actor_id)
+                                nested_fields = rec.get("fields")
+                                nested_fields = nested_fields if isinstance(nested_fields, dict) else {}
+                                for key in ("other_character_id", "target_id", "victim_id", "other_entity_id"):
+                                    value = rec.get(key, nested_fields.get(key))
+                                    if isinstance(value, str) and value:
+                                        involved.append(value)
+                                if (name_of_event in ("collision", "contact") and evidence == "observed"
+                                        and isinstance(step, int) and not isinstance(step, bool)):
+                                    for target in dict.fromkeys(value for value in involved if isinstance(value, str)):
                                         contacts[str(target)].append(step)
                                 if name_of_event in ("damage", "death") and evidence == "observed":
                                     actor = str(rec.get("actor", ""))
@@ -432,6 +729,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                             except ValueError as exc:
                                 anomaly("invalid_sample", t, entity, f"{name}:{line_no}: {exc}", "confirmed")
                                 continue
+                            attribution.observe_sample(rec)
                             stat = track_stats[entity]
                             stat["samples"] += 1
                             stat["kind"] = str(rec.get("kind", stat["kind"]))
@@ -526,9 +824,46 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                         "confirmed")
         if observed_frame_steps == 0:
             anomaly("no_frame_markers", latest_time, "", "cannot certify global physics-step coverage", "confirmed")
+        kill_attributions = attribution.deaths
+        attribution_counts = Counter(item["attribution_status"] for item in kill_attributions)
+        build_name = metadata.get("game_build")
+        if not isinstance(build_name, str) or not build_name.strip() or build_name == "unknown":
+            fingerprint = metadata.get("installed_build_fingerprint", {})
+            if isinstance(fingerprint, dict):
+                unity = fingerprint.get("unity_version")
+                architecture = fingerprint.get("architecture")
+                build_parts = [str(value) for value in (unity, architecture)
+                               if isinstance(value, str) and value.strip()]
+                build_name = " / ".join(build_parts) if build_parts else "unknown"
+            else:
+                build_name = "unknown"
+        incomplete_reasons = metadata.get("incomplete_reasons", [])
+        if not isinstance(incomplete_reasons, list):
+            incomplete_reasons = []
+        incomplete_reasons = [item for item in incomplete_reasons
+                              if isinstance(item, dict) and isinstance(item.get("reason"), str)]
+        performance = producer_health_summary(producer_health_records, metadata,
+                                              frame_fixed_delta_times, len(track_stats),
+                                              producer_queue_capacity, producer_queue_max_bytes)
+        sample_phase_verified = metadata.get("sample_phase_verified") is True
+        timing = timing_summary(producer_health_records, observed_frame_steps, counters,
+                                frame_fixed_delta_times, phase_calibration_candidates,
+                                same_step_collision_events, m2_event_record_count,
+                                sample_phase_verified)
+        slow_capture_operations = [
+            {"operation_group": operation, **values}
+            for operation, values in sorted(slow_capture_operation_summary.items())
+        ]
         summary = {"schema_version": SCHEMA, "run_id": metadata.get("run_id", "unknown"),
                    "capture_tier": metadata.get("capture_tier", "unverified"),
-                   "game_build": metadata.get("game_build", "unknown"),
+                   "game_build": build_name,
+                   "runtime_observation_phase": metadata.get("runtime_observation_phase", "unknown"),
+                   "physics_simulation_mode": metadata.get("physics_simulation_mode", "unknown"),
+                   "sample_phase_verified": sample_phase_verified,
+                   "step_source": metadata.get("step_source", "unknown"),
+                   "timestamp_clock": metadata.get("timestamp_clock", "unknown"),
+                   "discovery_interval_seconds": metadata.get("discovery_interval_seconds"),
+                   "incomplete_reasons": incomplete_reasons,
                    "files": len(all_files), "valid_chunks": len(files), "frames": observed_frame_steps,
                    "frame_coverage_ratio": frame_coverage,
                    "expected_frames_from_manifest": expected_frames,
@@ -544,16 +879,22 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                    "missing_per_entity_sample_steps": missing_track_steps,
                    "parse_errors": parse_errors, "anomaly_total": sum(v for k, v in counters.items() if k.startswith("anomaly_")),
                    "anomalies_returned": len(anomalies), "focus_samples": focus_count,
+                   "sampled_titan_death_transitions": len(kill_attributions),
+                   "kill_attribution_status_counts": dict(attribution_counts),
+                   "producer_performance": performance,
+                   "slow_capture_operations": slow_capture_operations,
+                   "timing_and_calibration": timing,
                    "capture_complete": bool(metadata.get("capture_complete", False)),
                    "evidence_limitations": [
                        "Trajectory and command telemetry are not full deterministic Unity physics replay.",
-                       "Unexplained velocity changes are not confirmed contacts.",
-                       "No automatic attribution of damage/death or rescue without explicit evidence.",
+                       "Velocity-change anomalies are not confirmed contacts; observed collision records are correlated by actor and target where IDs are available.",
+                       "Kill attribution from sampled state, contacts, and attack state is heuristic; direct causality requires a correlated damage/death event.",
                        "Entity step gaps can be expected only if a declared lower-rate sampling policy applies.",
                        "A no-frame-marker or uncalibrated capture cannot prove per-physics-step completeness.",
                    ]}
         (out / "coverage.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         (out / "anomalies.json").write_text(json.dumps(anomalies, indent=2) + "\n", encoding="utf-8")
+        (out / "kill_attributions.json").write_text(json.dumps(kill_attributions, indent=2) + "\n", encoding="utf-8")
         top = Counter(a["kind"] for a in anomalies)
         rows = ["# AoTTG AI Cadets — flight recorder analysis (reference format)", "",
                 f"- Run: `{summary['run_id']}`", f"- Tier: `{summary['capture_tier']}`",
@@ -566,12 +907,63 @@ def analyze(source, out, focus_time=None, focus_window=2.0):
                 f"- Declared dropped entity samples: {dropped_entity_samples + dropped}",
                 f"- Missing per-entity steps (raw): {missing_track_steps}",
                 f"- Malformed records: {parse_errors}", f"- Capture complete flag: {summary['capture_complete']}",
+                f"- Observation phase: `{summary['runtime_observation_phase']}` (verified: {summary['sample_phase_verified']})",
+                f"- Physics simulation mode: `{summary['physics_simulation_mode']}`",
+                f"- Step source: `{summary['step_source']}`",
                 "", "## Anomalies (bounded sample)", ""]
         rows += [f"- `{k}`: {v}" for k, v in top.most_common()] or ["- None flagged"]
+        rows += ["", "## Sampled Titan deaths and attribution candidates", ""]
+        if kill_attributions:
+            for death in kill_attributions:
+                rows.append(f"- `{death['target_id']}` at t={death['t']:.3f}s, step {death['step']}: "
+                            f"{death['attribution_status']} ({', '.join(death['death_signals'])}).")
+                for candidate in death["candidates"]:
+                    rows.append(f"  - Candidate `{candidate['actor_id']}`: {candidate['evidence_classification']}; "
+                                f"AI={candidate['ai_controlled_near_death']}; "
+                                f"observed target collisions={candidate['observed_target_collision_count']}; "
+                                f"sampled attack={candidate['attack_state_sampled']}; "
+                                f"distance at death={candidate['distance_at_death_units']} units.")
+                rows.append("  - Contact and sampled attack state support inference; they do not prove damage causality.")
+        else:
+            rows.append("- No sampled Titan alive-to-dead transition was found.")
+        perf = summary["producer_performance"]
+        rows += ["", "## Producer performance", "",
+                 f"- Gate status: **{perf['gate_status']}**",
+                 f"- Producer-health windows: {perf['producer_health_records']} total; {perf['post_15s_windows']} after the first {CAPTURE_PERFORMANCE_STARTUP_SECONDS:.0f} monotonic seconds",
+                 f"- Post-start windows above {perf['p95_limit_ms']:.1f} ms p95: {perf['post_15s_windows_over_p95_limit']}",
+                 f"- Worst post-start p95: {perf['worst_post_15s_p95_ms']} ms",
+                 f"- Maximum reported individual capture-work sample: {perf['maximum_reported_sample_ms']} ms",
+                 f"- Producer queue: maximum sampled depth {perf['producer_queue_max_sampled_depth']}; high-water bytes {perf['producer_queue_high_water_bytes']}; configured caps {perf['producer_queue_capacity']} entries / {perf['producer_queue_max_bytes']} bytes",
+                 f"- Writer queue: high-water depth {perf['writer_queue_high_water_depth']}, {perf['writer_queue_high_water_bytes']} bytes against {perf['writer_queue_capacity']} entries / {perf['writer_max_queue_bytes']} bytes; post-start sampled depth/bytes maximum {perf['post_15s_max_queue_depth']} / {perf['post_15s_max_queue_bytes']}",
+                 f"- Reported drops: frames {perf['reported_dropped_frames']}, entity samples {perf['reported_dropped_entity_samples']}, control messages {perf['reported_dropped_control_messages']}",
+                 f"- Tracked entities: {perf['tracked_entities']}"]
+        rows += [f"- Gate finding: {reason}" for reason in perf["gate_reasons"]] or ["- Gate findings: all recorded thresholds passed."]
+        rows += [f"- Capture stage {stage}: worst post-start p95 {values['worst_post_15s_p95_ms']} ms; maximum rolling sample {values['maximum_rolling_sample_ms']} ms"
+                 for stage, values in perf["stage_capture_work"].items()]
+        rows += ["", "## Slow capture operation groups", ""]
+        if slow_capture_operations:
+            rows += [f"- `{item['operation_group']}`: {item['count']} report(s); maximum {item['maximum_ms']} ms at step {item['step']} on `{item['entity_id']}` ({item['entity_class']})"
+                     for item in slow_capture_operations]
+            rows.append("- Durations cover the measured operation group and may include runtime scheduling or garbage collection; they identify where time elapsed, not the cause.")
+        else:
+            rows.append("- No operation group exceeded the diagnostic threshold.")
+        timing = summary["timing_and_calibration"]
+        rows += ["", "## Timing and calibration", "",
+                 f"- Frame-step gap incidents: {timing['frame_step_gap_occurrences']}; nonmonotonic game-time incidents: {timing['nonmonotonic_frame_time_occurrences']}; fixed-step time mismatches: {timing['fixed_step_time_mismatch_occurrences']}",
+                 f"- Fixed delta time observed: {timing['fixed_delta_time_seconds']}",
+                 f"- Health wall-clock points: {timing['producer_health_wall_clock_points']}; wall clock monotonic: {timing['producer_health_wall_clock_monotonic']}; Pearson game-time/wall-time correlation: {timing['producer_health_game_time_wall_time_correlation']}; game seconds per wall second slope: {timing['game_seconds_per_wall_second_slope']}",
+                 f"- Same-step collision calibration candidates: {timing['phase_calibration_candidate_events']}; samples observed before collision callback in the same step: {timing['same_step_sample_precedes_collision_events']}",
+                 f"- M2 controller/watcher event records in this trace: {timing['m2_controller_or_watcher_event_records']}",
+                 "- Calibration procedure: correlate a naturally occurring, independently observed collision or ground-contact transition with the actor's same-step and following-step samples and the corresponding callback, then compare fixed-step ordinal, game time, and monotonic wall time. Do not create synthetic physics or alter transforms/velocity.",
+                 f"- Calibration result: {'not performed; observation phase remains unverified' if not summary['sample_phase_verified'] else 'sample phase marked verified in metadata'}."]
+        if summary["incomplete_reasons"]:
+            rows += ["", "## Incomplete capture reasons", ""]
+            rows += [f"- `{item['reason']}` (count: {item.get('count', 1)})"
+                     for item in summary["incomplete_reasons"]]
         rows += ["", "## Interpretation", "", "This analyzer is an independently tested offline prototype."
-                 " A complete, calibrated engine-side recorder has not yet been installed or verified.",
+                 " A verified chunk establishes trace integrity, not complete or calibrated engine capture.",
                  "Collision estimates and absent damage do not establish causes."
-                 " Video is optional only after engine capture passes calibration.", ""]
+                 " Calibrate observation phase, entity coverage, callbacks, and performance before drawing gameplay conclusions.", ""]
         (out / "report.md").write_text("\n".join(rows), encoding="utf-8")
         return summary
     finally:
@@ -584,8 +976,13 @@ def main():
     parser.add_argument("--out", default="flight_report")
     parser.add_argument("--focus-time", type=float, help="Export entity samples around a game time")
     parser.add_argument("--focus-window", type=float, default=2.0)
+    parser.add_argument("--producer-queue-capacity", type=int,
+                        help="producer queue entry cap from the local configuration used for this run")
+    parser.add_argument("--producer-queue-max-bytes", type=int,
+                        help="producer queue byte cap from the local configuration used for this run")
     args = parser.parse_args()
-    summary = analyze(args.source, args.out, args.focus_time, args.focus_window)
+    summary = analyze(args.source, args.out, args.focus_time, args.focus_window,
+                      args.producer_queue_capacity, args.producer_queue_max_bytes)
     print(json.dumps(summary, indent=2))
     print(f"Report: {Path(args.out) / 'report.md'}")
 

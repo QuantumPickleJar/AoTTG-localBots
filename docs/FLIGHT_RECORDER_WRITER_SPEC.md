@@ -1,28 +1,29 @@
 # Flight Recorder writer deployment connection
 
-**State:** offline core implemented; Unity adapter and local transport are future work after the installed-game audit. This document is a connection specification, not a deployable plug-in or gameplay-validation claim.
+**State:** the offline core, bounded Windows local transport, and opt-in BepInEx IL2CPP adapter are implemented. The adapter is built against the inspected local installation and passed a main-menu startup/transport/writer smoke. This is not a gameplay calibration claim.
 
 ## Connection point
 
-`tools/flight_writer.py` is a Python standard-library module. A future Unity-facing adapter must copy engine state into immutable primitive messages on a verified callback, then hand those messages to a local sidecar or a reviewed runtime port. The adapter must never pass Unity object references, `Transform`, `Rigidbody`, `GameObject`, or mutable game collections to the background writer.
+`tools/flight_writer.py` is a Python standard-library module. The Unity-facing adapter copies engine state into immutable primitive messages in its injected `MonoBehaviour.FixedUpdate` callback, then hands those messages to the local pipe client. Unity callback ordering relative to the engine physics simulation is not established. The adapter never passes Unity object references, `Transform`, `Rigidbody`, `GameObject`, or mutable game collections to the background writer.
 
 ```mermaid
 flowchart TD
-    A[Verified Unity callback] --> B[Main-thread primitive snapshot]
-    B --> C[Future bounded local transport]
+    A[Injected Unity FixedUpdate callback] --> B[Main-thread primitive snapshot]
+    B --> C[Bounded .NET named-pipe client]
     C --> D[FlightRecorderWriter API]
     D --> E[Hashed JSONL chunks]
 ```
 
-The transport box is intentionally not implemented. Once the installed-game audit selects a compatible loader/runtime, implement a versioned local named pipe or an equivalent reviewed in-process binding. It must be local-only, authenticated by OS access control, and have its own bounded queue and explicit acknowledgement/error path. Do not add cloud upload or a network service.
+The implemented bridge is `plugin/FlightRecorder.TransportClient` plus `tools/flight_transport.py`; it uses a current-user Windows pipe DACL, rejects remote clients, bounds messages/queues, acknowledges accepted messages, and marks incomplete runs on unaccounted sequence loss. It passed both synthetic end-to-end tests and an installed main-menu smoke. See [FLIGHT_RECORDER_TRANSPORT.md](FLIGHT_RECORDER_TRANSPORT.md) and [the installed-build audit](FLIGHT_RECORDER_ADAPTER_PLAN.md).
 
 ## Writer API mapping
 
-| Future adapter observation | Writer call | Required data and rule |
+| Adapter observation | Writer call | Required data and rule |
 |---|---|---|
 | One global physics callback | `submit_frame(FrameSnapshot(...))` | One monotonically increasing source step; one time and phase for all samples; copy primitive pose/velocity/state fields. Never synthesize a missing step. |
 | Entity spawn/despawn | `submit_lifecycle(EntityLifecycleRecord(...))` | Stable per-spawn ID; emit despawn only when observed. A reused source handle increments its generation. |
 | Decision, command or outcome | `submit_event(RecorderEvent(...))` | Preserve source event name, timestamp, step if observed, entity/correlation IDs, evidence grade and exact structured fields. Missing values remain absent. |
+| External source or transport loss | `mark_incomplete(reason, details=...)` | Bounded reason ledger; final `capture_complete` is false and metadata preserves first/last bounded details. Do not synthesize a frame for a missing step. |
 | Stop/health reporting | `stats()` then `close()` | Surface queue loss, storage exhaustion, rejected events, incomplete capture and final chunk/manifest state to the local operator. |
 
 Stable IDs should use the source actor handle plus a spawn generation, for example `human:73:2`. IDs must not use a reusable display name alone. Entity-kind and source-handle normalization belongs in the adapter; the recorder does not infer identity from position or names.
@@ -42,18 +43,17 @@ For a decision input, the adapter may pass the complete, actually observed repla
 
 ## Audit gates
 
-### Requires installed game files
+### Installed-build audit completed
 
-- Run `scripts/inspect_unity_install.py` read-only against the user's current installation root; record executable/build hashes locally.
-- Establish actual Unity version, Mono/IL2CPP backend, permitted loader, plugin ABI and current Custom Logic/API behavior.
-- Determine whether an approved callback exists at the required physics phase and which actor classes it can observe.
-- Choose the compatible adapter/transport and exact files, install path, launch settings and rollback. Do not infer these from the public release listing or another user's game.
+- The local read-only preflight and loader startup establish x64 IL2CPP, Unity 2023.1.22f1, metadata 29.1, and BepInEx 6.0.0-be.791 compatibility for this exact installation.
+- The installed adapter callback is an injected `MonoBehaviour.FixedUpdate`; its ordering relative to physics remains unspecified and must be calibrated against a short video.
+- The bounded named-pipe bridge, package, install manifest and hash-checked rollback are built. The H3VR BepInEx 5 Mono files were not reused.
 
 ### Requires actual gameplay
 
-- Calibrate callback ordering and timestamps against a short local video; verify the phase is truly post-physics.
+- Calibrate callback ordering and timestamps against a short local video; verify and preserve the actual phase label (`fixed_update_pre_physics` if that seam is selected).
 - Measure per-step global coverage across representative actors, spawn/despawn and scene transitions; validate explicit gap/drop reporting.
 - Exercise decision, command, damage and rescue event provenance in a private master-host session; prove correlation without inferring outcomes.
 - Measure game frame time, CPU, memory, queue pressure, storage and shutdown behavior at representative load. Confirm no gameplay mutations and no material performance regression.
 
-The official release listing was reachable in the cloud, but the 1 GB Windows archive could not be retrieved and inspected here. The installed version remains unknown; see [REC-I status](REC_I_VALIDATION_BLOCKER.md). No Unity physics or in-game validation is claimed by the offline tests or benchmark.
+The installed AoTTG2 copy ran BepInEx 6.0.0-be.791 on x64 Unity 2023.1.22f1 and generated local IL2CPP interop. An earlier 0.1.5 build from the same adapter source passed a main-menu startup/transport/writer smoke: 1,982 ordered frames, one verified chunk, complete capture, zero drops or analyzer anomalies, graceful shutdown, and no entities at the menu. The first health window included a 103.9691 ms capture-work maximum; subsequent windows ranged from 6.9426 to 12.7446 ms. The final deterministic 0.1.5 package also started and wrote 5,717 ordered menu frames and 23 events to a SHA-256-verified chunk with no entities, drops, or analyzer anomalies, but its run was marked incomplete (`receiver_interrupted`) after the game and BepInEx console were closed together. That retry is not a clean-shutdown pass. The short private REC-I gameplay calibration remains pending. See [the installed-build audit](FLIGHT_RECORDER_ADAPTER_PLAN.md) and [REC-I card](REC_I_VALIDATION_BLOCKER.md). Offline tests and menu smokes do not establish mission physics timing or gameplay coverage.

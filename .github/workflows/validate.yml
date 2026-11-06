@@ -27,3 +27,23 @@ jobs:
         run: git show --format= --check HEAD
       - name: Summarize limitations
         run: echo 'PASS covers static checks and mocked control flow only. AoTTG2 parsing, physics, networking, and realism still need gameplay testing.' >> "$GITHUB_STEP_SUMMARY"
+  transport-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build transport client for .NET 6 and 8
+        run: dotnet build plugin/FlightRecorder.TransportClient/FlightRecorder.TransportClient.csproj --configuration Release
+      - name: Exercise ordered client pipe and acknowledgments
+        run: dotnet run --project tests/FlightRecorder.TransportClient.Smoke/FlightRecorder.TransportClient.Smoke.csproj --configuration Release
+      - name: Exercise Windows pipe to Python writer and analyzer
+        shell: pwsh
+        run: ./tests/transport_windows_smoke.ps1 -PythonExe (Get-Command python).Source
+      - name: Summarize transport boundary
+        run: echo 'Windows named-pipe and Python writer tests use synthetic data only; no Unity or AoTTG2 runtime was exercised.' >> $env:GITHUB_STEP_SUMMARY

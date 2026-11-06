@@ -28,6 +28,7 @@ from urllib.parse import quote
 SCHEMA = "aicadets.flight.v1"
 MANIFEST_SCHEMA = "aicadets.flight.chunk-index.v1"
 WRITER_VERSION = "0.1.0"
+_ATOMIC_REPLACE_RETRY_DELAYS = (0.025, 0.05, 0.1, 0.2, 0.4, 0.8)
 _RESERVED_SAMPLE_KEYS = {"id", "kind", "pos", "vel", "rot", "ang_vel", "state", "ai_state"}
 _RESERVED_EVENT_KEYS = {
     "type", "event", "t", "step", "id", "actor", "ids", "correlation_id",
@@ -451,7 +452,8 @@ class FlightRecorderWriter:
         if not isinstance(capture_tier, str) or not capture_tier:
             raise ValueError("capture_tier must be a non-empty string")
         frozen_meta = _thaw_json(_freeze_json(metadata or {}))
-        for reserved in ("schema_version", "run_id", "capture_tier", "capture_complete", "writer_limits"):
+        for reserved in ("schema_version", "run_id", "capture_tier", "capture_complete",
+                         "writer_limits", "incomplete_reasons"):
             if reserved in frozen_meta:
                 raise ValueError(f"metadata cannot override {reserved}")
         now = datetime.now(timezone.utc).isoformat()
@@ -511,6 +513,7 @@ class FlightRecorderWriter:
         self._final_state_persisted = False
         self._last_checkpoint = time.monotonic()
         self._storage_losses: list[_GapNotice] = []
+        self._incomplete_reasons: dict[str, dict[str, Any]] = {}
         self._write_json_atomic(self.output_dir / "metadata.json", self._metadata)
         self._write_json_atomic(self.output_dir / "chunk_manifest.json", self._manifest)
         self._write_state_atomic()
@@ -532,7 +535,16 @@ class FlightRecorderWriter:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp, path)
+        for attempt in range(len(_ATOMIC_REPLACE_RETRY_DELAYS) + 1):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if attempt >= len(_ATOMIC_REPLACE_RETRY_DELAYS):
+                    raise
+                # Windows scanners and short-lived readers can briefly deny a rename.
+                # Retry on the writer thread only; capture callbacks never block here.
+                time.sleep(_ATOMIC_REPLACE_RETRY_DELAYS[attempt])
 
     def _logical_directory_bytes(self) -> int:
         """Count persisted bytes plus buffered chunk bytes in the current run."""
@@ -963,7 +975,12 @@ class FlightRecorderWriter:
                     and self._stats["queue_dropped_frames"] == 0
                     and self._stats["source_missing_frames"] == 0
                     and self._stats["storage_dropped_frames"] == 0
-                    and self._stats["rejected_events"] == 0,
+                    and self._stats["rejected_events"] == 0
+                    and not self._incomplete_reasons,
+                "incomplete_reasons": [
+                    {"reason": reason, **record}
+                    for reason, record in sorted(self._incomplete_reasons.items())
+                ],
                 "stopped_at_utc": datetime.now(timezone.utc).isoformat(),
                 "stop_reason": self._storage_reason or "graceful_stop",
                 "writer_stats": self.stats(),
@@ -988,6 +1005,26 @@ class FlightRecorderWriter:
             except BaseException:
                 pass
 
+    def mark_incomplete(self, reason: str, *, details: Mapping[str, Any] | None = None) -> None:
+        """Record a bounded source/transport failure that prevents complete capture."""
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 128:
+            raise ValueError("reason must be a non-empty string of at most 128 characters")
+        reason = reason.strip()
+        frozen_details = _thaw_json(_freeze_json(details)) if details is not None else None
+        if frozen_details is not None and (not isinstance(frozen_details, dict)
+                                           or _estimate(frozen_details) > 4096):
+            raise ValueError("details must be an object of at most 4096 estimated bytes")
+        with self._lock:
+            if self._closing or self._final_state_persisted:
+                raise WriterError("cannot mark a closing or finalized recording incomplete")
+            if reason not in self._incomplete_reasons and len(self._incomplete_reasons) >= 64:
+                raise WriterError("incomplete-reason ledger is full")
+            record = self._incomplete_reasons.setdefault(reason, {"count": 0})
+            record["count"] = min(2**31 - 1, record["count"] + 1)
+            if frozen_details is not None:
+                record.setdefault("first_details", frozen_details)
+                record["last_details"] = frozen_details
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             return {**self._stats, "queue_depth": len(self._queue),
@@ -998,6 +1035,12 @@ class FlightRecorderWriter:
                     "control_queue_reserve_slots": self.control_queue_reserve_slots,
                     "control_queue_reserve_bytes": self.control_queue_reserve_bytes,
                     "payload_bytes": self._payload_bytes}
+
+    @property
+    def worker_failed(self) -> bool:
+        """Whether the asynchronous writer worker has entered its fatal path."""
+        with self._lock:
+            return self._worker_error is not None
 
     def close(self, timeout: float | None = 30.0) -> dict[str, Any]:
         with self._lock:
