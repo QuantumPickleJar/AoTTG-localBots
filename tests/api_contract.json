@@ -271,6 +271,22 @@
       },
       "properties": []
     },
+    "String": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Utility/String.md",
+      "methods": {
+        "Length": {
+          "signature": "function Length(str: string) -> int",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "SubstringWithLength": {
+          "signature": "function SubstringWithLength(str: string, startIndex: int, length: int) -> string",
+          "min_args": 3,
+          "max_args": 3
+        }
+      },
+      "properties": []
+    },
     "LineCastHitResult": {
       "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Collections/LineCastHitResult.md",
       "methods": {},

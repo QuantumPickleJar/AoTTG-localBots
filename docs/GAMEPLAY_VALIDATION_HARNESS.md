@@ -55,6 +55,7 @@ An add-on file existing in the installed folder is **not** proof that it is disa
 - **Run C**: test Hold during ground pursuit and verify `motion_cancelled` and actual stop; resume Engage and Explore; verify recovery against building corner, moving Titan, target loss and low-gas diversion when reproducible.
 - Record whether ground circling still occurs, and whether a selected target is retained through bounded recovery. Watch20 was evidence from the *previous* version, not proof the new steering fix works.
 - Pass only if the claimed behaviors are observed in-game without dangerous regressions. If command strings appear but there is no displacement, mark **fail** or **inconclusive**, not pass.
+- The M2 watcher saves long traces as numbered `AICadetsM2WatchN.txt` segments. Return every segment from the attempt; each header identifies its segment number and previous file. Do not clear shared `PersistentData` to make room.
 
 ## Additional session cards
 
@@ -84,7 +85,7 @@ ACTIONS (one variable per A/B run):
 EXPECTED PHYSICAL RESULT:
 EXPECTED LOG EVENTS:
 FAILURE / INTERRUPT CASES:
-ARTIFACTS TO RETURN (watch file, screenshots/video, settings, exact log messages):
+ARTIFACTS TO RETURN (all M2 watcher segments, screenshots/video, settings, exact log messages):
 PASS / FAIL / PARTIAL / INCONCLUSIVE CRITERIA:
 ROLLBACK FILES OR COMMIT:
 ```
