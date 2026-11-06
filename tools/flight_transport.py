@@ -185,12 +185,18 @@ class FlightTransportReceiver:
 
     def accept_line(self, raw: bytes, *, new_pipe_connection: bool = False) -> bool:
         """Consume one line; rotate to a new run only on a new connection's first hello."""
+        normalized = raw.rstrip(b"\r\n")
+        return self._accept_envelope(normalized, new_pipe_connection=new_pipe_connection)
+
+    def _accept_envelope(self, normalized: bytes, envelope: Mapping[str, Any] | None = None,
+                         *, new_pipe_connection: bool = False) -> bool:
         with self._lock:
             if self.stopped:
                 raise TransportProtocolError("message received after stop")
-            digest = hashlib.sha256(raw).digest()
+            digest = hashlib.sha256(normalized).digest()
             try:
-                envelope = parse_envelope(raw.rstrip(b"\r\n"))
+                if envelope is None:
+                    envelope = parse_envelope(normalized)
                 run_id = envelope["run_id"]
                 sequence = envelope["sequence"]
                 kind = envelope["kind"]
@@ -551,13 +557,14 @@ class WindowsNamedPipeServer:
                 newline = pending.find(b"\n")
                 if newline < 0:
                     break
-                line = bytes(pending[:newline]).rstrip(b"\r")
+                line = bytes(pending[:newline]).rstrip(b"\r\n")
                 del pending[:newline + 1]
+                envelope = None
                 try:
                     envelope = parse_envelope(line)
                     previous_run_id = self.receiver.run_id
-                    keep_serving = self.receiver.accept_line(
-                        line, new_pipe_connection=new_pipe_connection)
+                    keep_serving = self.receiver._accept_envelope(
+                        line, envelope, new_pipe_connection=new_pipe_connection)
                     new_pipe_connection = False
                     self._write_ack(handle, envelope["run_id"], envelope["sequence"], True)
                     if envelope["kind"] in {"hello", "gap", "stop"}:
@@ -571,12 +578,12 @@ class WindowsNamedPipeServer:
                         self.stop()
                         return
                 except Exception as exc:
-                    try:
-                        rejected = parse_envelope(line)
-                        self._write_ack(handle, rejected["run_id"], rejected["sequence"], False,
+                    if envelope is not None:
+                        try:
+                            self._write_ack(handle, envelope["run_id"], envelope["sequence"], False,
                                         f"{type(exc).__name__}: {exc}"[:512])
-                    except Exception:
-                        pass
+                        except Exception:
+                            pass
                     self.receiver.close_uncleanly("transport_protocol_error")
                     raise
                 if len(pending) > MAX_ENVELOPE_BYTES:

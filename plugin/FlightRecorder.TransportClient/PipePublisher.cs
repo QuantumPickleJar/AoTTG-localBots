@@ -96,9 +96,14 @@ public sealed class PipePublisher : IAsyncDisposable
         lock (_gate)
         {
             if (!_accepting || _failure is not null) return false;
-            if (!FlushPendingFrameGapLocked(payloadJson)) return DropFrameLocked(step, "gap_marker_queue_full");
+            if (!FlushPendingFrameGapLocked(payloadJson))
+            {
+                if (_failure is not null) return false;
+                return DropFrameLocked(step, "gap_marker_queue_full");
+            }
             var sequence = _nextSequence++;
             if (TryEnqueueLocked("frame", payloadJson, isControl: false, sequence)) return true;
+            if (_failure is not null) return false;
             return DropFrameAtSequenceLocked(sequence, step, "frame_queue_full");
         }
     }
@@ -120,10 +125,15 @@ public sealed class PipePublisher : IAsyncDisposable
         lock (_gate)
         {
             if (!_accepting || _failure is not null) return false;
-            if (!FlushPendingFrameGapLocked(reportedAt, step)) return DropFrameLocked(step, "gap_marker_queue_full");
+            if (!FlushPendingFrameGapLocked(reportedAt, step))
+            {
+                if (_failure is not null) return false;
+                return DropFrameLocked(step, "gap_marker_queue_full");
+            }
             var sequence = _nextSequence++;
             if (TryEnqueueObjectLocked("frame", payload, isControl: false, sequence,
                     serializerOptions, initialCapacityHint)) return true;
+            if (_failure is not null) return false;
             return DropFrameAtSequenceLocked(sequence, step, "frame_queue_full");
         }
     }
@@ -271,7 +281,11 @@ public sealed class PipePublisher : IAsyncDisposable
         try
         {
             using var payload = JsonDocument.Parse(payloadJson, new JsonDocumentOptions { MaxDepth = 32 });
-            if (payload.RootElement.ValueKind != JsonValueKind.Object) return false;
+            if (payload.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                _failure ??= "invalid_payload_shape";
+                return false;
+            }
             ValidateNoDuplicateMembers(payload.RootElement);
             using (var writer = new Utf8JsonWriter(encoded))
             {
@@ -313,7 +327,7 @@ public sealed class PipePublisher : IAsyncDisposable
             }
             AppendNewline(encoded);
         }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
         {
             _failure ??= $"frame_serialization_failed: {ex.GetType().Name}";
             return false;

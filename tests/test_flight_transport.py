@@ -81,6 +81,8 @@ class FlightTransportTests(unittest.TestCase):
         first = envelope(self.run_id, 3, "frame", frame(0, 0.02, 0.0))
         self.assertTrue(self.receiver.accept_line(first))
         self.assertTrue(self.receiver.accept_line(first))  # Retry after a broken pipe is idempotent.
+        self.assertTrue(self.receiver.accept_line(first + b"\r\n"))
+        self.assertTrue(self.receiver.accept_line(first + b"\n"))
         self.assertTrue(self.receiver.accept_line(envelope(self.run_id, 6, "gap", {
             "first_sequence": 4, "last_sequence": 5, "dropped_frames": 2,
             "first_step": 1, "last_step": 2, "dropped_entity_samples": None,

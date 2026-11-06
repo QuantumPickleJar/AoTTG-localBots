@@ -92,7 +92,7 @@ class FlightTest(unittest.TestCase):
             "installed_build_fingerprint": {"unity_version": "2023.1.22f1", "architecture": "x64"},
             "runtime_observation_phase": "fixed_update_pre_physics_order_unspecified",
             "physics_simulation_mode": "FixedUpdate",
-            "sample_phase_verified": False,
+            "sample_phase_verified": "false",
             "step_source": "adapter FixedUpdate callback ordinal",
             "timestamp_clock": "UnityEngine.Time.fixedTimeAsDouble",
             "discovery_interval_seconds": 0.5,
@@ -107,6 +107,7 @@ class FlightTest(unittest.TestCase):
         report = (self.root / "adapter_report/report.md").read_text()
         self.assertEqual(result["game_build"], "2023.1.22f1 / x64")
         self.assertFalse(result["sample_phase_verified"])
+        self.assertFalse(result["timing_and_calibration"]["runtime_observation_phase_calibrated"])
         self.assertEqual(result["runtime_observation_phase"], "fixed_update_pre_physics_order_unspecified")
         self.assertEqual(result["physics_simulation_mode"], "FixedUpdate")
         self.assertEqual(result["incomplete_reasons"][0]["reason"], "receiver_interrupted")

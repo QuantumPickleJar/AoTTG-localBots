@@ -43,6 +43,8 @@ Console.WriteLine("transport pipe smoke passed: ordered hello/event/stop envelop
 await RunBackpressureSmokeAsync();
 await RunCriticalReserveAccountingSmokeAsync();
 await RunCriticalByteReserveAccountingSmokeAsync();
+await RunInvalidPayloadAccountingSmokeAsync();
+await RunSerializationFailureAccountingSmokeAsync();
 
 static async Task SendToPythonReceiverAsync(string pipeName, string runId)
 {
@@ -272,6 +274,87 @@ static async Task RunCriticalByteReserveAccountingSmokeAsync()
         foreach (var message in parsed) message.Dispose();
     }
     Console.WriteLine("transport critical-byte smoke passed: full control bytes still record frame gap and incomplete stop");
+}
+
+static async Task RunInvalidPayloadAccountingSmokeAsync()
+{
+    var pipeName = $"aicadets-invalid-payload-{Guid.NewGuid():N}";
+    var runId = Guid.NewGuid().ToString("N");
+    await using var client = new PipePublisher(pipeName, runId,
+        "{\"writer_schema\":\"aicadets.flight.v1\",\"producer\":\"invalid-payload-smoke\"}",
+        queueCapacity: 5, maxQueueBytes: 8192, controlReserveSlots: 2, controlReserveBytes: 2048,
+        criticalReserveSlots: 1, criticalReserveBytes: 1024);
+    await Task.Delay(50);
+    if (!client.TryPublishFrame(FramePayload(0), 0) || !client.TryPublishFrame(FramePayload(1), 1))
+        throw new InvalidOperationException("initial frames did not fit before invalid-payload accounting check");
+    if (client.TryPublishFrame(FramePayload(2), 2) || client.DroppedFrames != 1)
+        throw new InvalidOperationException("queue pressure did not account exactly one real frame drop");
+    if (client.TryPublishFrame("not-json", 3) || client.DroppedFrames != 1 ||
+        client.Failure != "invalid_payload_json")
+        throw new InvalidOperationException("invalid JSON was misreported as an additional dropped frame");
+
+    var received = ReadUntilStopAsync(pipeName, runId);
+    if (!client.TryPublishControl("stop", JsonSerializer.Serialize(new
+        {
+            graceful = false, reason = "invalid_payload_smoke", dropped_frames = client.DroppedFrames,
+            dropped_control_messages = client.DroppedControlMessages,
+        })))
+        throw new InvalidOperationException("stop envelope was rejected after invalid-payload failure");
+    if (await client.StopAndDrainAsync(TimeSpan.FromSeconds(10)) || client.QueueDepth != 0)
+        throw new InvalidOperationException("invalid-payload capture was reported complete or left queued messages undrained");
+
+    var messages = await received.WaitAsync(TimeSpan.FromSeconds(10));
+    var kinds = messages.Select(line => JsonDocument.Parse(line)).ToList();
+    try
+    {
+        var messageKinds = kinds.Select(message => message.RootElement.GetProperty("kind").GetString()).ToArray();
+        if (!messageKinds.SequenceEqual(new[] { "hello", "frame", "frame", "gap", "stop" }))
+            throw new InvalidOperationException("invalid-payload failure did not preserve the single genuine frame gap");
+        var gap = kinds[^2].RootElement.GetProperty("payload");
+        if (gap.GetProperty("dropped_frames").GetInt64() != 1)
+            throw new InvalidOperationException("invalid JSON inflated the genuine dropped-frame gap");
+        var stop = kinds[^1].RootElement.GetProperty("payload");
+        if (stop.GetProperty("dropped_frames").GetInt64() != 1 || stop.GetProperty("graceful").GetBoolean())
+            throw new InvalidOperationException("stop did not preserve the single genuine frame drop and failed status");
+    }
+    finally
+    {
+        foreach (var message in kinds) message.Dispose();
+    }
+    Console.WriteLine("transport invalid-payload smoke passed: fatal serialization did not inflate frame-drop accounting");
+}
+
+static async Task RunSerializationFailureAccountingSmokeAsync()
+{
+    var pipeName = $"aicadets-serialization-failure-{Guid.NewGuid():N}";
+    var runId = Guid.NewGuid().ToString("N");
+    await using var client = new PipePublisher(pipeName, runId,
+        "{\"writer_schema\":\"aicadets.flight.v1\",\"producer\":\"serialization-failure-smoke\"}");
+    var accepted = client.TryPublishFrame(new { value = double.NaN }, 0, 0.02);
+    var failure = client.Failure;
+    if (accepted || client.DroppedFrames != 0 || failure is null ||
+        !failure.StartsWith("frame_serialization_failed:", StringComparison.Ordinal))
+        throw new InvalidOperationException("fatal typed-frame serialization was counted as a frame drop");
+
+    var received = ReadUntilStopAsync(pipeName, runId);
+    if (!client.TryPublishControl("stop", "{\"graceful\":false,\"reason\":\"serialization_failure_smoke\",\"dropped_frames\":0}"))
+        throw new InvalidOperationException("stop envelope was rejected after typed-frame serialization failure");
+    if (await client.StopAndDrainAsync(TimeSpan.FromSeconds(10)) || client.QueueDepth != 0)
+        throw new InvalidOperationException("typed serialization failure was reported complete or left queued messages undrained");
+
+    var messages = await received.WaitAsync(TimeSpan.FromSeconds(10));
+    var kinds = messages.Select(line => JsonDocument.Parse(line)).ToList();
+    try
+    {
+        if (!kinds.Select(message => message.RootElement.GetProperty("kind").GetString())
+                .SequenceEqual(new[] { "hello", "stop" }))
+            throw new InvalidOperationException("typed serialization failure fabricated a frame or gap envelope");
+    }
+    finally
+    {
+        foreach (var message in kinds) message.Dispose();
+    }
+    Console.WriteLine("transport serialization-failure smoke passed: fatal typed-frame failure was not counted as a drop");
 }
 
 static string FramePayload(long step) => JsonSerializer.Serialize(new

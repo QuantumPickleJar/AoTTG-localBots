@@ -275,7 +275,7 @@ def timing_summary(health_records, frame_count, counters, fixed_delta_times, cal
         "phase_calibration_candidate_events": calibration_candidates,
         "same_step_sample_precedes_collision_events": same_step_collision_events,
         "m2_controller_or_watcher_event_records": m2_event_count,
-        "runtime_observation_phase_calibrated": bool(sample_phase_verified),
+        "runtime_observation_phase_calibrated": sample_phase_verified is True,
     }
 
 
@@ -845,10 +845,11 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
         performance = producer_health_summary(producer_health_records, metadata,
                                               frame_fixed_delta_times, len(track_stats),
                                               producer_queue_capacity, producer_queue_max_bytes)
+        sample_phase_verified = metadata.get("sample_phase_verified") is True
         timing = timing_summary(producer_health_records, observed_frame_steps, counters,
                                 frame_fixed_delta_times, phase_calibration_candidates,
                                 same_step_collision_events, m2_event_record_count,
-                                metadata.get("sample_phase_verified", False))
+                                sample_phase_verified)
         slow_capture_operations = [
             {"operation_group": operation, **values}
             for operation, values in sorted(slow_capture_operation_summary.items())
@@ -858,7 +859,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
                    "game_build": build_name,
                    "runtime_observation_phase": metadata.get("runtime_observation_phase", "unknown"),
                    "physics_simulation_mode": metadata.get("physics_simulation_mode", "unknown"),
-                   "sample_phase_verified": bool(metadata.get("sample_phase_verified", False)),
+                   "sample_phase_verified": sample_phase_verified,
                    "step_source": metadata.get("step_source", "unknown"),
                    "timestamp_clock": metadata.get("timestamp_clock", "unknown"),
                    "discovery_interval_seconds": metadata.get("discovery_interval_seconds"),
