@@ -152,8 +152,14 @@ class FlightTest(unittest.TestCase):
              "capture_frame_sampling_ms_p95": 0.15, "capture_frame_sampling_ms_maximum": 0.3,
              "capture_transport_ms_p95": 0.04, "capture_transport_ms_maximum": 0.1},
         ]
+        slow_capture = {
+            "type": "event", "event": "capture_slow_operation", "step": 3, "t": 0.06,
+            "actor": "human:1:1", "evidence": "timed_main_thread_operation_group",
+            "fields": {"operation_group": "animation_game_method", "elapsed_ms": 12.5,
+                       "entity_id": "human:1:1", "entity_class": "Characters.Human"},
+        }
         (src / "metadata.json").write_text(json.dumps(metadata))
-        (src / "000001.jsonl").write_text("\n".join(json.dumps(row) for row in [frame, *health]) + "\n")
+        (src / "000001.jsonl").write_text("\n".join(json.dumps(row) for row in [frame, *health, slow_capture]) + "\n")
 
         result = analyze(src, self.root / "health_gate_report",
                          producer_queue_capacity=512, producer_queue_max_bytes=4 * 1024 * 1024)
@@ -173,6 +179,9 @@ class FlightTest(unittest.TestCase):
         self.assertFalse(result["sample_phase_verified"])
         self.assertIn("Calibration result: not performed; observation phase remains unverified.", report)
         self.assertIn("maximum reported capture-work sample exceeds 60.0 ms", report)
+        self.assertEqual(result["slow_capture_operations"][0]["operation_group"], "animation_game_method")
+        self.assertEqual(result["slow_capture_operations"][0]["maximum_ms"], 12.5)
+        self.assertIn("animation_game_method", report)
 
     def test_stalled_command_detection(self):
         src = self.root / "stalled"

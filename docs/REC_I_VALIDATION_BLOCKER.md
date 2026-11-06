@@ -1,4 +1,10 @@
-# REC-I status: installed 0.1.17 run 08 fails p95 and maximum-sample gates; 0.1.18 candidate pending retest
+# REC-I status: installed 0.1.18 run 11 fails p95 and maximum-sample gates; 0.1.19 candidate pending build and retest
+
+## 0.1.19 candidate — build and schema checks pass; runtime gates remain open
+
+Candidate 0.1.19 adds a schema-specific `Utf8JsonWriter` converter for the existing frame DTO to reduce synchronous JSON metadata/dispatch work while preserving every `aicadets.flight.v1` field and fixed-step sample. It also measures the slowest Unity/game API operation group per sampled entity and emits at most one `capture_slow_operation` event per game second when a group takes at least 5 ms. The event identifies the entity and operation group; the duration may include runtime scheduling or garbage collection and is diagnostic, not causal proof. Sampling cadence, discovery cadence, performance limits, queue capacity/byte limits, transport, and capture coverage are unchanged.
+
+The Unity IL2CPP plugin builds against the audited installation with zero warnings/errors. The 132-test Python suite, Python compileall, and ordered/backpressure/critical-reserve transport smoke pass. An offline serializer smoke test constructed a representative 21-sample frame, confirmed byte-for-byte JSON equivalence with the previous serializer, and measured two 5,000-frame runs at 1.42x and 1.45x throughput using a reusable UTF-8 buffer on the available .NET 8 runtime. This microbenchmark isolates serialization and is not an installed Unity performance result; the shipped plugin remains .NET 6. Package/hash verification and a fresh installed actor-loaded run are still required before claiming improvement. Continue to require every post-15-second capture-work p95 <= 1.0 ms, maximum individual capture-work <= 60 ms, zero drops, bounded queues, clean stop, and a separately calibrated observation phase. The pre/post physics label remains unverified until controlled natural-transition calibration.
 
 ## Current status — installed 0.1.17 run 08 (complete; merge gates fail)
 

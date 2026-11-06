@@ -1,12 +1,12 @@
 # AoTTG2 IL2CPP Flight Recorder package
 
-**Build:** 0.1.18 cached transform/scene/owner hot-path optimization candidate, compiled against interop generated from the installed AoTTG2 build
+**Build:** 0.1.19 schema-specific frame writer and sparse capture-cost diagnostics candidate, compiled against interop generated from the installed AoTTG2 build
 
 **Runtime:** x64, Unity 2023.1.22f1, IL2CPP metadata 29.1, BepInEx 6.0.0-be.791, .NET 6
 
 **Capture default:** disabled
 
-This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Versions 0.1.11–0.1.15 retained the `aicadets.flight.v1` fields, local transport, and queue/recovery behavior while successively reducing allocations and adding measured callback stages. Installed 0.1.15 run 06 passed the steady-state p95 limit but failed the unchanged 60 ms maximum-sample gate because a periodic discovery sample reached 79.0452 ms. Version 0.1.16 excludes inactive objects from periodic scene discovery while continuing to sample already tracked entities; installed run 07 failed the p95 gate. Version 0.1.17 preserves per-step hook pose/state records while skipping hook-point, anchor, and character queries for `Disabled` hooks; installed run 08 completed structurally but failed both performance limits. Version 0.1.18 caches tracked transforms, stable scene names, and per-step owner-scope results to reduce repeated Unity/IL2CPP work. It is a candidate only; no runtime improvement is claimed until a fresh installed capture passes every unchanged gate.
+This opt-in package contains the game-side BepInEx IL2CPP plugin, bounded named-pipe producer, Python receiver/writer/analyzer, and a portable Python 3.14.10 x64 embeddable runtime with its license. It excludes AoTTG2 binaries, loader binaries, and generated/proprietary game interop. Versions 0.1.11–0.1.18 retained the `aicadets.flight.v1` fields, local transport, and queue/recovery behavior while successively reducing allocations, caching stable references, and adding measured callback stages. Installed 0.1.15 run 06 passed the steady-state p95 limit but failed the unchanged 60 ms maximum-sample gate because a periodic discovery sample reached 79.0452 ms. Version 0.1.16 excludes inactive objects from periodic scene discovery while continuing to sample already tracked entities; installed run 07 failed the p95 gate. Version 0.1.17 preserves per-step hook pose/state records while skipping hook-point, anchor, and character queries for `Disabled` hooks; installed run 08 completed structurally but failed both performance limits. Version 0.1.18 caches tracked transforms, stable scene names, and per-step owner-scope results. Version 0.1.19 adds a schema-specific JSON writer for frame envelopes and reports a rate-limited `capture_slow_operation` event when one sampled Unity/game API group takes at least 5 ms. An offline smoke test confirmed byte-for-byte JSON equivalence on a representative 21-sample frame and measured two 5,000-frame runs at 1.42x and 1.45x serialization throughput using a reusable UTF-8 buffer on the available .NET 8 runtime; the shipped plugin remains .NET 6. This is not installed-runtime evidence, so no game performance improvement is claimed.
 
 ## Installed 0.1.17 capture — run 08 (complete; performance and timing gates failed)
 
@@ -91,12 +91,12 @@ Unavailable or unverified: moving world geometry, Titan-side collision callbacks
 2. Extract the reviewed package to a local directory.
 3. Run the guarded installer. It automatically removes a previous recorder install after verifying its receipt, DLL hashes, and folder contents. It refuses modified or unmanaged installations for manual review:
 
-       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.18"
+       .\scripts\install_flight_recorder.ps1 -GameRoot "C:\Path\To\AoTTG2" -PackageRoot "C:\Path\To\AoTTG2-FlightRecorder-0.1.19"
 
 4. Leave BepInEx/config/org.aicadets.aottg2.flight-recorder.cfg at `Enabled = false` for the startup check. Launch to the menu, verify plug-in version and disabled-capture log entries, then close the game.
 5. Copy `configs/flight-recorder-transport.example.json` to a private local config, set `recording_enabled=true`, and choose a new empty output directory. Start the receiver first:
 
-       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.18" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
+       .\scripts\start_flight_recorder_receiver.ps1 -PackageRoot "C:\Local\Path\AoTTG2-FlightRecorder-0.1.19" -ConfigPath "%USERPROFILE%\Documents\AoTTG2\Recorders\flight-recorder-transport.json"
 
    `ConfigPath` must be the JSON file. A relative `output_dir` is resolved beside that file, and the launcher prints the resolved directory. For output in `Documents\AoTTG2\Recorders\recordings`, use the JSON in that `Recorders` folder, not the package's `configs` directory.
 
@@ -115,4 +115,4 @@ Close the game and run the package's `remove_flight_recorder.ps1` against the sa
 
 ## Validation boundary
 
-Installed 0.1.17 run 08 completed structurally but failed the unchanged 1.0 ms p95 and 60 ms maximum-sample gates; `sample_phase_verified=false` remains. Its stationary-cadet observation used an older installed WaveCadet build and has no Titan or M2 watcher sample. Version 0.1.18 is a cached hot-path optimization candidate and still requires an installed capture. Recorder evidence does not prove complete actor coverage, collision or attack causality, damage, or kills. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the M2/recorder Validation Cards for acceptance limits and rollback steps.
+Installed 0.1.18 run 11 completed structurally but failed the unchanged performance gates: 120/295 post-15-second windows exceeded 1.0 ms p95 and one sample reached 104.1877 ms. `sample_phase_verified=false` remains. Version 0.1.19 is an uninstalled candidate with an explicit frame writer and sparse slow-operation diagnostics; it still requires serializer equivalence/build checks and an actor-loaded installed capture before any performance claim. Recorder evidence does not prove complete actor coverage, collision or attack causality, damage, or kills. See [REC-I validation](REC_I_VALIDATION_BLOCKER.md) and the M2/recorder Validation Cards for acceptance limits and rollback steps.

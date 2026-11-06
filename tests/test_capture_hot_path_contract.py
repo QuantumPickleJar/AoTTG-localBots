@@ -1,6 +1,7 @@
 """Guard the recorder's fixed-step sampling cost without changing its schema."""
 import unittest
 from pathlib import Path
+import re
 
 
 PLUGIN = (Path(__file__).resolve().parents[1] /
@@ -73,11 +74,35 @@ class CaptureHotPathContractTests(unittest.TestCase):
         self.assertNotIn("FindObjectsInactive.Include, FindObjectsSortMode.None", self.source)
 
     def test_package_and_guarded_installer_target_the_current_plugin_version(self):
-        self.assertIn('PluginVersion = "0.1.18"', self.source)
+        self.assertIn('PluginVersion = "0.1.19"', self.source)
         self.assertIn("$pluginVersion = $versionMatch.Groups[1].Value", self.package_script)
         self.assertIn("plugin_version = $pluginVersion", self.package_script)
-        self.assertIn('$packageManifest.plugin_version -ne "0.1.18"', self.install_script)
-        self.assertIn('plugin_version = "0.1.18"', self.install_script)
+        self.assertIn('$packageManifest.plugin_version -ne "0.1.19"', self.install_script)
+        self.assertIn('plugin_version = "0.1.19"', self.install_script)
+
+    def test_manual_frame_converter_covers_every_v1_frame_property(self):
+        converter = self.source.split("internal sealed class FramePayloadJsonConverter", 1)[1].split(
+            "internal struct CaptureStageMeasurement", 1)[0]
+        self.assertIn("Converters = { new FramePayloadJsonConverter() }", self.source)
+        for class_name, next_class in (
+            ("FramePayload", "EntitySamplePayload"),
+            ("EntitySamplePayload", "EntityExtraPayload"),
+            ("EntityExtraPayload", "LifecyclePayload"),
+        ):
+            declaration = self.source.split(f"internal sealed class {class_name}", 1)[1].split(
+                f"internal sealed class {next_class}", 1)[0]
+            names = re.findall(r'JsonPropertyName\("([^"]+)"\)', declaration)
+            for name in names:
+                self.assertIn(f'"{name}"', converter, f"frame converter omits {class_name}.{name}")
+
+    def test_slow_capture_diagnostic_is_sparse_and_records_operation_identity(self):
+        capture = self.source.split("internal FramePayload CaptureFrame(", 1)[1].split(
+            "private string? FindId", 1)[0]
+        self.assertIn('Event = "capture_slow_operation"', capture)
+        self.assertIn('slowestOperation.SlowestElapsedMs >= 5d', capture)
+        self.assertIn('TryReserveSlowOperationReport(t)', capture)
+        self.assertIn('["operation_group"]', capture)
+        self.assertIn('["entity_id"]', capture)
 
 
 if __name__ == "__main__":

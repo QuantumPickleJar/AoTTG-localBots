@@ -497,6 +497,9 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
         focus_count = 0
         event_rows = []
         producer_health_records = []
+        slow_capture_operation_summary = defaultdict(lambda: {
+            "count": 0, "maximum_ms": 0.0, "step": None, "entity_id": "unknown", "entity_class": "unknown"
+        })
         frame_fixed_delta_times = []
         phase_calibration_candidates = 0
         same_step_collision_events = 0
@@ -643,6 +646,21 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
                                 event_fields = event_fields if isinstance(event_fields, dict) else {}
                                 if name_of_event == "producer_health":
                                     producer_health_records.append(rec)
+                                if name_of_event == "capture_slow_operation":
+                                    operation = str(event_fields.get("operation_group", "unknown"))
+                                    elapsed = event_fields.get("elapsed_ms")
+                                    try:
+                                        elapsed_ms = float(elapsed) if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool) else None
+                                    except (OverflowError, ValueError):
+                                        elapsed_ms = None
+                                    if elapsed_ms is not None and math.isfinite(elapsed_ms) and elapsed_ms >= 0:
+                                        item = slow_capture_operation_summary[operation]
+                                        item["count"] += 1
+                                        if elapsed_ms > item["maximum_ms"]:
+                                            item["maximum_ms"] = elapsed_ms
+                                            item["step"] = step
+                                            item["entity_id"] = str(event_fields.get("entity_id", rec.get("actor", "unknown")))
+                                            item["entity_class"] = str(event_fields.get("entity_class", "unknown"))
                                 if name_of_event == "collision":
                                     candidate = rec.get("phase_calibration_candidate", event_fields.get("phase_calibration_candidate"))
                                     same_step = rec.get("same_step_sample_precedes_collision_callback",
@@ -830,6 +848,10 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
                                 frame_fixed_delta_times, phase_calibration_candidates,
                                 same_step_collision_events, m2_event_record_count,
                                 metadata.get("sample_phase_verified", False))
+        slow_capture_operations = [
+            {"operation_group": operation, **values}
+            for operation, values in sorted(slow_capture_operation_summary.items())
+        ]
         summary = {"schema_version": SCHEMA, "run_id": metadata.get("run_id", "unknown"),
                    "capture_tier": metadata.get("capture_tier", "unverified"),
                    "game_build": build_name,
@@ -858,6 +880,7 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
                    "sampled_titan_death_transitions": len(kill_attributions),
                    "kill_attribution_status_counts": dict(attribution_counts),
                    "producer_performance": performance,
+                   "slow_capture_operations": slow_capture_operations,
                    "timing_and_calibration": timing,
                    "capture_complete": bool(metadata.get("capture_complete", False)),
                    "evidence_limitations": [
@@ -915,6 +938,13 @@ def analyze(source, out, focus_time=None, focus_window=2.0,
         rows += [f"- Gate finding: {reason}" for reason in perf["gate_reasons"]] or ["- Gate findings: all recorded thresholds passed."]
         rows += [f"- Capture stage {stage}: worst post-start p95 {values['worst_post_15s_p95_ms']} ms; maximum rolling sample {values['maximum_rolling_sample_ms']} ms"
                  for stage, values in perf["stage_capture_work"].items()]
+        rows += ["", "## Slow capture operation groups", ""]
+        if slow_capture_operations:
+            rows += [f"- `{item['operation_group']}`: {item['count']} report(s); maximum {item['maximum_ms']} ms at step {item['step']} on `{item['entity_id']}` ({item['entity_class']})"
+                     for item in slow_capture_operations]
+            rows.append("- Durations cover the measured operation group and may include runtime scheduling or garbage collection; they identify where time elapsed, not the cause.")
+        else:
+            rows.append("- No operation group exceeded the diagnostic threshold.")
         timing = summary["timing_and_calibration"]
         rows += ["", "## Timing and calibration", "",
                  f"- Frame-step gap incidents: {timing['frame_step_gap_occurrences']}; nonmonotonic game-time incidents: {timing['nonmonotonic_frame_time_occurrences']}; fixed-step time mismatches: {timing['fixed_step_time_mismatch_occurrences']}",

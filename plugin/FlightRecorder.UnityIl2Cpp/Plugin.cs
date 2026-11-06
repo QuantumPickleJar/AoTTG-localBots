@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.18";
+    public const string PluginVersion = "0.1.19";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     internal const int AnimationSampleIntervalFixedSteps = 5;
@@ -29,6 +29,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         NumberHandling = JsonNumberHandling.Strict,
+        Converters = { new FramePayloadJsonConverter() },
     };
 
     private static FlightRecorderPlugin? _instance;
@@ -56,6 +57,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
     private double _transportWorkLastMs;
     private int _shutdownStarted;
     private bool _captureFailed;
+    private double _nextSlowOperationReportAt;
 
     internal static FlightRecorderPlugin? Instance => _instance;
     internal PipePublisher? Publisher => _publisher;
@@ -71,6 +73,13 @@ public sealed class FlightRecorderPlugin : BasePlugin
     }
 
     internal void MarkFixedUpdateSampled(long step) => Interlocked.Exchange(ref _lastCapturedFixedStep, step);
+
+    internal bool TryReserveSlowOperationReport(double gameTime)
+    {
+        if (gameTime < _nextSlowOperationReportAt) return false;
+        _nextSlowOperationReportAt = gameTime + 1d;
+        return true;
+    }
 
     public override void Load()
     {
@@ -698,12 +707,24 @@ internal sealed class CaptureRegistry
     {
         _frameSamples.Clear();
         _captureScopeStep = step;
+        var slowestOperation = new CaptureStageMeasurement("");
+        TrackedEntity? slowestEntity = null;
         foreach (var entity in _ordered)
         {
+            var measurement = new CaptureStageMeasurement("");
+            measurement.Start("scope_filter");
             var component = entity.Component;
             if (component == null) continue;
-            if (!StillWithinCaptureScope(entity)) continue;
-            if (component is Human pendingHuman && !pendingHuman.FinishSetup) continue;
+            var withinCaptureScope = StillWithinCaptureScope(entity);
+            measurement.Stop();
+            if (!withinCaptureScope) continue;
+
+            measurement.Start("finish_setup_filter");
+            var setupReady = component is not Human pendingHuman || pendingHuman.FinishSetup;
+            measurement.Stop();
+            if (!setupReady) continue;
+
+            measurement.Start("transform_and_scene");
             var transform = entity.Transform;
             if (transform == null)
             {
@@ -718,6 +739,9 @@ internal sealed class CaptureRegistry
                 entity.SceneHandle = scene.handle;
                 entity.SceneName = scene.name;
             }
+            measurement.Stop();
+
+            measurement.Start("rigidbody_fields");
             var sample = entity.Sample;
             var extra = sample.Extra;
             extra.Reset();
@@ -759,15 +783,20 @@ internal sealed class CaptureRegistry
                 extra.MotionMode = "root_transform_no_rigidbody";
                 extra.VelocityUnavailableReason = "no root Rigidbody component found";
             }
+            measurement.Stop();
 
             if (component is BaseCharacter character)
             {
+                measurement.Start("character_fields");
                 extra.AiControlled = character.AI;
                 extra.Team = character.Team;
                 extra.CurrentHealth = character.CurrentHealth;
                 extra.DeadFlag = character.Dead;
                 extra.GroundedGameField = character.Grounded;
                 extra.CurrentSpeedGameField = character.CurrentSpeed;
+                measurement.Stop();
+
+                measurement.Start("animation_game_method");
                 if (entity.AnimationSampleStep < 0 || step - entity.AnimationSampleStep >= FlightRecorderPlugin.AnimationSampleIntervalFixedSteps)
                 {
                     entity.LastSampledAnimation = character.GetCurrentAnimation();
@@ -775,6 +804,9 @@ internal sealed class CaptureRegistry
                 }
                 extra.AnimationGameMethod = entity.LastSampledAnimation;
                 extra.AnimationSourceStep = entity.AnimationSampleStep;
+                measurement.Stop();
+
+                measurement.Start("character_state_and_gas");
                 if (character is Human human)
                 {
                     var stateCode = human.State.GetHashCode();
@@ -800,9 +832,11 @@ internal sealed class CaptureRegistry
                     }
                     sample.State = entity.LastSampledState;
                 }
+                measurement.Stop();
             }
             else if (component is Hook hook)
             {
+                measurement.Start("hook_fields");
                 var currentHookState = hook.State;
                 var hookStateCode = currentHookState.GetHashCode();
                 if (entity.LastSampledState is { } previousState && entity.LastSampledStateCode != hookStateCode)
@@ -846,15 +880,43 @@ internal sealed class CaptureRegistry
                     if (target != null && IsAllowedForCurrentSample(target))
                         extra.HookCharacterId = FindId(target.GetInstanceID());
                 }
+                measurement.Stop();
             }
             else if (component is BaseProjectile projectile)
             {
+                measurement.Start("projectile_fields");
                 extra.ProjectileTeamGameProperty = projectile._team;
                 var gameVelocity = projectile._velocity;
                 extra.SetProjectileVelocity(gameVelocity.x, gameVelocity.y, gameVelocity.z);
                 extra.ProjectileVelocityProvenance = "Projectiles.BaseProjectile._velocity; not substituted for Rigidbody.velocity";
+                measurement.Stop();
             }
             _frameSamples.Add(sample);
+            if (measurement.SlowestElapsedMs > slowestOperation.SlowestElapsedMs)
+            {
+                slowestOperation = measurement;
+                slowestEntity = entity;
+            }
+        }
+        if (slowestEntity is not null && slowestOperation.SlowestElapsedMs >= 5d &&
+            _plugin.TryReserveSlowOperationReport(t))
+        {
+            _observationEvents.Add(new EventPayload
+            {
+                Event = "capture_slow_operation",
+                T = t,
+                Step = step,
+                Actor = slowestEntity.Id,
+                Evidence = "timed_main_thread_operation_group; duration may include runtime scheduling or garbage collection",
+                Fields = new Dictionary<string, object?>
+                {
+                    ["entity_id"] = slowestEntity.Id,
+                    ["entity_kind"] = slowestEntity.Kind,
+                    ["entity_class"] = slowestEntity.ClassName,
+                    ["operation_group"] = slowestOperation.SlowestStage,
+                    ["elapsed_ms"] = slowestOperation.SlowestElapsedMs,
+                }
+            });
         }
         _framePayload.Step = step;
         _framePayload.T = t;
@@ -1037,6 +1099,151 @@ internal sealed class EntityExtraPayload
     {
         _projectileVelocity[0] = x; _projectileVelocity[1] = y; _projectileVelocity[2] = z;
         _hasProjectileVelocity = true;
+    }
+}
+
+internal sealed class FramePayloadJsonConverter : JsonConverter<FramePayload>
+{
+    public override FramePayload? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        throw new NotSupportedException("Flight recorder frame payloads are write-only snapshots.");
+
+    public override void Write(Utf8JsonWriter writer, FramePayload value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("step", value.Step);
+        writer.WriteNumber("t", value.T);
+        writer.WriteString("phase", value.Phase);
+        writer.WriteNumber("fixed_delta_time", value.FixedDeltaTime);
+        if (value.Samples is not null)
+        {
+            writer.WriteStartArray("samples");
+            foreach (var sample in value.Samples) WriteSample(writer, sample, options);
+            writer.WriteEndArray();
+        }
+        writer.WriteEndObject();
+    }
+
+    private static void WriteSample(Utf8JsonWriter writer, EntitySamplePayload sample, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", sample.Id);
+        writer.WriteString("kind", sample.Kind);
+        WriteFloatArray(writer, "pos", sample.Pos);
+        if (sample.Vel is not null) WriteFloatArray(writer, "vel", sample.Vel);
+        WriteFloatArray(writer, "rot", sample.Rot);
+        if (sample.AngVel is not null) WriteFloatArray(writer, "ang_vel", sample.AngVel);
+        if (sample.State is not null) writer.WriteString("state", sample.State);
+        writer.WritePropertyName("extra");
+        WriteExtra(writer, sample.Extra, options);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteExtra(Utf8JsonWriter writer, EntityExtraPayload extra, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        WriteString(writer, "entity_class", extra.EntityClass);
+        WriteNumber(writer, "source_instance_id", extra.SourceInstanceId);
+        WriteString(writer, "scene", extra.Scene);
+        WriteString(writer, "owner_id", extra.OwnerId);
+        WriteString(writer, "pose_source", extra.PoseSource);
+        WriteNumber(writer, "wall_monotonic_elapsed_seconds", extra.WallMonotonicElapsedSeconds);
+        WriteString(writer, "motion_mode", extra.MotionMode);
+        WriteString(writer, "rigidbody_source", extra.RigidbodySource);
+        WriteString(writer, "velocity_source", extra.VelocitySource);
+        WriteString(writer, "angular_velocity_source", extra.AngularVelocitySource);
+        WriteString(writer, "velocity_unavailable_reason", extra.VelocityUnavailableReason);
+        WriteBoolean(writer, "ai_controlled", extra.AiControlled);
+        WriteString(writer, "team", extra.Team);
+        WriteNumber(writer, "current_health", extra.CurrentHealth);
+        WriteBoolean(writer, "dead_flag", extra.DeadFlag);
+        WriteBoolean(writer, "grounded_game_field", extra.GroundedGameField);
+        WriteNumber(writer, "current_speed_game_field", extra.CurrentSpeedGameField);
+        WriteString(writer, "animation_game_method", extra.AnimationGameMethod);
+        WriteNumber(writer, "animation_source_step", extra.AnimationSourceStep);
+        WriteNumber(writer, "current_gas_game_property", extra.CurrentGasGameProperty);
+        WriteNumber(writer, "max_gas_game_property", extra.MaxGasGameProperty);
+        if (extra.HookPointGameMethod is { } hookPoint)
+            WriteFloatArray(writer, "hook_point_game_method", hookPoint);
+        WriteString(writer, "hook_state_source", extra.HookStateSource);
+        if (extra.AnchorTransformPosition is { } anchorPosition)
+            WriteFloatArray(writer, "anchor_transform_position", anchorPosition);
+        WriteString(writer, "hook_character_id", extra.HookCharacterId);
+        if (extra.ProjectileTeamGameProperty is { } projectileTeam)
+        {
+            writer.WritePropertyName("projectile_team_game_property");
+            JsonSerializer.Serialize(writer, projectileTeam, projectileTeam.GetType(), options);
+        }
+        if (extra.ProjectileVelocityGameProperty is { } projectileVelocity)
+            WriteFloatArray(writer, "projectile_velocity_game_property", projectileVelocity);
+        WriteString(writer, "projectile_velocity_provenance", extra.ProjectileVelocityProvenance);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteFloatArray(Utf8JsonWriter writer, string name, float[] values)
+    {
+        writer.WriteStartArray(name);
+        foreach (var value in values) writer.WriteNumberValue(value);
+        writer.WriteEndArray();
+    }
+
+    private static void WriteString(Utf8JsonWriter writer, string name, string? value)
+    {
+        if (value is not null) writer.WriteString(name, value);
+    }
+
+    private static void WriteNumber(Utf8JsonWriter writer, string name, int? value)
+    {
+        if (value is { } number) writer.WriteNumber(name, number);
+    }
+
+    private static void WriteNumber(Utf8JsonWriter writer, string name, long? value)
+    {
+        if (value is { } number) writer.WriteNumber(name, number);
+    }
+
+    private static void WriteNumber(Utf8JsonWriter writer, string name, float? value)
+    {
+        if (value is { } number) writer.WriteNumber(name, number);
+    }
+
+    private static void WriteNumber(Utf8JsonWriter writer, string name, double? value)
+    {
+        if (value is { } number) writer.WriteNumber(name, number);
+    }
+
+    private static void WriteBoolean(Utf8JsonWriter writer, string name, bool? value)
+    {
+        if (value is { } boolean) writer.WriteBoolean(name, boolean);
+    }
+}
+
+internal struct CaptureStageMeasurement
+{
+    private long _stageStarted;
+    private string _currentStage;
+    internal string SlowestStage { get; private set; }
+    internal double SlowestElapsedMs { get; private set; }
+
+    internal CaptureStageMeasurement(string initialStage)
+    {
+        _stageStarted = 0;
+        _currentStage = initialStage;
+        SlowestStage = "";
+        SlowestElapsedMs = 0d;
+    }
+
+    internal void Start(string stage)
+    {
+        _stageStarted = Stopwatch.GetTimestamp();
+        _currentStage = stage;
+    }
+
+    internal void Stop()
+    {
+        var elapsedMs = (Stopwatch.GetTimestamp() - _stageStarted) * 1000d / Stopwatch.Frequency;
+        if (elapsedMs <= SlowestElapsedMs) return;
+        SlowestElapsedMs = elapsedMs;
+        SlowestStage = _currentStage;
     }
 }
 
