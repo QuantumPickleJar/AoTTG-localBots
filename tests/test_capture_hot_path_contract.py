@@ -1,4 +1,4 @@
-"""Guard the recorder's fixed-step sampling cost without changing its schema."""
+"""Guard recorder hot-path costs while preserving the v1 frame payload."""
 import unittest
 from pathlib import Path
 import re
@@ -30,12 +30,16 @@ class CaptureHotPathContractTests(unittest.TestCase):
         self.assertIn("IsAllowedForCurrentSample(BaseCharacter character)", self.source)
         self.assertIn("var allowed = _plugin.IsAllowed(character);", self.source)
 
-    def test_entity_transform_and_scene_metadata_are_cached_in_the_sample_loop(self):
+    def test_entity_scene_metadata_is_refreshed_during_periodic_discovery(self):
         frame = self.source.split("internal FramePayload CaptureFrame(", 1)[1].split("private string? FindId", 1)[0]
+        track = self.source.split("private void Track(Component component", 1)[1].split(
+            "private void PublishLifecycle", 1)[0]
         self.assertIn("var transform = entity.Transform;", frame)
         self.assertIn("entity.Transform = transform;", frame)
-        self.assertIn("if (entity.SceneHandle != scene.handle)", frame)
-        self.assertIn("entity.SceneName = scene.name;", frame)
+        self.assertNotIn("component.gameObject.scene", frame)
+        self.assertIn("var scene = component.gameObject.scene;", track)
+        self.assertIn("entry.SceneName = scene.name;", track)
+        self.assertIn("entity_scene_sampling", self.source)
         self.assertIn("extra.Scene = entity.SceneName;", frame)
 
     def test_hook_scope_uses_the_cached_owner_id(self):
@@ -52,6 +56,12 @@ class CaptureHotPathContractTests(unittest.TestCase):
         fixed_update = self.source.split("public void FixedUpdate()", 1)[1].split("public void OnApplicationQuit", 1)[0]
         self.assertIn("transportWorkMs += (Stopwatch.GetTimestamp() - stageStarted)", fixed_update)
         self.assertLess(fixed_update.index("plugin.PublishHealth("), fixed_update.index("plugin.RecordCaptureWork("))
+
+    def test_capture_work_reports_unaccounted_callback_overhead(self):
+        self.assertIn("callbackOverheadMs = Math.Max(0d, elapsedMs - discoveryMs - frameSamplingMs - transportMs)", self.source)
+        self.assertIn('JsonPropertyName("capture_callback_overhead_ms_p95")', self.source)
+        analyzer = (REPO / "tools" / "analyze_flight.py").read_text()
+        self.assertIn('"other_callback_overhead": "capture_callback_overhead_ms"', analyzer)
 
     def test_enum_state_names_are_cached_until_the_underlying_value_changes(self):
         self.assertIn("LastSampledStateCode", self.source)
@@ -74,11 +84,20 @@ class CaptureHotPathContractTests(unittest.TestCase):
         self.assertNotIn("FindObjectsInactive.Include, FindObjectsSortMode.None", self.source)
 
     def test_package_and_guarded_installer_target_the_current_plugin_version(self):
-        self.assertIn('PluginVersion = "0.1.19"', self.source)
+        self.assertIn('PluginVersion = "0.1.20"', self.source)
         self.assertIn("$pluginVersion = $versionMatch.Groups[1].Value", self.package_script)
         self.assertIn("plugin_version = $pluginVersion", self.package_script)
-        self.assertIn('$packageManifest.plugin_version -ne "0.1.19"', self.install_script)
-        self.assertIn('plugin_version = "0.1.19"', self.install_script)
+        self.assertIn('$packageManifest.plugin_version -ne "0.1.20"', self.install_script)
+        self.assertIn('plugin_version = "0.1.20"', self.install_script)
+
+    def test_manual_converter_uses_preencoded_property_names(self):
+        converter = self.source.split("internal sealed class FramePayloadJsonConverter", 1)[1].split(
+            "internal struct CaptureStageMeasurement", 1)[0]
+        self.assertGreaterEqual(converter.count("JsonEncodedText.Encode("), 30)
+        self.assertIn("writer.WriteNumber(StepName, value.Step);", converter)
+        self.assertIn("writer.WriteString(IdName, sample.Id);", converter)
+        self.assertIn("WriteFloatArray(writer, PositionName, sample.Pos);", converter)
+        self.assertNotIn('writer.WriteNumber("step"', converter)
 
     def test_manual_frame_converter_covers_every_v1_frame_property(self):
         converter = self.source.split("internal sealed class FramePayloadJsonConverter", 1)[1].split(

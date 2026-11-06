@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.19";
+    public const string PluginVersion = "0.1.20";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     internal const int AnimationSampleIntervalFixedSteps = 5;
@@ -49,12 +49,14 @@ public sealed class FlightRecorderPlugin : BasePlugin
     private readonly double[] _discoveryWorkWindowMs = new double[256];
     private readonly double[] _frameWorkWindowMs = new double[256];
     private readonly double[] _transportWorkWindowMs = new double[256];
+    private readonly double[] _callbackOverheadWindowMs = new double[256];
     private int _captureWorkCount;
     private int _captureWorkWriteIndex;
     private double _captureWorkLastMs;
     private double _discoveryWorkLastMs;
     private double _frameWorkLastMs;
     private double _transportWorkLastMs;
+    private double _callbackOverheadLastMs;
     private int _shutdownStarted;
     private bool _captureFailed;
     private double _nextSlowOperationReportAt;
@@ -138,6 +140,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
                     game_fields = new[] { "AI", "team", "health", "dead", "grounded", "current_speed", "current_animation", "human_state", "human_current_gas", "titan_state", "hook_state", "hook_anchor", "projectile_velocity_field" },
                     hook_detail_sampling = "Hook pose and state remain sampled each fixed step; hook point, anchor, and character details are read only while Hook.State is not Disabled",
                     game_field_sampling = new { animation_game_method = "sampled_at_most_every_5_fixed_update_steps; animation_source_step identifies the source step" },
+                    entity_scene_sampling = "component scene metadata refreshed during periodic entity discovery; cadence is discovery_interval_seconds",
                     collisions = "Human.OnCollisionEnter Harmony postfix; only locally owned actors or AI on the local Photon master, and non-character world colliders",
                     entity_lifecycle = new { first_seen = "inferred_first_seen_by_periodic_census", destroyed = "observed_unity_object_destroyed", transient_between_censuses = "may_be_missed" },
                     scene_changes = "active scene name and handle compared at each FixedUpdate callback; transition timestamp is sampling time",
@@ -180,14 +183,17 @@ public sealed class FlightRecorderPlugin : BasePlugin
     internal void RecordCaptureWork(double elapsedMs, double discoveryMs, double frameSamplingMs, double transportMs)
     {
         var index = _captureWorkWriteIndex;
+        var callbackOverheadMs = Math.Max(0d, elapsedMs - discoveryMs - frameSamplingMs - transportMs);
         _captureWorkLastMs = elapsedMs;
         _discoveryWorkLastMs = discoveryMs;
         _frameWorkLastMs = frameSamplingMs;
         _transportWorkLastMs = transportMs;
+        _callbackOverheadLastMs = callbackOverheadMs;
         _captureWorkWindowMs[index] = elapsedMs;
         _discoveryWorkWindowMs[index] = discoveryMs;
         _frameWorkWindowMs[index] = frameSamplingMs;
         _transportWorkWindowMs[index] = transportMs;
+        _callbackOverheadWindowMs[index] = callbackOverheadMs;
         _captureWorkWriteIndex = (_captureWorkWriteIndex + 1) % _captureWorkWindowMs.Length;
         _captureWorkCount = Math.Min(_captureWorkCount + 1, _captureWorkWindowMs.Length);
     }
@@ -356,6 +362,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
         var discoveryWork = CaptureWorkStatistics(_discoveryWorkWindowMs, _discoveryWorkLastMs);
         var frameWork = CaptureWorkStatistics(_frameWorkWindowMs, _frameWorkLastMs);
         var transportWork = CaptureWorkStatistics(_transportWorkWindowMs, _transportWorkLastMs);
+        var callbackOverhead = CaptureWorkStatistics(_callbackOverheadWindowMs, _callbackOverheadLastMs);
         var payload = JsonSerializer.Serialize(new HealthPayload
         {
             T = t,
@@ -379,6 +386,8 @@ public sealed class FlightRecorderPlugin : BasePlugin
             CaptureFrameSamplingMsMaximum = frameWork.Maximum,
             CaptureTransportMsP95 = transportWork.P95,
             CaptureTransportMsMaximum = transportWork.Maximum,
+            CaptureCallbackOverheadMsP95 = callbackOverhead.P95,
+            CaptureCallbackOverheadMsMaximum = callbackOverhead.Maximum,
         }, JsonOptions);
         if (!publisher.TryPublishControl("health", payload)) CheckTransportHealth();
     }
@@ -623,6 +632,7 @@ internal sealed class CaptureRegistry
     {
         var sourceId = component.GetInstanceID();
         var key = (kind, sourceId);
+        var scene = component.gameObject.scene;
         if (_entities.TryGetValue(key, out var priorEntry) && priorEntry.Component == null)
         {
             PublishLifecycle("despawn", priorEntry, "observed_unity_object_destroyed_before_instance_id_reuse", _plugin.NowSeconds());
@@ -642,7 +652,6 @@ internal sealed class CaptureRegistry
             var generation = _generations.TryGetValue(generationKey, out var prior) ? prior + 1 : 1;
             _generations[generationKey] = generation;
             var transform = component.transform;
-            var scene = component.gameObject.scene;
             entry = new TrackedEntity
             {
                 Component = component,
@@ -673,6 +682,12 @@ internal sealed class CaptureRegistry
         else
         {
             entry.Component = component;
+            if (entry.SceneHandle != scene.handle ||
+                !string.Equals(entry.SceneName, scene.name, StringComparison.Ordinal))
+            {
+                entry.SceneHandle = scene.handle;
+                entry.SceneName = scene.name;
+            }
             if (entry.Transform == null) entry.Transform = component.transform;
             entry.OwnerSourceId = ownerSourceId ?? entry.OwnerSourceId;
             entry.OwnerHumanSourceId = ownerHumanSourceId ?? entry.OwnerHumanSourceId;
@@ -724,7 +739,7 @@ internal sealed class CaptureRegistry
             measurement.Stop();
             if (!setupReady) continue;
 
-            measurement.Start("transform_and_scene");
+            measurement.Start("transform");
             var transform = entity.Transform;
             if (transform == null)
             {
@@ -733,12 +748,6 @@ internal sealed class CaptureRegistry
             }
             var position = transform.position;
             var rotation = transform.rotation;
-            var scene = component.gameObject.scene;
-            if (entity.SceneHandle != scene.handle)
-            {
-                entity.SceneHandle = scene.handle;
-                entity.SceneName = scene.name;
-            }
             measurement.Stop();
 
             measurement.Start("rigidbody_fields");
@@ -1104,19 +1113,61 @@ internal sealed class EntityExtraPayload
 
 internal sealed class FramePayloadJsonConverter : JsonConverter<FramePayload>
 {
+    private static readonly JsonEncodedText StepName = JsonEncodedText.Encode("step");
+    private static readonly JsonEncodedText TimeName = JsonEncodedText.Encode("t");
+    private static readonly JsonEncodedText PhaseName = JsonEncodedText.Encode("phase");
+    private static readonly JsonEncodedText FixedDeltaTimeName = JsonEncodedText.Encode("fixed_delta_time");
+    private static readonly JsonEncodedText SamplesName = JsonEncodedText.Encode("samples");
+    private static readonly JsonEncodedText IdName = JsonEncodedText.Encode("id");
+    private static readonly JsonEncodedText KindName = JsonEncodedText.Encode("kind");
+    private static readonly JsonEncodedText PositionName = JsonEncodedText.Encode("pos");
+    private static readonly JsonEncodedText VelocityName = JsonEncodedText.Encode("vel");
+    private static readonly JsonEncodedText RotationName = JsonEncodedText.Encode("rot");
+    private static readonly JsonEncodedText AngularVelocityName = JsonEncodedText.Encode("ang_vel");
+    private static readonly JsonEncodedText StateName = JsonEncodedText.Encode("state");
+    private static readonly JsonEncodedText ExtraName = JsonEncodedText.Encode("extra");
+    private static readonly JsonEncodedText EntityClassName = JsonEncodedText.Encode("entity_class");
+    private static readonly JsonEncodedText SourceInstanceIdName = JsonEncodedText.Encode("source_instance_id");
+    private static readonly JsonEncodedText SceneName = JsonEncodedText.Encode("scene");
+    private static readonly JsonEncodedText OwnerIdName = JsonEncodedText.Encode("owner_id");
+    private static readonly JsonEncodedText PoseSourceName = JsonEncodedText.Encode("pose_source");
+    private static readonly JsonEncodedText WallMonotonicElapsedSecondsName = JsonEncodedText.Encode("wall_monotonic_elapsed_seconds");
+    private static readonly JsonEncodedText MotionModeName = JsonEncodedText.Encode("motion_mode");
+    private static readonly JsonEncodedText RigidbodySourceName = JsonEncodedText.Encode("rigidbody_source");
+    private static readonly JsonEncodedText VelocitySourceName = JsonEncodedText.Encode("velocity_source");
+    private static readonly JsonEncodedText AngularVelocitySourceName = JsonEncodedText.Encode("angular_velocity_source");
+    private static readonly JsonEncodedText VelocityUnavailableReasonName = JsonEncodedText.Encode("velocity_unavailable_reason");
+    private static readonly JsonEncodedText AiControlledName = JsonEncodedText.Encode("ai_controlled");
+    private static readonly JsonEncodedText TeamName = JsonEncodedText.Encode("team");
+    private static readonly JsonEncodedText CurrentHealthName = JsonEncodedText.Encode("current_health");
+    private static readonly JsonEncodedText DeadFlagName = JsonEncodedText.Encode("dead_flag");
+    private static readonly JsonEncodedText GroundedGameFieldName = JsonEncodedText.Encode("grounded_game_field");
+    private static readonly JsonEncodedText CurrentSpeedGameFieldName = JsonEncodedText.Encode("current_speed_game_field");
+    private static readonly JsonEncodedText AnimationGameMethodName = JsonEncodedText.Encode("animation_game_method");
+    private static readonly JsonEncodedText AnimationSourceStepName = JsonEncodedText.Encode("animation_source_step");
+    private static readonly JsonEncodedText CurrentGasGamePropertyName = JsonEncodedText.Encode("current_gas_game_property");
+    private static readonly JsonEncodedText MaxGasGamePropertyName = JsonEncodedText.Encode("max_gas_game_property");
+    private static readonly JsonEncodedText HookPointGameMethodName = JsonEncodedText.Encode("hook_point_game_method");
+    private static readonly JsonEncodedText HookStateSourceName = JsonEncodedText.Encode("hook_state_source");
+    private static readonly JsonEncodedText AnchorTransformPositionName = JsonEncodedText.Encode("anchor_transform_position");
+    private static readonly JsonEncodedText HookCharacterIdName = JsonEncodedText.Encode("hook_character_id");
+    private static readonly JsonEncodedText ProjectileTeamGamePropertyName = JsonEncodedText.Encode("projectile_team_game_property");
+    private static readonly JsonEncodedText ProjectileVelocityGamePropertyName = JsonEncodedText.Encode("projectile_velocity_game_property");
+    private static readonly JsonEncodedText ProjectileVelocityProvenanceName = JsonEncodedText.Encode("projectile_velocity_provenance");
+
     public override FramePayload? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
         throw new NotSupportedException("Flight recorder frame payloads are write-only snapshots.");
 
     public override void Write(Utf8JsonWriter writer, FramePayload value, JsonSerializerOptions options)
     {
         writer.WriteStartObject();
-        writer.WriteNumber("step", value.Step);
-        writer.WriteNumber("t", value.T);
-        writer.WriteString("phase", value.Phase);
-        writer.WriteNumber("fixed_delta_time", value.FixedDeltaTime);
+        writer.WriteNumber(StepName, value.Step);
+        writer.WriteNumber(TimeName, value.T);
+        writer.WriteString(PhaseName, value.Phase);
+        writer.WriteNumber(FixedDeltaTimeName, value.FixedDeltaTime);
         if (value.Samples is not null)
         {
-            writer.WriteStartArray("samples");
+            writer.WriteStartArray(SamplesName);
             foreach (var sample in value.Samples) WriteSample(writer, sample, options);
             writer.WriteEndArray();
         }
@@ -1126,14 +1177,14 @@ internal sealed class FramePayloadJsonConverter : JsonConverter<FramePayload>
     private static void WriteSample(Utf8JsonWriter writer, EntitySamplePayload sample, JsonSerializerOptions options)
     {
         writer.WriteStartObject();
-        writer.WriteString("id", sample.Id);
-        writer.WriteString("kind", sample.Kind);
-        WriteFloatArray(writer, "pos", sample.Pos);
-        if (sample.Vel is not null) WriteFloatArray(writer, "vel", sample.Vel);
-        WriteFloatArray(writer, "rot", sample.Rot);
-        if (sample.AngVel is not null) WriteFloatArray(writer, "ang_vel", sample.AngVel);
-        if (sample.State is not null) writer.WriteString("state", sample.State);
-        writer.WritePropertyName("extra");
+        writer.WriteString(IdName, sample.Id);
+        writer.WriteString(KindName, sample.Kind);
+        WriteFloatArray(writer, PositionName, sample.Pos);
+        if (sample.Vel is not null) WriteFloatArray(writer, VelocityName, sample.Vel);
+        WriteFloatArray(writer, RotationName, sample.Rot);
+        if (sample.AngVel is not null) WriteFloatArray(writer, AngularVelocityName, sample.AngVel);
+        if (sample.State is not null) writer.WriteString(StateName, sample.State);
+        writer.WritePropertyName(ExtraName);
         WriteExtra(writer, sample.Extra, options);
         writer.WriteEndObject();
     }
@@ -1141,77 +1192,77 @@ internal sealed class FramePayloadJsonConverter : JsonConverter<FramePayload>
     private static void WriteExtra(Utf8JsonWriter writer, EntityExtraPayload extra, JsonSerializerOptions options)
     {
         writer.WriteStartObject();
-        WriteString(writer, "entity_class", extra.EntityClass);
-        WriteNumber(writer, "source_instance_id", extra.SourceInstanceId);
-        WriteString(writer, "scene", extra.Scene);
-        WriteString(writer, "owner_id", extra.OwnerId);
-        WriteString(writer, "pose_source", extra.PoseSource);
-        WriteNumber(writer, "wall_monotonic_elapsed_seconds", extra.WallMonotonicElapsedSeconds);
-        WriteString(writer, "motion_mode", extra.MotionMode);
-        WriteString(writer, "rigidbody_source", extra.RigidbodySource);
-        WriteString(writer, "velocity_source", extra.VelocitySource);
-        WriteString(writer, "angular_velocity_source", extra.AngularVelocitySource);
-        WriteString(writer, "velocity_unavailable_reason", extra.VelocityUnavailableReason);
-        WriteBoolean(writer, "ai_controlled", extra.AiControlled);
-        WriteString(writer, "team", extra.Team);
-        WriteNumber(writer, "current_health", extra.CurrentHealth);
-        WriteBoolean(writer, "dead_flag", extra.DeadFlag);
-        WriteBoolean(writer, "grounded_game_field", extra.GroundedGameField);
-        WriteNumber(writer, "current_speed_game_field", extra.CurrentSpeedGameField);
-        WriteString(writer, "animation_game_method", extra.AnimationGameMethod);
-        WriteNumber(writer, "animation_source_step", extra.AnimationSourceStep);
-        WriteNumber(writer, "current_gas_game_property", extra.CurrentGasGameProperty);
-        WriteNumber(writer, "max_gas_game_property", extra.MaxGasGameProperty);
+        WriteString(writer, EntityClassName, extra.EntityClass);
+        WriteNumber(writer, SourceInstanceIdName, extra.SourceInstanceId);
+        WriteString(writer, SceneName, extra.Scene);
+        WriteString(writer, OwnerIdName, extra.OwnerId);
+        WriteString(writer, PoseSourceName, extra.PoseSource);
+        WriteNumber(writer, WallMonotonicElapsedSecondsName, extra.WallMonotonicElapsedSeconds);
+        WriteString(writer, MotionModeName, extra.MotionMode);
+        WriteString(writer, RigidbodySourceName, extra.RigidbodySource);
+        WriteString(writer, VelocitySourceName, extra.VelocitySource);
+        WriteString(writer, AngularVelocitySourceName, extra.AngularVelocitySource);
+        WriteString(writer, VelocityUnavailableReasonName, extra.VelocityUnavailableReason);
+        WriteBoolean(writer, AiControlledName, extra.AiControlled);
+        WriteString(writer, TeamName, extra.Team);
+        WriteNumber(writer, CurrentHealthName, extra.CurrentHealth);
+        WriteBoolean(writer, DeadFlagName, extra.DeadFlag);
+        WriteBoolean(writer, GroundedGameFieldName, extra.GroundedGameField);
+        WriteNumber(writer, CurrentSpeedGameFieldName, extra.CurrentSpeedGameField);
+        WriteString(writer, AnimationGameMethodName, extra.AnimationGameMethod);
+        WriteNumber(writer, AnimationSourceStepName, extra.AnimationSourceStep);
+        WriteNumber(writer, CurrentGasGamePropertyName, extra.CurrentGasGameProperty);
+        WriteNumber(writer, MaxGasGamePropertyName, extra.MaxGasGameProperty);
         if (extra.HookPointGameMethod is { } hookPoint)
-            WriteFloatArray(writer, "hook_point_game_method", hookPoint);
-        WriteString(writer, "hook_state_source", extra.HookStateSource);
+            WriteFloatArray(writer, HookPointGameMethodName, hookPoint);
+        WriteString(writer, HookStateSourceName, extra.HookStateSource);
         if (extra.AnchorTransformPosition is { } anchorPosition)
-            WriteFloatArray(writer, "anchor_transform_position", anchorPosition);
-        WriteString(writer, "hook_character_id", extra.HookCharacterId);
+            WriteFloatArray(writer, AnchorTransformPositionName, anchorPosition);
+        WriteString(writer, HookCharacterIdName, extra.HookCharacterId);
         if (extra.ProjectileTeamGameProperty is { } projectileTeam)
         {
-            writer.WritePropertyName("projectile_team_game_property");
+            writer.WritePropertyName(ProjectileTeamGamePropertyName);
             JsonSerializer.Serialize(writer, projectileTeam, projectileTeam.GetType(), options);
         }
         if (extra.ProjectileVelocityGameProperty is { } projectileVelocity)
-            WriteFloatArray(writer, "projectile_velocity_game_property", projectileVelocity);
-        WriteString(writer, "projectile_velocity_provenance", extra.ProjectileVelocityProvenance);
+            WriteFloatArray(writer, ProjectileVelocityGamePropertyName, projectileVelocity);
+        WriteString(writer, ProjectileVelocityProvenanceName, extra.ProjectileVelocityProvenance);
         writer.WriteEndObject();
     }
 
-    private static void WriteFloatArray(Utf8JsonWriter writer, string name, float[] values)
+    private static void WriteFloatArray(Utf8JsonWriter writer, JsonEncodedText name, float[] values)
     {
         writer.WriteStartArray(name);
         foreach (var value in values) writer.WriteNumberValue(value);
         writer.WriteEndArray();
     }
 
-    private static void WriteString(Utf8JsonWriter writer, string name, string? value)
+    private static void WriteString(Utf8JsonWriter writer, JsonEncodedText name, string? value)
     {
         if (value is not null) writer.WriteString(name, value);
     }
 
-    private static void WriteNumber(Utf8JsonWriter writer, string name, int? value)
+    private static void WriteNumber(Utf8JsonWriter writer, JsonEncodedText name, int? value)
     {
         if (value is { } number) writer.WriteNumber(name, number);
     }
 
-    private static void WriteNumber(Utf8JsonWriter writer, string name, long? value)
+    private static void WriteNumber(Utf8JsonWriter writer, JsonEncodedText name, long? value)
     {
         if (value is { } number) writer.WriteNumber(name, number);
     }
 
-    private static void WriteNumber(Utf8JsonWriter writer, string name, float? value)
+    private static void WriteNumber(Utf8JsonWriter writer, JsonEncodedText name, float? value)
     {
         if (value is { } number) writer.WriteNumber(name, number);
     }
 
-    private static void WriteNumber(Utf8JsonWriter writer, string name, double? value)
+    private static void WriteNumber(Utf8JsonWriter writer, JsonEncodedText name, double? value)
     {
         if (value is { } number) writer.WriteNumber(name, number);
     }
 
-    private static void WriteBoolean(Utf8JsonWriter writer, string name, bool? value)
+    private static void WriteBoolean(Utf8JsonWriter writer, JsonEncodedText name, bool? value)
     {
         if (value is { } boolean) writer.WriteBoolean(name, boolean);
     }
@@ -1303,4 +1354,6 @@ internal sealed class HealthPayload
     [JsonPropertyName("capture_frame_sampling_ms_maximum")] public double CaptureFrameSamplingMsMaximum { get; init; }
     [JsonPropertyName("capture_transport_ms_p95")] public double CaptureTransportMsP95 { get; init; }
     [JsonPropertyName("capture_transport_ms_maximum")] public double CaptureTransportMsMaximum { get; init; }
+    [JsonPropertyName("capture_callback_overhead_ms_p95")] public double CaptureCallbackOverheadMsP95 { get; init; }
+    [JsonPropertyName("capture_callback_overhead_ms_maximum")] public double CaptureCallbackOverheadMsMaximum { get; init; }
 }

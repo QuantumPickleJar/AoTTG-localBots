@@ -65,6 +65,7 @@ def producer_health_summary(records, metadata, fixed_delta_times, entity_count,
         "discovery": "capture_discovery_ms",
         "frame_sampling": "capture_frame_sampling_ms",
         "serialization_and_queue": "capture_transport_ms",
+        "other_callback_overhead": "capture_callback_overhead_ms",
     }
     valid = []
     for record in records:

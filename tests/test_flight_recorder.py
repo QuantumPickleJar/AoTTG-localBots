@@ -150,7 +150,9 @@ class FlightTest(unittest.TestCase):
              "capture_work_ms_maximum": 60.1, "queue_depth": 4, "queue_bytes": 1024,
              "capture_discovery_ms_p95": 0.8, "capture_discovery_ms_maximum": 2.0,
              "capture_frame_sampling_ms_p95": 0.15, "capture_frame_sampling_ms_maximum": 0.3,
-             "capture_transport_ms_p95": 0.04, "capture_transport_ms_maximum": 0.1},
+             "capture_transport_ms_p95": 0.04, "capture_transport_ms_maximum": 0.1,
+             "capture_callback_overhead_ms_p95": 0.6,
+             "capture_callback_overhead_ms_maximum": 1.4},
         ]
         slow_capture = {
             "type": "event", "event": "capture_slow_operation", "step": 3, "t": 0.06,
@@ -176,6 +178,9 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(performance["stage_capture_work"]["discovery"]["worst_post_15s_p95_ms"], 0.8)
         self.assertEqual(performance["stage_capture_work"]["discovery"]["maximum_rolling_sample_ms"], 2.0)
         self.assertIn("Capture stage discovery:", report)
+        self.assertEqual(performance["stage_capture_work"]["other_callback_overhead"]["worst_post_15s_p95_ms"], 0.6)
+        self.assertEqual(performance["stage_capture_work"]["other_callback_overhead"]["maximum_rolling_sample_ms"], 1.4)
+        self.assertIn("Capture stage other_callback_overhead:", report)
         self.assertFalse(result["sample_phase_verified"])
         self.assertIn("Calibration result: not performed; observation phase remains unverified.", report)
         self.assertIn("maximum reported capture-work sample exceeds 60.0 ms", report)
