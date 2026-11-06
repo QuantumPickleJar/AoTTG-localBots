@@ -78,6 +78,7 @@ def validate(source):
             "Game.Titans": "List",
             "Game.Humans": "List",
             "Game.PlayerHumans": "List",
+            "self._recoveryQuarantinedTargets": "Set",
             "Game.AIHumans": "List",
         }
     )
@@ -115,7 +116,7 @@ def validate(source):
                 if node.func.id == "Vector3":
                     assert count == 3, "Expected Vector3(x,y,z)"
                 else:
-                    assert node.func.id in {"Range"}, f"Unknown global call: {node.func.id}"
+                    assert node.func.id in {"Range", "Set"}, f"Unknown global call: {node.func.id}"
             elif ast.unparse(node.func.value) == "self":
                 assert count == methods[node.func.attr], f"Wrong helper arity {node.func.attr}"
             else:

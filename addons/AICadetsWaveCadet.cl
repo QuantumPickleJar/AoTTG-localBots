@@ -4,7 +4,7 @@ addon AICadetsWaveCadet
 {
     Description = "M2 experiment: autonomous Wave-mode titan target acquisition, ODM approach, strike, retreat, and bounded recovery.";
 
-    _buildTag = "M2-locomotion-1-f8combo-8-opposite-back-diagonal-retry";
+    _buildTag = "M2-locomotion-1-f8combo-9-expanded-retry-order-quarantine";
     # Ground Titan pursuit and recovery use explicit planar steering. Native
     # MoveTo remains available as an opt-in comparison driver.
     GroundSteering = "Direct";
@@ -93,6 +93,10 @@ addon AICadetsWaveCadet
     _groundRecoverySelectedCandidate = -1;
     _groundRecoverySelectedSide = 0;
     _groundRecoverySelectedScale = 1.0;
+    _recoveryQuarantinedTargets = null;
+    _recoveryQuarantineOrderSequence = -1;
+    _recoveryQuarantineLimit = 32;
+    _recoveryQuarantineSaturated = false;
     _groundProgressPosition = null;
     _groundPreviousTargetDistance = 0.0;
     _groundMovementStartedAt = 0.0;
@@ -183,6 +187,9 @@ addon AICadetsWaveCadet
         {
             return;
         }
+        self._recoveryQuarantinedTargets = Set();
+        self._recoveryQuarantineOrderSequence = self._lastAppliedOrderSequence;
+        self._recoveryQuarantineSaturated = false;
         if ((self.GroundSteering != "Engine" && self.GroundSteering != "Direct") || (self.CombatArcStyle != "Alternate" && self.CombatArcStyle != "Left" && self.CombatArcStyle != "Right" && self.CombatArcStyle != "Off") || self.StrikeCommitRange < 2.0 || self.StrikeCommitRange > self.AttackRange || self.CombatArcSeconds < 0.3 || self.CombatArcSeconds > 2.0 || self.AttackVerifySeconds < 0.2 || self.AttackVerifySeconds > 3.0 || self.Persistence < 1 || self.Persistence > 5 || self.AerialPreference < 1 || self.AerialPreference > 5 || self.RepositionSkill < 1 || self.RepositionSkill > 5)
         {
             self.Terminate("failure", "invalid_behavior_profile");
@@ -640,6 +647,7 @@ addon AICadetsWaveCadet
         listed = 0;
         alive = 0;
         banned = 0;
+        quarantined = 0;
         nearest = -1.0;
         for (titan in Game.Titans)
         {
@@ -658,6 +666,11 @@ addon AICadetsWaveCadet
             if (self._bannedTargetViewId != 0 && titan.ViewID == self._bannedTargetViewId && Time.GameTime < self._banUntil)
             {
                 banned = banned + 1;
+                continue;
+            }
+            if (self.RecoveryTargetQuarantined(titan.ViewID))
+            {
+                quarantined = quarantined + 1;
                 continue;
             }
             score = 260.0 - distance;
@@ -692,7 +705,11 @@ addon AICadetsWaveCadet
             {
                 reason = "all_candidates_temporarily_banned";
             }
-            self.LogEvent("target_none", "reason=" + reason + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive) + " banned=" + Convert.ToString(banned) + " nearest=" + Convert.ToString(nearest));
+            if (alive > 0 && quarantined > 0)
+            {
+                reason = "all_candidates_banned_or_quarantined_for_order";
+            }
+            self.LogEvent("target_none", "reason=" + reason + " listed=" + Convert.ToString(listed) + " alive=" + Convert.ToString(alive) + " banned=" + Convert.ToString(banned) + " quarantined=" + Convert.ToString(quarantined) + " nearest=" + Convert.ToString(nearest));
             # Leave room for wave spawns / temporary target bans without 3 log lines
             # every 0.35 seconds, which previously exhausted the 260-print budget.
             self._noTargetCooldownUntil = Time.GameTime + self.ExploreScanSeconds;
@@ -1369,9 +1386,123 @@ addon AICadetsWaveCadet
         self.StartTraverse(retreatPoint, "retreat");
     }
 
+    function RecoveryTargetQuarantined(targetId)
+    {
+        if (self._recoveryQuarantineOrderSequence != self._lastAppliedOrderSequence)
+        {
+            return false;
+        }
+        if (self._recoveryQuarantineSaturated)
+        {
+            return true;
+        }
+        if (self._recoveryQuarantinedTargets == null)
+        {
+            return false;
+        }
+        return self._recoveryQuarantinedTargets.Contains(targetId);
+    }
+
+    # Failed routes stay quarantined for this explicit order sequence. The
+    # finite set cap fails closed for the rest of the order if a wave produces
+    # unusually many distinct failures.
+    function QuarantineRecoveryTarget(reason)
+    {
+        shouldQuarantine = reason == "escape_no_displacement" || reason == "reposition_corridors_blocked" || reason == "escape_retry_landing_timeout" || reason == "escape_retry_no_target_progress" || reason == "escape_retry_arrival_without_progress_window" || reason == "recover_budget_exhausted";
+        if (!shouldQuarantine || self._cadet == null)
+        {
+            return false;
+        }
+        targetId = self._targetViewId;
+        attempt = self._targetRecoveries;
+        startPosition = self._cadet.Position;
+        endPosition = self._cadet.Position;
+        moved = 0.0;
+        goal = null;
+        targetGain = 0.0;
+        if (reason == "escape_no_displacement")
+        {
+            targetId = self._groundRecoveryTargetId;
+            attempt = self._groundRecoveryAttempt;
+            startPosition = self._groundRecoveryStartPosition;
+            goal = self._groundRecoveryGoal;
+            moved = Vector3.Distance(endPosition, startPosition);
+            if (self._target != null && self._target.IsAlive && self._targetViewId == targetId)
+            {
+                targetGain = self._groundRecoveryStartDistance - self.GroundDistanceToTarget();
+            }
+        }
+        elif (reason == "escape_retry_no_target_progress" || reason == "escape_retry_arrival_without_progress_window")
+        {
+            targetId = self._groundRecoveryRetryTargetId;
+            if (targetId == 0)
+            {
+                targetId = self._groundRecoveryTargetId;
+            }
+            attempt = 2;
+            startPosition = self._groundRecoveryStartPosition;
+            goal = self._groundRecoveryGoal;
+            moved = Vector3.Distance(endPosition, startPosition);
+            if (self._target != null && self._target.IsAlive && self._targetViewId == targetId)
+            {
+                targetGain = self._groundRecoveryStartDistance - self.GroundDistanceToTarget();
+            }
+        }
+        elif (reason == "escape_retry_landing_timeout")
+        {
+            targetId = self._groundRecoveryRetryTargetId;
+            attempt = 2;
+            goal = self._groundRecoveryFirstGoal;
+        }
+        elif (reason == "reposition_corridors_blocked")
+        {
+            if (self._targetRecoveries >= 2)
+            {
+                goal = self._groundRecoveryFirstGoal;
+            }
+            else
+            {
+                goal = self._groundGoal;
+            }
+        }
+        if (targetId == 0)
+        {
+            return false;
+        }
+        if (self._recoveryQuarantinedTargets == null)
+        {
+            self._recoveryQuarantinedTargets = Set();
+        }
+        if (self._recoveryQuarantineOrderSequence != self._lastAppliedOrderSequence)
+        {
+            self._recoveryQuarantinedTargets.Clear();
+            self._recoveryQuarantineOrderSequence = self._lastAppliedOrderSequence;
+            self._recoveryQuarantineSaturated = false;
+        }
+        if (!self._recoveryQuarantinedTargets.Contains(targetId))
+        {
+            if (self._recoveryQuarantinedTargets.Count >= self._recoveryQuarantineLimit)
+            {
+                self._recoveryQuarantineSaturated = true;
+                details = self.RecoveryRecordDetails(attempt, targetId, startPosition, endPosition, moved, goal, targetGain, self._cadet.GetAIState(), reason);
+                self.LogEvent("recovery_quarantine_saturated", details + " quarantine_count=" + Convert.ToString(self._recoveryQuarantinedTargets.Count) + " resume_on_new_order=true");
+                return true;
+            }
+            self._recoveryQuarantinedTargets.Add(targetId);
+            if (self._recoveryQuarantinedTargets.Count >= self._recoveryQuarantineLimit)
+            {
+                self._recoveryQuarantineSaturated = true;
+            }
+            details = self.RecoveryRecordDetails(attempt, targetId, startPosition, endPosition, moved, goal, targetGain, self._cadet.GetAIState(), reason);
+            self.LogEvent("recovery_target_quarantined", details + " quarantine_count=" + Convert.ToString(self._recoveryQuarantinedTargets.Count) + " saturated=" + Convert.ToString(self._recoveryQuarantineSaturated) + " resume_on_new_order=true");
+        }
+        return true;
+    }
+
     # Pause all inputs after exhausted plans; prevents rapid target ping-pong.
     function BeginObserve(reason)
     {
+        self.QuarantineRecoveryTarget(reason);
         self.ClearGroundRecoveryRetry(reason);
         self.StopODM();
         self._cadet.Idle();
@@ -1499,10 +1630,42 @@ addon AICadetsWaveCadet
             {
                 offset = direction * -8.0 - right * (8.0 + self.RepositionSkill * 3.0);
             }
-            for (scaleIndex in Range(0, 3, 1))
+            scaleCount = 3;
+            if (requiredSide != 0)
+            {
+                scaleCount = 6;
+            }
+            for (scaleIndex in Range(0, scaleCount, 1))
             {
                 scale = 1.0;
-                if (scaleIndex == 1)
+                if (requiredSide != 0)
+                {
+                    if (scaleIndex == 0)
+                    {
+                        scale = 2.0;
+                    }
+                    elif (scaleIndex == 1)
+                    {
+                        scale = 1.5;
+                    }
+                    elif (scaleIndex == 2)
+                    {
+                        scale = 1.25;
+                    }
+                    elif (scaleIndex == 3)
+                    {
+                        scale = 1.0;
+                    }
+                    elif (scaleIndex == 4)
+                    {
+                        scale = 0.75;
+                    }
+                    else
+                    {
+                        scale = 0.65;
+                    }
+                }
+                elif (scaleIndex == 1)
                 {
                     scale = 0.75;
                 }
@@ -2329,7 +2492,24 @@ addon AICadetsWaveCadet
     function AcknowledgeOrder(sequence, order)
     {
         key = self._cadetName;
+        previousOrderSequence = self._lastAppliedOrderSequence;
         self._lastAppliedOrderSequence = sequence;
+        if (sequence != previousOrderSequence)
+        {
+            clearedCount = 0;
+            if (self._recoveryQuarantinedTargets != null)
+            {
+                clearedCount = self._recoveryQuarantinedTargets.Count;
+                self._recoveryQuarantinedTargets.Clear();
+            }
+            wasSaturated = self._recoveryQuarantineSaturated;
+            self._recoveryQuarantineOrderSequence = sequence;
+            self._recoveryQuarantineSaturated = false;
+            if (clearedCount > 0 || wasSaturated)
+            {
+                self.LogEvent("recovery_quarantine_cleared", "previous_order_seq=" + Convert.ToString(previousOrderSequence) + " new_order_seq=" + Convert.ToString(sequence) + " cleared_targets=" + Convert.ToString(clearedCount) + " was_saturated=" + Convert.ToString(wasSaturated));
+            }
+        }
         PersistentData.SetProperty("AICadetsM2AckSeq-" + key, sequence);
         PersistentData.SetProperty("AICadetsM2AckState-" + key, self._state);
         PersistentData.SetProperty("AICadetsM2AckMode-" + key, order);

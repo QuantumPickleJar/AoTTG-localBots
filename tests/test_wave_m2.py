@@ -23,6 +23,24 @@ class CLList:
         return iter(self.items)
 
 
+class CLSet:
+    def __init__(self):
+        self.items = set()
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Contains(self, item):
+        return item in self.items
+
+    def Add(self, item):
+        self.items.add(item)
+
+    def Clear(self):
+        self.items.clear()
+
+
 class Cadet:
     def __init__(self):
         self.Position = Vector(4, 0, 0)
@@ -144,6 +162,7 @@ class World:
                 "Map": NS(FindMapObjectsByComponent=lambda name: self.supply_stations if name == "SupplyStation" else CLList()),
                 "Convert": NS(ToString=str),
                 "Range": lambda a, b, c: range(a, b, c),
+                "Set": CLSet,
                 "LoadoutEnum": NS(HumanBlades="Blades"),
                 "CollideWithEnum": NS(MapObjects="map", MapEditor="editor", Titans="titans"),
             },
@@ -889,7 +908,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-8-opposite-back-diagonal-retry")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-9-expanded-retry-order-quarantine")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1760,6 +1779,41 @@ class WaveM2Tests(unittest.TestCase):
         self.assertFalse(any("event=reposition_retry " in line for line in w.messages))
         self.assertEqual(len([line for line in w.messages if "event=reposition_start" in line]), 1)
 
+    def test_blocked_recovery_stays_quarantined_until_a_new_order(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_order_quarantine")
+        w.hit = NS(Point=Vector(4, 1, 3), Distance=3.0)
+
+        w.tick()
+
+        self.assertEqual(w.controller._state, "Observe")
+        self.assertTrue(w.controller._recoveryQuarantinedTargets.Contains(w.titan.ViewID))
+        quarantined = next(line for line in w.messages if "event=recovery_target_quarantined" in line)
+        for field in ("run=m2-", "cadet=AICadetsM2-1", "target_id=101", "order_seq=0",
+                      "attempt=1", "start_pos=", "end_pos=", "moved=", "goal=", "target_gain=",
+                      "ai_state=", "termination_reason=reposition_corridors_blocked"):
+            self.assertIn(field, quarantined)
+        starts_before_expiry = len([line for line in w.messages if "event=reposition_start" in line])
+
+        w.tick(15.1)
+        w.tick()
+        w.tick(5.0)
+
+        self.assertTrue(w.controller._recoveryQuarantinedTargets.Contains(w.titan.ViewID))
+        self.assertEqual(len([line for line in w.messages if "event=reposition_start" in line]), starts_before_expiry)
+        self.assertTrue(any("event=target_none" in line
+                            and "all_candidates_banned_or_quarantined_for_order" in line for line in w.messages))
+
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "EngageDirect", "AICadetsCmdScope": "all"})
+        w.tick()
+        self.assertEqual(w.controller._lastAppliedOrderSequence, 1)
+        self.assertFalse(w.controller._recoveryQuarantinedTargets.Contains(w.titan.ViewID))
+        self.assertTrue(any("event=recovery_quarantine_cleared" in line
+                            and "new_order_seq=1" in line for line in w.messages))
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+
     def test_opposite_retry_can_use_back_diagonal_when_other_opposite_routes_are_blocked(self):
         w = World()
         w.tick()
@@ -1803,6 +1857,50 @@ class WaveM2Tests(unittest.TestCase):
         self.assertIn("candidate=6", retry)
         self.assertIn("opposite_side=true", retry)
         self.assertIn("goal=", retry)
+
+    def test_opposite_retry_uses_a_larger_clear_back_diagonal_after_short_routes_block(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_larger_retry_scale")
+        w.tick()
+        first_goal = w.controller._groundGoal
+        first_scale = w.controller._groundRecoverySelectedScale
+        first_side = w.controller._groundRecoverySelectedSide
+        self.assertEqual(first_scale, 1.0)
+
+        w.tick(6.1)
+        self.assertEqual(w.controller._state, "Recover")
+
+        def clear_only_scaled_opposite_back_diagonal(start, end, layer):
+            to_target = w.titan.Position - w.cadet.Position
+            distance = (to_target.X * to_target.X + to_target.Z * to_target.Z) ** 0.5
+            forward_x = to_target.X / distance
+            forward_z = to_target.Z / distance
+            right_x = forward_z
+            right_z = -forward_x
+            dx = end.X - start.X
+            dz = end.Z - start.Z
+            forward_amount = dx * forward_x + dz * forward_z
+            side_amount = dx * right_x + dz * right_z
+            route_length = (dx * dx + dz * dz) ** 0.5
+            if forward_amount < -9.0 and side_amount < -18.0 and 21.0 < route_length < 26.0:
+                return None
+            return NS(Point=end, Distance=2.0)
+
+        w.hit = clear_only_scaled_opposite_back_diagonal
+        w.tick()
+
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
+        self.assertEqual(w.controller._groundRecoverySelectedCandidate, 6)
+        self.assertEqual(w.controller._groundRecoverySelectedSide, -first_side)
+        self.assertEqual(w.controller._groundRecoverySelectedScale, 1.25)
+        self.assertNotEqual(w.controller._groundGoal, first_goal)
+        retry = next(line for line in w.messages if "event=reposition_retry " in line)
+        self.assertIn("candidate=6", retry)
+        self.assertIn("scale=1.25", retry)
+        self.assertIn("opposite_side=true", retry)
 
     def test_successful_opposite_retry_requires_same_target_progress(self):
         w = World()

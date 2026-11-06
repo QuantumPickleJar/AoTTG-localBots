@@ -286,6 +286,29 @@
         "Count"
       ]
     },
+    "Set": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Collections/Set.md",
+      "methods": {
+        "Clear": {
+          "signature": "function Clear()",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "Contains": {
+          "signature": "function Contains(value: Object) -> bool",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "Add": {
+          "signature": "function Add(value: Object)",
+          "min_args": 1,
+          "max_args": 1
+        }
+      },
+      "properties": [
+        "Count"
+      ]
+    },
     "LoadoutEnum": {
       "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Enums/LoadoutEnum.md",
       "methods": {},
