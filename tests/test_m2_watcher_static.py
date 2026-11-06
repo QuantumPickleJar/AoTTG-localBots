@@ -26,6 +26,34 @@ class M2WatcherTests(unittest.TestCase):
                 spec = methods[node.func.attr]
                 self.assertEqual(len(node.args), spec["min_args"], spec["signature"])
 
+    def test_watcher_appends_beyond_full_legacy_range_without_overwriting(self):
+        src = (Path(__file__).resolve().parents[1] / "addons/AICadetsM2Watcher.cl").read_text()
+        self.assertIn("Range(startIndex, 1000, 1)", src)
+        existing = {f"AICadetsM2Watch{i}" for i in range(100)}
+        saved = {}
+        time = NS(GameTime=0.0)
+        persistent = NS(
+            FileExists=lambda name: name in existing or name in saved,
+            SaveToFile=lambda name, encrypted: saved.setdefault(name, name) is not None,
+            GetProperty=lambda key, default: default,
+            SetProperty=lambda key, value: None,
+        )
+        observer = load_controller({
+            "Network": NS(IsMasterClient=True), "Time": time,
+            "Game": NS(AIHumans=[], Print=lambda message: None),
+            "PersistentData": persistent,
+            "Convert": NS(ToString=str),
+            "String": NS(Length=len, SubstringWithLength=lambda value,start,length: value[start:start+length]),
+            "Range": range, "Vector3": Vector,
+        }, src, class_name="AICadetsM2Watcher")
+
+        observer.OnGameStart()
+
+        self.assertEqual(observer._file, "AICadetsM2Watch100")
+        self.assertEqual(len(existing), 100)
+        self.assertIn("AICadetsM2Watch100", saved)
+        self.assertEqual(len(saved), 1)
+
     def test_owned_demo_and_m2_roster_are_distinguished_without_movement(self):
         src = (Path(__file__).resolve().parents[1] / "addons/AICadetsM2Watcher.cl").read_text()
         cadet = Cadet()

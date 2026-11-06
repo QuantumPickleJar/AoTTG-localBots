@@ -40,11 +40,11 @@ addon AICadetsM2Watcher
             self._finished = true;
             return;
         }
-        # Never overwrite an existing diagnostic. Bounded search, 100 files.
+        # Never overwrite an existing diagnostic. Bounded search, 1000 file names.
         if (!self.FindFreeFile(0))
         {
             self._finished = true;
-            Game.Print("[AI Cadets M2 Watch] No free file slot; archive old watch files.");
+            Game.Print("[AI Cadets M2 Watch] No free file slot in the bounded name range; existing data was preserved.");
             return;
         }
         self._start = Time.GameTime;
@@ -237,7 +237,7 @@ addon AICadetsM2Watcher
 
     function FindFreeFile(startIndex)
     {
-        for (i in Range(startIndex, 100, 1))
+        for (i in Range(startIndex, 1000, 1))
         {
             candidate = "AICadetsM2Watch" + Convert.ToString(i);
             if (!PersistentData.FileExists(candidate))
