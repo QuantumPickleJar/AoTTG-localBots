@@ -1517,6 +1517,9 @@ class WaveM2Tests(unittest.TestCase):
         self.assertIn("target_gain=", first_end)
         self.assertIn("ai_state=Idle", first_end)
         self.assertIn("termination_reason=timeout", first_end)
+        route_records = [x for x in w.messages if "event=escape_route" in x]
+        self.assertEqual(len(route_records), 1)
+        self.assertIn("attempt=1", route_records[0])
         self.assertFalse(any("event=reposition_retry" in x for x in w.messages))
 
         w.tick()
@@ -1531,6 +1534,10 @@ class WaveM2Tests(unittest.TestCase):
         self.assertIn("opposite_side=true", retry)
         self.assertIn("first_goal=", retry)
         self.assertIn("goal=", retry)
+        route_records = [x for x in w.messages if "event=escape_route" in x]
+        self.assertEqual(len(route_records), 2)
+        self.assertIn("attempt=2", route_records[1])
+        self.assertIn("candidate=6", route_records[1])
 
         w.tick(6.1)
         self.assertEqual(w.controller._state, "Observe")

@@ -1395,10 +1395,72 @@ addon AICadetsWaveCadet
         return self.MapHit(self._cadet.Position + Vector3(0.0, 1.0, 0.0), goal + Vector3(0.0, 1.0, 0.0)) == null && self.MapHit(self._cadet.Position + Vector3(0.0, 0.3, 0.0), goal + Vector3(0.0, 0.3, 0.0)) == null;
     }
 
+    function EscapeCandidateAtPriority(priority, requiredSide)
+    {
+        if (requiredSide < 0)
+        {
+            if (priority == 0)
+            {
+                return 6;
+            }
+            elif (priority == 1)
+            {
+                return 3;
+            }
+            elif (priority == 2)
+            {
+                return 1;
+            }
+            elif (priority == 3)
+            {
+                return 0;
+            }
+            elif (priority == 4)
+            {
+                return 2;
+            }
+            elif (priority == 5)
+            {
+                return 5;
+            }
+            return 4;
+        }
+        if (requiredSide > 0)
+        {
+            if (priority == 0)
+            {
+                return 5;
+            }
+            elif (priority == 1)
+            {
+                return 2;
+            }
+            elif (priority == 2)
+            {
+                return 0;
+            }
+            elif (priority == 3)
+            {
+                return 1;
+            }
+            elif (priority == 4)
+            {
+                return 3;
+            }
+            elif (priority == 5)
+            {
+                return 6;
+            }
+            return 4;
+        }
+        return priority;
+    }
+
     function ChooseWallEscape(direction, right, requiredSide)
     {
-        for (candidate in Range(0, 7, 1))
+        for (candidatePriority in Range(0, 7, 1))
         {
+            candidate = self.EscapeCandidateAtPriority(candidatePriority, requiredSide);
             side = 0;
             if (candidate == 0 || candidate == 2 || candidate == 5)
             {
@@ -1463,7 +1525,7 @@ addon AICadetsWaveCadet
                     self._groundRecoverySelectedCandidate = candidate;
                     self._groundRecoverySelectedSide = side;
                     self._groundRecoverySelectedScale = scale;
-                    details = self.RecoveryRecordDetails(self._targetRecoveries + 1, self._targetViewId, self._cadet.Position, self._cadet.Position, 0.0, self._groundGoal, 0.0, self._cadet.GetAIState(), "route_selected");
+                    details = self.RecoveryRecordDetails(self._targetRecoveries, self._targetViewId, self._cadet.Position, self._cadet.Position, 0.0, self._groundGoal, 0.0, self._cadet.GetAIState(), "route_selected");
                     self.LogEvent("escape_route", "candidate=" + Convert.ToString(candidate) + " " + details + " side=" + Convert.ToString(side) + " required_side=" + Convert.ToString(requiredSide) + " scale=" + Convert.ToString(scale));
                     return true;
                 }
