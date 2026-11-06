@@ -89,6 +89,10 @@ class Cadet:
         self.calls.append(("release_right",))
 
 
+def movement_request_count(cadet):
+    return sum(1 for call in cadet.calls if call[0] in ("move", "move_to"))
+
+
 class Titan:
     def __init__(self, view_id=101):
         self.Type = "Titan"
@@ -600,7 +604,8 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         self.assertEqual(w.controller._state, "RecoverGround")
         self.assertEqual(w.controller._targetViewId, w.titan.ViewID)
-        self.assertEqual(w.cadet.ai_state, "MoveTo")
+        self.assertTrue(any(call[0] == "move" for call in w.cadet.calls))
+        self.assertFalse(any(call[0] == "move_to" for call in w.cadet.calls))
         w.cadet.Position = w.controller._groundGoal
         w.tick(6.1)
         self.assertEqual(w.controller._state, "PlanApproach")
@@ -748,6 +753,74 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.cadet.ai_state, "Idle")
 
+    def test_direct_recovery_reissues_projected_move_and_hold_cancels_owned_command(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_direct_recovery_move")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        self.assertTrue(w.controller._groundRecoveryCommandActive)
+        self.assertEqual(w.controller._groundRecoveryCommandDriver, "Direct")
+        first_move = next(call for call in reversed(w.cadet.calls) if call[0] == "move")
+        self.assertGreater(first_move[1].Magnitude, 0.9)
+        self.assertFalse(any(call[0] == "move_to" for call in w.cadet.calls))
+        self.assertTrue(any("kind=ground_recovery driver=Direct request=Human.Move" in line
+                            for line in w.messages))
+
+        before = movement_request_count(w.cadet)
+        w.tick(0.02)
+        self.assertGreater(movement_request_count(w.cadet), before)
+
+        w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
+        w.tick()
+        stopped_at = movement_request_count(w.cadet)
+        self.assertEqual(w.controller._state, "Hold")
+        self.assertFalse(w.controller._groundRecoveryCommandActive)
+        self.assertEqual(w.cadet.calls[-1], ("idle",))
+        w.tick(0.02)
+        self.assertEqual(movement_request_count(w.cadet), stopped_at)
+
+    def test_engine_recovery_remains_a_single_move_to_comparison(self):
+        w = World()
+        w.tick()
+        w.controller.GroundSteering = "Engine"
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_engine_recovery_move_to")
+        w.tick()
+        self.assertEqual(w.controller._state, "RecoverGround")
+        move_to_calls = [call for call in w.cadet.calls if call[0] == "move_to"]
+        self.assertEqual(len(move_to_calls), 1)
+        self.assertEqual(move_to_calls[0][1].Y, w.cadet.Position.Y)
+        self.assertEqual(move_to_calls[0][2], 3.0)
+        self.assertTrue(w.controller._groundRecoveryCommandActive)
+        self.assertEqual(w.controller._groundRecoveryCommandDriver, "Engine")
+        self.assertTrue(any("kind=ground_recovery driver=Engine request=Character.MoveTo" in line
+                            for line in w.messages))
+        w.tick(0.02)
+        self.assertEqual(movement_request_count(w.cadet), 1)
+
+    def test_recovery_start_and_end_keep_run_order_and_measurement_context(self):
+        w = World()
+        w.tick()
+        w.controller.AcquireTarget()
+        w.controller.Enter("Recover", "test_recovery_record_context")
+        w.tick()
+        start = next(line for line in w.messages if "event=reposition_start" in line)
+        w.cadet.Position = w.controller._groundGoal
+        w.tick()
+        end = next(line for line in w.messages if "event=reposition_end" in line)
+
+        required = (
+            "run=m2-", "cadet=AICadetsM2-1", "order_seq=", "target_id=",
+            "attempt=1", "start_pos=", "end_pos=", "moved=", "goal=",
+            "target_gain=", "ai_state=", "termination_reason=",
+        )
+        for label, line in (("start", start), ("end", end)):
+            for field in required:
+                with self.subTest(event=label, field=field):
+                    self.assertIn(field, line)
+
     def test_momentum_only_biases_new_acquisition(self):
         w = World()
         w.tick()
@@ -816,7 +889,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "Hold")
         self.assertEqual(w.controller._orderMode, "Hold")
         self.assertIn("ground=Direct", w.persistent["AICadetsM2Profile-AICadetsM2-1"])
-        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-6-odm-retry")
+        self.assertEqual(w.persistent["AICadetsM2Build-AICadetsM2-1"], "M2-locomotion-1-f8combo-7-direct-recovery")
 
     def test_driver_switch_restarts_only_current_pursuit(self):
         w = World()
@@ -1412,7 +1485,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertEqual(w.controller._state, "RecoverGround")
         self.assertLess(w.controller._groundGoal.Z, w.cadet.Position.Z)
         self.assertTrue(any("escape_route candidate=4" in x for x in w.messages))
-        self.assertTrue(any(x[0] == "move_to" for x in w.cadet.calls))
+        self.assertTrue(any(x[0] == "move" for x in w.cadet.calls))
 
     def test_failed_escape_tries_one_alternate_route_then_pauses_if_still_stuck(self):
         w = World()
@@ -1483,11 +1556,11 @@ class WaveM2Tests(unittest.TestCase):
         first_end = next(line for line in w.messages if "event=reposition_end" in line)
         self.assertIn("movement_result=moved<2", first_end)
         self.assertIn("termination_reason=odm_transition", first_end)
-        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        move_calls = movement_request_count(w.cadet)
 
         w.tick(0.5)
         self.assertEqual(w.controller._state, "Recover")
-        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+        self.assertEqual(movement_request_count(w.cadet), move_calls)
 
         w.cadet.Grounded = True
         w.tick()
@@ -1515,13 +1588,13 @@ class WaveM2Tests(unittest.TestCase):
         w.cadet.Grounded = True
         w.tick()
         self.assertEqual(w.controller._state, "RecoverGround")
-        move_calls_before_second_end = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        move_calls_before_second_end = movement_request_count(w.cadet)
         w.cadet.Grounded = False
         w.tick()
 
         self.assertEqual(w.controller._state, "Observe")
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
-        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls_before_second_end)
+        self.assertEqual(movement_request_count(w.cadet), move_calls_before_second_end)
         self.assertEqual(len([line for line in w.messages if "event=reposition_retry " in line]), 1)
         self.assertEqual(len([line for line in w.messages if "event=reposition_start" in line]), 2)
 
@@ -1557,7 +1630,7 @@ class WaveM2Tests(unittest.TestCase):
         w.cadet.Grounded = False
         w.tick()
         self.assertTrue(w.controller._groundRecoveryRetryRequested)
-        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        move_calls = movement_request_count(w.cadet)
 
         w.persistent.update({"AICadetsCmdSequence": 1, "AICadetsCmdMode": "Hold", "AICadetsCmdScope": "all"})
         w.tick()
@@ -1565,7 +1638,7 @@ class WaveM2Tests(unittest.TestCase):
         self.assertFalse(w.controller._groundRecoveryRetryRequested)
         w.cadet.Grounded = True
         w.tick()
-        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+        self.assertEqual(movement_request_count(w.cadet), move_calls)
         self.assertFalse(any("event=reposition_retry " in line for line in w.messages))
 
     def test_deferred_retry_landing_wait_times_out_safely(self):
@@ -1576,14 +1649,14 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
         w.cadet.Grounded = False
         w.tick()
-        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        move_calls = movement_request_count(w.cadet)
 
         w.tick(4.1)
 
         self.assertEqual(w.controller._state, "Observe")
         self.assertEqual(w.controller._bannedTargetViewId, w.titan.ViewID)
         self.assertFalse(w.controller._groundRecoveryRetryRequested)
-        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+        self.assertEqual(movement_request_count(w.cadet), move_calls)
         self.assertTrue(any("event=reposition_retry_abandoned" in line
                             and "ground_wait_timeout" in line
                             and "command_dispatched=false" in line for line in w.messages))
@@ -1597,14 +1670,14 @@ class WaveM2Tests(unittest.TestCase):
         w.cadet.Grounded = False
         w.tick()
         self.assertTrue(w.controller._groundRecoveryRetryRequested)
-        move_calls = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        move_calls = movement_request_count(w.cadet)
         w.titan.IsAlive = False
 
         w.tick()
 
         self.assertEqual(w.controller._state, "AcquireTarget")
         self.assertFalse(w.controller._groundRecoveryRetryRequested)
-        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls)
+        self.assertEqual(movement_request_count(w.cadet), move_calls)
         self.assertTrue(any("event=reposition_retry_cancelled" in line
                             and "termination_reason=retry_target_lost" in line for line in w.messages))
 
@@ -1666,7 +1739,7 @@ class WaveM2Tests(unittest.TestCase):
         w.controller.AcquireTarget()
         w.controller.Enter("Recover", "test_blocked_opposite_retry")
         w.tick()
-        move_calls_before_retry = len([call for call in w.cadet.calls if call[0] == "move_to"])
+        move_calls_before_retry = movement_request_count(w.cadet)
         w.hit = NS(Point=Vector(4, 1, 3), Distance=3.0)
 
         w.tick(6.1)
@@ -1674,7 +1747,7 @@ class WaveM2Tests(unittest.TestCase):
         w.tick()
 
         self.assertEqual(w.controller._state, "Observe")
-        self.assertEqual(len([call for call in w.cadet.calls if call[0] == "move_to"]), move_calls_before_retry)
+        self.assertEqual(movement_request_count(w.cadet), move_calls_before_retry)
         self.assertTrue(any("event=reposition_retry_blocked" in line
                             and "command_dispatched=false" in line for line in w.messages))
         self.assertFalse(any("event=reposition_retry " in line for line in w.messages))
