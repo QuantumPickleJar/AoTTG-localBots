@@ -21,7 +21,7 @@ public sealed class FlightRecorderPlugin : BasePlugin
 {
     public const string PluginGuid = "org.aicadets.aottg2.flight-recorder";
     public const string PluginName = "AoTTG2 Flight Recorder";
-    public const string PluginVersion = "0.1.17";
+    public const string PluginVersion = "0.1.18";
     private const string RequiredUnityVersion = "2023.1.22f1";
     internal const string CapturePhaseName = "fixed_update_pre_physics";
     internal const int AnimationSampleIntervalFixedSteps = 5;
@@ -632,9 +632,14 @@ internal sealed class CaptureRegistry
             var generationKey = key;
             var generation = _generations.TryGetValue(generationKey, out var prior) ? prior + 1 : 1;
             _generations[generationKey] = generation;
+            var transform = component.transform;
+            var scene = component.gameObject.scene;
             entry = new TrackedEntity
             {
                 Component = component,
+                Transform = transform,
+                SceneHandle = scene.handle,
+                SceneName = scene.name,
                 Kind = kind,
                 SourceId = sourceId,
                 Generation = generation,
@@ -659,6 +664,7 @@ internal sealed class CaptureRegistry
         else
         {
             entry.Component = component;
+            if (entry.Transform == null) entry.Transform = component.transform;
             entry.OwnerSourceId = ownerSourceId ?? entry.OwnerSourceId;
             entry.OwnerHumanSourceId = ownerHumanSourceId ?? entry.OwnerHumanSourceId;
             if (component is BaseProjectile projectile) entry.OwnerCharacter = projectile._owner;
@@ -698,9 +704,20 @@ internal sealed class CaptureRegistry
             if (component == null) continue;
             if (!StillWithinCaptureScope(entity)) continue;
             if (component is Human pendingHuman && !pendingHuman.FinishSetup) continue;
-            var transform = component.transform;
+            var transform = entity.Transform;
+            if (transform == null)
+            {
+                transform = component.transform;
+                entity.Transform = transform;
+            }
             var position = transform.position;
             var rotation = transform.rotation;
+            var scene = component.gameObject.scene;
+            if (entity.SceneHandle != scene.handle)
+            {
+                entity.SceneHandle = scene.handle;
+                entity.SceneName = scene.name;
+            }
             var sample = entity.Sample;
             var extra = sample.Extra;
             extra.Reset();
@@ -716,7 +733,7 @@ internal sealed class CaptureRegistry
             sample.Rot[3] = rotation.w;
             extra.EntityClass = entity.ClassName;
             extra.SourceInstanceId = entity.SourceId;
-            extra.Scene = component.gameObject.scene.name;
+            extra.Scene = entity.SceneName;
             extra.OwnerId = entity.OwnerSourceId is { } ownerId ? FindId(ownerId) : null;
             extra.PoseSource = "UnityEngine.Transform";
             extra.WallMonotonicElapsedSeconds = monotonicElapsed;
@@ -851,13 +868,22 @@ internal sealed class CaptureRegistry
     private bool StillWithinCaptureScope(TrackedEntity entry)
     {
         if (entry.Component is BaseCharacter character) return IsAllowedForCurrentSample(character);
-        if (entry.Component is Hook) return entry.OwnerCharacter != null && IsAllowedForCurrentSample(entry.OwnerCharacter);
+        if (entry.Component is Hook) return IsAllowedForCurrentSample(entry);
         if (entry.Component is BaseProjectile projectile)
         {
-            var owner = projectile._owner;
-            return owner != null && IsAllowedForCurrentSample(owner);
+            if (projectile._owner == null) return false;
+            return IsAllowedForCurrentSample(entry);
         }
         return false;
+    }
+
+    private bool IsAllowedForCurrentSample(TrackedEntity entry)
+    {
+        var ownerSourceId = entry.OwnerHumanSourceId ?? entry.OwnerSourceId;
+        if (ownerSourceId is { } sourceId &&
+            _captureScopeByCharacter.TryGetValue(sourceId, out var cached) && cached.Step == _captureScopeStep)
+            return cached.Allowed;
+        return entry.OwnerCharacter is BaseCharacter owner && IsAllowedForCurrentSample(owner);
     }
 
     private bool IsAllowedForCurrentSample(BaseCharacter character)
@@ -874,6 +900,9 @@ internal sealed class CaptureRegistry
 internal sealed class TrackedEntity
 {
     internal Component Component { get; set; } = null!;
+    internal Transform Transform { get; set; } = null!;
+    internal int SceneHandle { get; set; }
+    internal string SceneName { get; set; } = "";
     internal string Kind { get; init; } = "";
     internal int SourceId { get; init; }
     internal int Generation { get; init; }

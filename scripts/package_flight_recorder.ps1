@@ -19,6 +19,10 @@ $sourceChanges = @(& git -C $repo status --porcelain 2>$null)
 if ($LASTEXITCODE -ne 0 -or $sourceChanges.Count -gt 0) {
     throw "Build the package from a clean, committed source tree so its manifest identifies the exact source."
 }
+$pluginSource = Get-Content -LiteralPath (Join-Path $repo "plugin\FlightRecorder.UnityIl2Cpp\Plugin.cs") -Raw
+$versionMatch = [regex]::Match($pluginSource, 'public const string PluginVersion = "([0-9]+\.[0-9]+\.[0-9]+)";')
+if (-not $versionMatch.Success) { throw "Could not read a semantic plugin version from Plugin.cs." }
+$pluginVersion = $versionMatch.Groups[1].Value
 $pythonSource = (Resolve-Path -LiteralPath $PythonEmbedDirectory).Path
 $pythonExe = Join-Path $pythonSource "python.exe"
 $pythonPth = Join-Path $pythonSource "python314._pth"
@@ -30,8 +34,8 @@ if ($pythonVersion -notmatch '^Python 3\.14\.10$') { throw "Expected Python 3.14
 & (Join-Path $PSScriptRoot "build_flight_recorder_plugin.ps1") -GameRoot $root -Configuration Release
 if ($LASTEXITCODE -ne 0) { throw "Plugin build script failed." }
 
-$package = Join-Path $out "AoTTG2-FlightRecorder-0.1.17"
-$zipPath = Join-Path $out "AoTTG2-FlightRecorder-0.1.17.zip"
+$package = Join-Path $out "AoTTG2-FlightRecorder-$pluginVersion"
+$zipPath = Join-Path $out "AoTTG2-FlightRecorder-$pluginVersion.zip"
 if ((Test-Path -LiteralPath $package) -or (Test-Path -LiteralPath $zipPath)) {
     throw "Package output already exists. Choose a new OutputDirectory; no existing artifact was changed."
 }
@@ -70,7 +74,7 @@ $files = Get-ChildItem -LiteralPath $package -File -Recurse | Sort-Object FullNa
 }
 $manifest = [ordered]@{
     schema = "aicadets.flight.package.v1"
-    plugin_version = "0.1.17"
+    plugin_version = $pluginVersion
     target = [ordered]@{ executable = "Aottg2.exe"; architecture = "x64"; unity = "2023.1.22f1"; il2cpp_metadata = "29.1"; loader = "BepInEx 6.0.0-be.791"; runtime = ".NET 6"; receiver_python = "3.14.10 embeddable x64" }
     source_commit = $sourceCommit
     source_worktree_clean = $true
