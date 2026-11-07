@@ -328,6 +328,7 @@ class ArchiveSession:
         }
         self._snapshot_index: dict[tuple[str, str], dict[str, Any]] = {}
         self._present_names: set[str] = set()
+        self._source_signatures: dict[str, tuple[int, int, int, int]] = {}
         self._active_capture_errors: dict[str, str] = {}
         atomic_write_json(self.manifest_path, self.manifest)
 
@@ -337,9 +338,20 @@ class ArchiveSession:
 
     def capture_file(self, path: Path) -> str | None:
         try:
-            raw = read_stable(path)
+            before = path.stat()
         except FileNotFoundError:
             return None
+        signature = (before.st_size, before.st_mtime_ns, before.st_ino, before.st_dev)
+        latest_digest = self.manifest["latest_snapshot_by_source"].get(path.name)
+        if self._source_signatures.get(path.name) == signature and latest_digest:
+            return latest_digest
+        try:
+            raw = read_stable(path)
+            after = path.stat()
+        except FileNotFoundError:
+            return None
+        signature = (after.st_size, after.st_mtime_ns, after.st_ino, after.st_dev)
+        self._source_signatures[path.name] = signature
         digest = sha256(raw)
         key = (path.name, digest)
         existing = self._snapshot_index.get(key)
@@ -355,7 +367,7 @@ class ArchiveSession:
         slot = int(match.group("index"))
         relative = Path("snapshots") / f"slot-{slot:04d}" / f"{digest}.gz"
         destination = self.run_dir / relative
-        compressed = gzip.compress(raw, compresslevel=6, mtime=0)
+        compressed = gzip.compress(raw, compresslevel=1, mtime=0)
         if destination.exists():
             stored = destination.read_bytes()
             if sha256(stored) != sha256(compressed) or gzip.decompress(stored) != raw:
@@ -397,6 +409,8 @@ class ArchiveSession:
             self.manifest["source_disappearances"].append(
                 {"source_name": name, "noticed_at_utc": now_utc()}
             )
+        for name in vanished:
+            self._source_signatures.pop(name, None)
         self._present_names = current_names
         known_names = set(self.manifest["observed_source_files"])
         self.manifest["observed_source_files"] = sorted(
