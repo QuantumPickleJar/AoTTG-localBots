@@ -350,8 +350,10 @@ class ArchiveSession:
             after = path.stat()
         except FileNotFoundError:
             return None
-        signature = (after.st_size, after.st_mtime_ns, after.st_ino, after.st_dev)
-        self._source_signatures[path.name] = signature
+        after_signature = (after.st_size, after.st_mtime_ns, after.st_ino, after.st_dev)
+        if signature != after_signature or len(raw) != after.st_size:
+            raise ArchiveError("source changed during snapshot; retrying on the next scan")
+        self._source_signatures[path.name] = after_signature
         digest = sha256(raw)
         key = (path.name, digest)
         existing = self._snapshot_index.get(key)
