@@ -160,18 +160,25 @@ def read_stable(path: Path, attempts: int = 4) -> bytes:
         )
         if stable:
             try:
-                second_read = path.read_bytes()
-                second_stat = path.stat()
+                with path.open("rb") as second_handle:
+                    second_read = second_handle.read(MAX_SOURCE_BYTES + 1)
+                    second_stat = os.fstat(second_handle.fileno())
+                second_current = path.stat()
             except OSError as exc:
                 last_problem = str(exc)
                 time.sleep(0.05 * (attempt + 1))
                 continue
             if (
                 second_read == data
+                and len(second_read) <= MAX_SOURCE_BYTES
                 and second_stat.st_size == current.st_size
+                and second_current.st_size == current.st_size
                 and second_stat.st_mtime_ns == current.st_mtime_ns
+                and second_current.st_mtime_ns == current.st_mtime_ns
                 and second_stat.st_ino == current.st_ino
+                and second_current.st_ino == current.st_ino
                 and second_stat.st_dev == current.st_dev
+                and second_current.st_dev == current.st_dev
             ):
                 return data
 
