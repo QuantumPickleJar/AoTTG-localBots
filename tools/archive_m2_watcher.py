@@ -360,7 +360,6 @@ class ArchiveSession:
         after_signature = (after.st_size, after.st_mtime_ns, after.st_ino, after.st_dev)
         if signature != after_signature or len(raw) != after.st_size:
             raise ArchiveError("source changed during snapshot; retrying on the next scan")
-        self._source_signatures[path.name] = after_signature
         digest = sha256(raw)
         key = (path.name, digest)
         existing = self._snapshot_index.get(key)
@@ -368,6 +367,7 @@ class ArchiveSession:
             if self.manifest["latest_snapshot_by_source"].get(path.name) != digest:
                 self.manifest["latest_snapshot_by_source"][path.name] = digest
                 self._save_manifest()
+            self._source_signatures[path.name] = after_signature
             return digest
 
         match = watcher_match(path.name)
@@ -404,6 +404,7 @@ class ArchiveSession:
         self._snapshot_index[key] = record
         self.manifest["latest_snapshot_by_source"][path.name] = digest
         self._save_manifest()
+        self._source_signatures[path.name] = after_signature
         return digest
 
     def capture_all(self) -> tuple[list[tuple[int, Path]], list[str]]:
