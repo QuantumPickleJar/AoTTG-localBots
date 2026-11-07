@@ -653,6 +653,10 @@ def run_monitor(
             return 2
         if once:
             return 0
+        if archive_existing("between_run_slot_cleanup") != 0:
+            return 2
+        if print_preflight(source) != 0:
+            return 2
     else:
         if archive_existing("pre_run_slot_cleanup") != 0:
             return 2
