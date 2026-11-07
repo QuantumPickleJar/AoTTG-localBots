@@ -28,14 +28,26 @@ def validate(source):
     receivers.update(
         {
             "self._cadet": "Human",
+            "self._cadet.Position": "Vector3",
             "self._cadet.Forward": "Vector3",
+            "self._cadet.Velocity": "Vector3",
+            "self._groundRecoveryGoal": "Vector3",
+            "station": "MapObject",
+            "point": "Vector3",
+            "flat": "Vector3",
+            "position": "Vector3",
+            "toStation": "Vector3",
+            "right": "Vector3",
+            "direction": "Vector3",
             "host": "Human",
             "human": "Human",
             "titan": "Titan",
             "t": "Titan",
             "victim": "Character",
+            "targetHit": "Titan",
             "killer": "Character",
             "self._target": "Titan",
+            "self._target.Position": "Vector3",
             "self._target.Forward": "Vector3",
             "hit": "LineCastHitResult",
             "editorHit": "LineCastHitResult",
@@ -44,6 +56,11 @@ def validate(source):
             "toNape": "Vector3",
             "toGoal": "Vector3",
             "baseDirection": "Vector3",
+            "baseDir": "Vector3",
+            "direction": "Vector3",
+            "flatTarget": "Vector3",
+            "Vector3(delta.X, 0.0, delta.Z)": "Vector3",
+            "toTarget": "Vector3",
             "behindDir": "Vector3",
             "delta": "Vector3",
             "difference": "Vector3",
@@ -52,12 +69,16 @@ def validate(source):
             "horizontalAway": "Vector3",
             "retreatPoint": "Vector3",
             "recoverGoal": "Vector3",
+            "goal": "Vector3",
+            "radial": "Vector3",
             "self._direction": "Vector3",
+            "self._orbitStartRadial": "Vector3",
             "Network.MyPlayer": "Player",
             "host.Forward": "Vector3",
             "Game.Titans": "List",
             "Game.Humans": "List",
             "Game.PlayerHumans": "List",
+            "self._recoveryQuarantinedTargets": "Set",
             "Game.AIHumans": "List",
         }
     )
@@ -95,7 +116,7 @@ def validate(source):
                 if node.func.id == "Vector3":
                     assert count == 3, "Expected Vector3(x,y,z)"
                 else:
-                    assert node.func.id in {"Range"}, f"Unknown global call: {node.func.id}"
+                    assert node.func.id in {"Range", "Set"}, f"Unknown global call: {node.func.id}"
             elif ast.unparse(node.func.value) == "self":
                 assert count == methods[node.func.attr], f"Wrong helper arity {node.func.attr}"
             else:
@@ -107,7 +128,7 @@ def validate(source):
         if isinstance(node, ast.Assign):
             target = ast.unparse(node.targets[0])
             if target.startswith("self._cadet."):
-                assert target in {"self._cadet.Name"}, "No direct movement/resource cheats via property writes"
+                assert target in {"self._cadet.Name", "self._cadet.AutoRefillGas"}, "No direct movement/resource cheats via property writes"
     assert "class Main" not in source
     assert source.count("Game.SpawnHumanAt(") == 1
     assert not re.search(r"\b(Upload|SendMessage|SetPreload|RestartWithPreloadSettings)\b", source)

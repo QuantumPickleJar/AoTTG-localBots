@@ -1,5 +1,7 @@
 # M2 Wave-mode manual test matrix
 
+For the current ground pursuit stabilization build and focused live checklist, see [M2_LOCOMOTION_STABILIZATION.md](M2_LOCOMOTION_STABILIZATION.md). The matrix below remains the broader M2 combat, wave, and resupply acceptance plan.
+
 Use `addons/AICadetsWaveCadet.cl` with M1 files preserved as rollback.
 
 ## Required run metadata

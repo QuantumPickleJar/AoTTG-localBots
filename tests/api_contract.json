@@ -1,9 +1,9 @@
 {
-  "revision": "ded03751aee1b1179141aeb534faa2f1fc266aff",
-  "reviewed": "2026-10-29",
+  "revision": "38796d52a99c2dd76ec08a111395628a9151d07e",
+  "reviewed": "2026-11-02",
   "types": {
     "Game": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Game.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Game/Game.md",
       "methods": {
         "SpawnHumanAt": {
           "signature": "function SpawnHumanAt(costume: int, costumeName: string, loadout: string, position: Vector3, rotationY: float = 0) -> Human",
@@ -25,13 +25,8 @@
       ]
     },
     "Human": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Human.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Entities/Human.md",
       "methods": {
-        "Idle": {
-          "signature": "function Idle()",
-          "min_args": 0,
-          "max_args": 0
-        },
         "AimAt": {
           "signature": "function AimAt(position: Vector3)",
           "min_args": 1,
@@ -66,6 +61,21 @@
           "signature": "function Attack(attackOn: bool)",
           "min_args": 1,
           "max_args": 1
+        },
+        "Move": {
+          "signature": "function Move(direction: Vector3)",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "Navigation": {
+          "signature": "function Navigation()",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "GetAIState": {
+          "signature": "function GetAIState() -> string",
+          "min_args": 0,
+          "max_args": 0
         }
       },
       "properties": [
@@ -74,16 +84,60 @@
         "LeftHookReady",
         "IsHookedLeft",
         "Forward",
-        "ViewID"
+        "ViewID",
+        "AutoRefillGas",
+        "MaxGas",
+        "Target",
+        "LeftHookPosition"
       ]
     },
     "Character": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Character.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Entities/Character.md",
       "methods": {
         "SetDisplayName": {
           "signature": "function SetDisplayName(name: string, showTag: bool = True)",
           "min_args": 1,
           "max_args": 2
+        },
+        "Idle": {
+          "signature": "function Idle(time: float = -1)",
+          "min_args": 0,
+          "max_args": 1
+        },
+        "MoveTo": {
+          "signature": "function MoveTo(position: Vector3, range: float, ignoreEnemies: bool = False)",
+          "min_args": 2,
+          "max_args": 3
+        },
+        "MoveToTarget": {
+          "signature": "function MoveToTarget(target: Object, range: float, ignoreEnemies: bool = False)",
+          "min_args": 2,
+          "max_args": 3
+        },
+        "GetTarget": {
+          "signature": "function GetTarget() -> Object",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "SetTarget": {
+          "signature": "function SetTarget(target: Object, focusDuration: float = 0)",
+          "min_args": 1,
+          "max_args": 2
+        },
+        "ClearTarget": {
+          "signature": "function ClearTarget()",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "GetNearestEnemy": {
+          "signature": "function GetNearestEnemy() -> Object",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "TargetNearestEnemy": {
+          "signature": "function TargetNearestEnemy(focusDuration: float = 0)",
+          "min_args": 0,
+          "max_args": 1
         }
       },
       "properties": [
@@ -96,12 +150,19 @@
         "Right",
         "ViewID",
         "Grounded",
+        "State",
+        "CurrentTarget",
+        "DetectRange",
+        "IsWalking",
+        "AIEnabled",
+        "UsePathfinding",
         "Health",
-        "MaxHealth"
+        "MaxHealth",
+        "CurrentAnimation"
       ]
     },
     "Titan": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Titan.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Entities/Titan.md",
       "methods": {},
       "properties": [
         "NapePosition",
@@ -114,18 +175,23 @@
       ]
     },
     "Physics": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Physics.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Game/Physics.md",
       "methods": {
         "LineCast": {
           "signature": "function LineCast(start: Vector3, end: Vector3, collideWith: string) -> LineCastHitResult",
           "min_args": 3,
           "max_args": 3
+        },
+        "SphereCast": {
+          "signature": "function SphereCast(start: Vector3, end: Vector3, radius: float, collideWith: string) -> Object",
+          "min_args": 4,
+          "max_args": 4
         }
       },
       "properties": []
     },
     "Vector3": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Collections/Vector3.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Collections/Vector3.md",
       "methods": {
         "Distance": {
           "signature": "function Distance(a: Vector3, b: Vector3) -> float",
@@ -152,7 +218,7 @@
       ]
     },
     "Network": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Network.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Game/Network.md",
       "methods": {},
       "properties": [
         "IsMasterClient",
@@ -160,21 +226,21 @@
       ]
     },
     "Time": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/Time.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Game/Time.md",
       "methods": {},
       "properties": [
         "GameTime"
       ]
     },
     "Player": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Entities/Player.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Entities/Player.md",
       "methods": {},
       "properties": [
         "Character"
       ]
     },
     "PersistentData": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Game/PersistentData.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Game/PersistentData.md",
       "methods": {
         "SetProperty": {
           "signature": "function SetProperty(key: string, value: Object)",
@@ -185,12 +251,17 @@
           "signature": "function SaveToFile(fileName: string, encrypted: bool)",
           "min_args": 2,
           "max_args": 2
+        },
+        "GetProperty": {
+          "signature": "function GetProperty(property: string, defaultValue: Object) -> Object",
+          "min_args": 2,
+          "max_args": 2
         }
       },
       "properties": []
     },
     "Convert": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Utility/Convert.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Utility/Convert.md",
       "methods": {
         "ToString": {
           "signature": "function ToString(value: Object) -> string",
@@ -201,7 +272,7 @@
       "properties": []
     },
     "LineCastHitResult": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Collections/LineCastHitResult.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Collections/LineCastHitResult.md",
       "methods": {},
       "properties": [
         "Point",
@@ -209,32 +280,74 @@
       ]
     },
     "List": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Collections/List.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Collections/List.md",
       "methods": {},
       "properties": [
         "Count"
       ]
     },
+    "Set": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Collections/Set.md",
+      "methods": {
+        "Clear": {
+          "signature": "function Clear()",
+          "min_args": 0,
+          "max_args": 0
+        },
+        "Contains": {
+          "signature": "function Contains(value: Object) -> bool",
+          "min_args": 1,
+          "max_args": 1
+        },
+        "Add": {
+          "signature": "function Add(value: Object)",
+          "min_args": 1,
+          "max_args": 1
+        }
+      },
+      "properties": [
+        "Count"
+      ]
+    },
     "LoadoutEnum": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Enums/LoadoutEnum.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Enums/LoadoutEnum.md",
       "methods": {},
       "properties": [
         "HumanBlades"
       ]
     },
     "CollideWithEnum": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/Enums/CollideWithEnum.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Enums/CollideWithEnum.md",
       "methods": {},
       "properties": [
         "MapObjects",
-        "MapEditor"
+        "MapEditor",
+        "Titans"
       ]
     },
     "Object": {
-      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/ded03751aee1b1179141aeb534faa2f1fc266aff/reference/objects/Object.md",
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/objects/Object.md",
       "methods": {},
       "properties": [
         "Type"
+      ]
+    },
+    "Map": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Game/Map.md",
+      "methods": {
+        "FindMapObjectsByComponent": {
+          "signature": "function FindMapObjectsByComponent(className: string) -> List<MapObject>",
+          "min_args": 1,
+          "max_args": 1
+        }
+      },
+      "properties": []
+    },
+    "MapObject": {
+      "source": "https://github.com/AoTTG-2/CustomLogicDocumentation/blob/38796d52a99c2dd76ec08a111395628a9151d07e/reference/Entities/MapObject.md",
+      "methods": {},
+      "properties": [
+        "Position"
       ]
     }
   }

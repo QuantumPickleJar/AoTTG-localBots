@@ -74,7 +74,7 @@ def translate(source):
                ast.Attribute, ast.Name, ast.Constant, ast.Load, ast.Store,
                ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.Add, ast.Sub,
                ast.Mult, ast.Div, ast.USub, ast.Not, ast.And, ast.Or, ast.Eq,
-               ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Continue)
+               ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Continue, ast.Break)
     for node in ast.walk(tree):
         assert isinstance(node, allowed), f"Unsupported syntax: {type(node).__name__}"
     return result
