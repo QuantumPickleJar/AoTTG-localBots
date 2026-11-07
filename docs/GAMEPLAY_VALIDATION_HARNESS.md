@@ -8,7 +8,7 @@
 
 1. Identify which deployed `.cl` files the proposed changes affect, and choose a profile from the matrix below. If no game-executed code changes, static/unit checks may suffice. For actual `.cl` changes, a gameplay test is required before claiming the behavior validated.
 2. Before requesting a test, present a **Validation Card** with: profile ID, exact source branch/commit/build tag; files to deploy; **enable** and **disable** sets; map/mode/host settings; steps; expected telemetry *and physical outcome*; known limitations; rollback commit/files; evidence to capture; explicit pass/fail/inconclusive result fields.
-3. Only one active controller may own each test cadet. Do not run M0 probe, M1 traversal, M2 WaveCadet and a new movement/Carry probe simultaneously. For every `M2-L0` and `M2-C1` gameplay session, `AICadetsM2Watcher` is **required**. No M2 gameplay acceptance or iteration result counts without a saved, reviewed watcher trace. Before starting, confirm the watcher has a free output slot and preserve existing watcher files in a hash-verified backup. If no slot is available, or the watcher fails to start, stops early, or its output is missing or corrupt, do not proceed with the gameplay run; mark it **inconclusive** and resolve telemetry availability first. Do not clear shared `PersistentData` to make room. Observer add-ons must be confirmed passive and compatible with the test; do **not** assume the M2Watcher works with independent probes.
+3. Only one active controller may own each test cadet. Do not run M0 probe, M1 traversal, M2 WaveCadet and a new movement/Carry probe simultaneously. For every `M2-L0` and `M2-C1` gameplay session, `AICadetsM2Watcher` is **required**. Before launching the game, start start_m2_watcher_archival.bat with AoTTG2 closed and wait until it reports a ready slot and is waiting for AoTTG2.exe. The monitor archives and verifies old watcher files before recycling their slots, then captures changing files during play and finalizes the archive after exit. If it cannot verify an archive, recognize the source files, or free a slot, do not begin the gameplay run. No M2 iteration or acceptance result counts without a saved, reviewed watcher trace. A missing, stopped, corrupt, or unarchived trace makes the gameplay result **inconclusive**. Do not clear shared `PersistentData` to make room. Observer add-ons must be confirmed passive and compatible with the test; do **not** assume the M2Watcher works with independent probes.
 4. Preserve original `.cl` files, a copy of working deployed scripts and existing watcher logs. Protect local changes using `git status` before `git switch` / `git pull --ff-only`. Source branch changes do not auto-deploy to `Documents/AoTTG2/Addons/` unless verified local automation exists.
 5. Change **one variable at a time** within A/B sessions (e.g. Direct versus Engine), with the same map, spawn, Titan conditions, settings and approximate geometry as far as possible. Restart the lobby for a clean comparison. Do not equate an API dispatch or attack animation with movement success, blade damage or a rescue.
 6. Use a private master-host lobby for initial tests. Avoid testing on unconsenting players or on public servers. Only advance to multiplayer, Waves accounting, or mobile performance after the earlier single-cadet, single-host tests.
@@ -45,10 +45,22 @@ An add-on file existing in the installed folder is **not** proof that it is disa
 
 **Probe filenames for PRIM-I and CARRY-I are placeholders until created by Luna.** Luna must fill in actual filenames/identifiers in its Validation Card and update this harness before asking the user to enable them. `AICadetsM2Watcher` is tailored to M2, **not** automatically suitable as a logger for isolated probes.
 
+## Automatic M2 watcher archival
+
+The M2 watcher is a required telemetry instrument. Follow the local archival workflow in M2_WATCHER_ARCHIVAL.md before every repeated playtest:
+
+- Close AoTTG2 and launch start_m2_watcher_archival.bat before starting the game.
+- Keep the monitor window open. It archives any existing M2 watcher files, verifies each snapshot, and removes only verified watcher files so slots 0–99 are available.
+- Start the private M2 lobby only after preflight reports a free slot and the monitor is waiting for the game. Enable the M2 WaveCadet, CommandPanel/F8, and M2Watcher trio.
+- The monitor captures changing watcher files while AoTTG2 runs. After the process exits, it verifies the final archive and recycles only exact M2 watcher files. A failed verification stops cleanup and returns a nonzero status.
+- Preserve the archive directory and manifest with the playtest artifacts. Restore is available through the documented CLI command.
+
+If the monitor attaches to a game that was already open, it could not prepare slots before that session. Treat that run as inconclusive if the watcher did not produce a complete trace. Do not run two archival monitors at once.
+
 ## First required test: M2-L0
 
 - Source: `feat/m2-exploration-and-orders`, gameplay revision `ba0ba05` (`M2-locomotion-1`); later documentation-only commits do not alter the controller.
-- Host: fresh private master-host City 1 / Training / Waves; only the M2 trio enabled; saved addon settings may override defaults.
+- Host: fresh private master-host City 1 / Training / Waves; only the M2 trio enabled; saved addon settings may override defaults. Start the archival monitor before launching AoTTG2.
 - Ensure the F8 panel reports `M2-locomotion-1` and choose **GROUND: direct steering (default)**; independently verify reported `ground=Direct`.
 - **Run A**: stationary Titan in open street, Engage. Inspect actual displacement and `target_gain`, `motion_command request=Human.Move`, `motion_observed`, `pursuit_progress`, absence of `MoveToTarget` ground pursuit. Confirm one no-anchor fallback crosses its **18-unit planar** arrival threshold (not a nape hit claim).
 - **Run B**: recreate similar scenario, switch F8 to **GROUND: engine steering test**. Look for `Human.MoveTo`, `ai_state_after=MoveTo`, and compare path length, net displacement, closing distance, reversals and recovery. A state flag does not prove movement.
@@ -85,7 +97,7 @@ ACTIONS (one variable per A/B run):
 EXPECTED PHYSICAL RESULT:
 EXPECTED LOG EVENTS:
 FAILURE / INTERRUPT CASES:
-ARTIFACTS TO RETURN (all M2 watcher segments with hashes/manifest, screenshots/video if available, settings, exact log messages):
+ARTIFACTS TO RETURN (all M2 watcher segments and archive manifest with hashes, screenshots/video if available, settings, exact log messages):
 PASS / FAIL / PARTIAL / INCONCLUSIVE CRITERIA:
 ROLLBACK FILES OR COMMIT:
 ```
