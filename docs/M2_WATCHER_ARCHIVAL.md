@@ -2,7 +2,7 @@
 
 This is a local-only filesystem utility for the M2 Custom Logic watcher. The official Custom Logic API places saved data under Documents/Aottg2/PersistentData; PersistentData.SaveToFile(fileName, encrypted) saves the current persistent-data store to a named file. The archive therefore preserves each selected file as opaque bytes instead of parsing or rewriting its properties.
 
-The utility handles only direct children named AICadetsM2Watch<number> with no extension, .txt, or .json. It does not call PersistentData.Clear, touch other filenames, upload data, or modify gameplay add-ons.
+The utility handles only direct children named AICadetsM2Watch followed by digits, with no extension, .txt, or .json. It does not call PersistentData.Clear, touch other filenames, upload data, or modify gameplay add-ons.
 
 ## Recommended iterative workflow
 
@@ -13,7 +13,7 @@ The utility handles only direct children named AICadetsM2Watch<number> with no e
 
 Start the monitor before the game. If AoTTG2 is already open, the script attaches to the current session; it cannot prepare slots before that run.
 
-The launcher uses AoTTG2.exe as the process name. If this installation uses another executable name, run the script directly with --process-name <actual-name>.
+The launcher uses AoTTG2.exe as the process name. If this installation uses another executable name, run the script directly and set --process-name to the executable's exact process name.
 
 ## Commands
 
