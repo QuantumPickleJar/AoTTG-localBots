@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import uuid
+import zlib
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,9 +57,9 @@ def sha256(data: bytes) -> str:
 
 
 def ensure_separate_roots(source: Path, archive_root: Path) -> tuple[Path, Path]:
-    source = source.expanduser().resolve(strict=True)
+    source = source.expanduser().resolve(strict=False)
     archive_root = archive_root.expanduser().resolve(strict=False)
-    if not source.is_dir():
+    if source.exists() and not source.is_dir():
         raise ArchiveError(f"PersistentData source is not a directory: {source}")
     try:
         archive_root.relative_to(source)
@@ -321,11 +322,13 @@ class ArchiveSession:
             "source_disappearances": [],
             "unrecognized_watcher_entries": [],
             "capture_errors": [],
+            "active_capture_errors": {},
             "prune_requested": False,
             "pruned_source_files": [],
         }
         self._snapshot_index: dict[tuple[str, str], dict[str, Any]] = {}
-        self._latest_names: set[str] = set()
+        self._present_names: set[str] = set()
+        self._active_capture_errors: dict[str, str] = {}
         atomic_write_json(self.manifest_path, self.manifest)
 
     def _save_manifest(self) -> None:
@@ -341,10 +344,9 @@ class ArchiveSession:
         key = (path.name, digest)
         existing = self._snapshot_index.get(key)
         if existing is not None:
-            existing["last_seen_at_utc"] = now_utc()
-            existing["times_seen"] += 1
-            self.manifest["latest_snapshot_by_source"][path.name] = digest
-            self._save_manifest()
+            if self.manifest["latest_snapshot_by_source"].get(path.name) != digest:
+                self.manifest["latest_snapshot_by_source"][path.name] = digest
+                self._save_manifest()
             return digest
 
         match = watcher_match(path.name)
@@ -380,7 +382,6 @@ class ArchiveSession:
         self.manifest["snapshots"].append(record)
         self._snapshot_index[key] = record
         self.manifest["latest_snapshot_by_source"][path.name] = digest
-        self._latest_names.add(path.name)
         self._save_manifest()
         return digest
 
@@ -391,24 +392,34 @@ class ArchiveSession:
                 self.manifest["unrecognized_watcher_entries"].append(name)
 
         current_names = {path.name for _, path in candidates}
-        known_names = set(self.manifest["observed_source_files"])
-        vanished = sorted(known_names - current_names, key=str.casefold)
+        vanished = sorted(self._present_names - current_names, key=str.casefold)
         for name in vanished:
-            event = {"source_name": name, "noticed_at_utc": now_utc()}
-            if event not in self.manifest["source_disappearances"]:
-                self.manifest["source_disappearances"].append(event)
+            self.manifest["source_disappearances"].append(
+                {"source_name": name, "noticed_at_utc": now_utc()}
+            )
+        self._present_names = current_names
+        known_names = set(self.manifest["observed_source_files"])
         self.manifest["observed_source_files"] = sorted(
             known_names | current_names, key=str.casefold
         )
 
         for _, path in candidates:
             try:
-                self.capture_file(path)
+                digest = self.capture_file(path)
+                if digest is None and path.name not in self.manifest["latest_snapshot_by_source"]:
+                    raise ArchiveError("source disappeared before its first verified snapshot")
+                if path.name in self._active_capture_errors:
+                    self._active_capture_errors.pop(path.name, None)
+                    self.manifest["active_capture_errors"] = dict(self._active_capture_errors)
+                    self._save_manifest()
             except (ArchiveError, OSError) as exc:
                 message = f"{path.name}: {exc}"
+                self._active_capture_errors[path.name] = message
                 if message not in self.manifest["capture_errors"]:
                     self.manifest["capture_errors"].append(message)
+                self.manifest["active_capture_errors"] = dict(self._active_capture_errors)
                 self._save_manifest()
+
         return candidates, unexpected
 
     def _snapshot_record(self, source_name: str, digest: str) -> dict[str, Any] | None:
@@ -426,7 +437,7 @@ class ArchiveSession:
             if sha256(compressed) != record["archive_sha256"]:
                 return False
             raw = gzip.decompress(compressed)
-        except (OSError, EOFError, gzip.BadGzipFile):
+        except (OSError, EOFError, gzip.BadGzipFile, zlib.error):
             return False
         return (
             len(raw) == record["source_size_bytes"]
@@ -437,45 +448,71 @@ class ArchiveSession:
         self.manifest["prune_requested"] = prune_verified
         if settle_seconds > 0:
             time.sleep(settle_seconds)
-        candidates, unexpected = self.capture_all()
-        current_records: list[tuple[Path, bytes, dict[str, Any]]] = []
+        self.capture_all()
 
+        candidates, unexpected = inventory(self.source)
+        current_records: list[tuple[Path, bytes, dict[str, Any]]] = []
         for _, path in candidates:
             try:
                 raw = read_stable(path)
-            except (ArchiveError, OSError) as exc:
-                self.manifest["capture_errors"].append(f"{path.name}: final read failed: {exc}")
+            except FileNotFoundError:
                 continue
+            except (ArchiveError, OSError) as exc:
+                message = f"{path.name}: final read failed: {exc}"
+                self._active_capture_errors[path.name] = message
+                if message not in self.manifest["capture_errors"]:
+                    self.manifest["capture_errors"].append(message)
+                continue
+
             digest = sha256(raw)
             record = self._snapshot_record(path.name, digest)
             if record is None or not self.verify_snapshot(record):
-                self.manifest["capture_errors"].append(
-                    f"{path.name}: no verified archive snapshot matches the final source bytes"
-                )
+                message = f"{path.name}: no verified archive snapshot matches the final source bytes"
+                self._active_capture_errors[path.name] = message
+                if message not in self.manifest["capture_errors"]:
+                    self.manifest["capture_errors"].append(message)
                 continue
+            self._active_capture_errors.pop(path.name, None)
             current_records.append((path, raw, record))
 
+        final_candidates, final_unexpected = inventory(self.source)
+        final_names = {path.name for _, path in final_candidates}
+        current_records = [
+            item for item in current_records if item[0].name in final_names
+        ]
+        recorded_names = {path.name for path, _, _ in current_records}
+        for _, path in final_candidates:
+            if path.name not in recorded_names:
+                self._active_capture_errors[path.name] = (
+                    f"{path.name}: final inventory lacks a verified snapshot"
+                )
+        self.manifest["active_capture_errors"] = dict(self._active_capture_errors)
+        all_unexpected = sorted(set(unexpected + final_unexpected), key=str.casefold)
+        for name in all_unexpected:
+            if name not in self.manifest["unrecognized_watcher_entries"]:
+                self.manifest["unrecognized_watcher_entries"].append(name)
+
         if not prune_verified:
+            if all_unexpected or self._active_capture_errors:
+                self.manifest["status"] = "incomplete_capture"
+                self._save_manifest()
+                print("Archive incomplete; originals were kept. Review manifest errors before playtesting.")
+                return False
             self.manifest["status"] = "complete_unpruned"
             self._save_manifest()
             print(f"Archived {len(self.manifest['snapshots'])} verified watcher snapshots to {self.run_dir}")
             print("Original PersistentData files were kept.")
             return True
 
-        if unexpected:
+        if all_unexpected:
             self.manifest["status"] = "blocked_unrecognized_entries"
             self._save_manifest()
             print("Pruning blocked: unrecognized watcher-like entries need review.")
             return False
-        if self.manifest["capture_errors"]:
+        if self._active_capture_errors or len(current_records) != len(final_candidates):
             self.manifest["status"] = "blocked_capture_or_verification_error"
             self._save_manifest()
-            print("Pruning blocked: at least one source or archive failed verification.")
-            return False
-        if len(current_records) != len(candidates):
-            self.manifest["status"] = "blocked_incomplete_final_inventory"
-            self._save_manifest()
-            print("Pruning blocked: not every current watcher file has a verified archive copy.")
+            print("Pruning blocked: every current watcher file must have a verified archive copy.")
             return False
         if game_is_running(process_name):
             self.manifest["status"] = "blocked_game_running"
@@ -500,7 +537,8 @@ class ArchiveSession:
                 current_raw = read_stable(path)
             except (ArchiveError, OSError) as exc:
                 self.manifest["status"] = "partial_source_changed_during_prune"
-                self.manifest["capture_errors"].append(f"{path.name}: {exc}")
+                self._active_capture_errors[path.name] = f"{path.name}: {exc}"
+                self.manifest["active_capture_errors"] = dict(self._active_capture_errors)
                 self._save_manifest()
                 print(f"Pruning stopped because {path.name} changed or became unreadable.")
                 return False
@@ -512,6 +550,11 @@ class ArchiveSession:
                 self.manifest["status"] = "partial_source_changed_during_prune"
                 self._save_manifest()
                 print(f"Pruning stopped because {path.name} no longer matches its archive.")
+                return False
+            if game_is_running(process_name):
+                self.manifest["status"] = "partial_game_restarted_during_prune"
+                self._save_manifest()
+                print("Pruning stopped because the game process restarted.")
                 return False
             try:
                 path.unlink()
@@ -545,8 +588,12 @@ class ArchiveSession:
         )
         self._save_manifest()
         if self.manifest["status"] == "complete_pruned":
+            slots = free_slots(remaining)
             print(f"Archived and verified {len(current_records)} watcher files: {self.run_dir}")
-            print("Verified watcher source files were removed; the 0-99 slot range is free.")
+            if len(slots) == SLOT_LIMIT:
+                print("Verified watcher files were removed; slots 0-99 are free.")
+            else:
+                print(f"Verified archive complete; {len(slots)} of 100 slots are free.")
             return True
         print(f"Archive verified, but watcher files remain in PersistentData: {self.manifest['remaining_watcher_files']}")
         return False
@@ -590,27 +637,27 @@ def run_monitor(
             return 0
         session = create_session(source, archive_root, mode)
         session.capture_all()
-        ok = session.finish(prune, process_name, settle_seconds)
-        if not ok:
-            return 2
-        return 0
+        return 0 if session.finish(prune, process_name, settle_seconds) else 2
+
+    def capture_active_session(mode: str) -> bool:
+        session = create_session(source, archive_root, mode)
+        while game_is_running(process_name):
+            session.capture_all()
+            time.sleep(poll_seconds)
+        return session.finish(prune, process_name, settle_seconds)
 
     if game_is_running(process_name):
         print(f"{process_name} is already running; attaching to the active session.")
         print("Slot preparation could not run before this session.")
-        session = create_session(source, archive_root, "attached_active_game")
-        while game_is_running(process_name):
-            session.capture_all()
-            time.sleep(poll_seconds)
-        session.finish(prune, process_name, settle_seconds)
+        if not capture_active_session("attached_active_game"):
+            return 2
         if once:
             return 0
     else:
         if archive_existing("pre_run_slot_cleanup") != 0:
             return 2
-        ready = print_preflight(source)
-        if ready != 0:
-            return ready
+        if print_preflight(source) != 0:
+            return 2
 
     while True:
         print(f"Waiting for {process_name}. Press Ctrl+C to stop.")
@@ -618,13 +665,7 @@ def run_monitor(
             time.sleep(poll_seconds)
 
         print(f"Detected {process_name}; archiving watcher changes during the session.")
-        session = create_session(source, archive_root, "game_session")
-        while game_is_running(process_name):
-            session.capture_all()
-            time.sleep(poll_seconds)
-
-        ok = session.finish(prune, process_name, settle_seconds)
-        if not ok:
+        if not capture_active_session("game_session"):
             return 2
         if once:
             return 0
@@ -649,17 +690,23 @@ def run_restore(source: Path, archive_dir: Path, process_name: str, force_overwr
     if Path(manifest.get("source_directory", "")).resolve() != source:
         raise ArchiveError("Archive source directory does not match the requested PersistentData directory.")
 
-    latest: dict[str, dict[str, Any]] = {}
+    snapshots_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for record in manifest.get("snapshots", []):
         name = record.get("source_name", "")
-        if watcher_match(name) is None:
-            raise ArchiveError(f"Manifest contains an unexpected source filename: {name}")
-        previous = latest.get(name)
-        if previous is None or record.get("last_seen_at_utc", "") > previous.get("last_seen_at_utc", ""):
-            latest[name] = record
+        digest = record.get("source_sha256", "")
+        if watcher_match(name) is None or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ArchiveError("Manifest contains an invalid watcher filename or source hash.")
+        snapshots_by_key[(name, digest)] = record
+
+    latest_hashes = manifest.get("latest_snapshot_by_source", {})
+    if not isinstance(latest_hashes, dict):
+        raise ArchiveError("Manifest latest-snapshot index is invalid.")
 
     restore_items: list[tuple[Path, bytes]] = []
-    for name, record in sorted(latest.items(), key=lambda item: item[0].casefold()):
+    for name, digest in sorted(latest_hashes.items(), key=lambda item: item[0].casefold()):
+        record = snapshots_by_key.get((name, digest))
+        if record is None:
+            raise ArchiveError(f"Manifest has no snapshot record for {name}")
         relative = Path(record["archive_path"])
         stored_path = (archive_dir / relative).resolve(strict=True)
         try:
@@ -671,16 +718,18 @@ def run_restore(source: Path, archive_dir: Path, process_name: str, force_overwr
             raise ArchiveError(f"Compressed archive hash mismatch for {name}")
         try:
             raw = gzip.decompress(compressed)
-        except (EOFError, gzip.BadGzipFile) as exc:
+        except (EOFError, gzip.BadGzipFile, zlib.error) as exc:
             raise ArchiveError(f"Archive payload is corrupt for {name}") from exc
-        if len(raw) != record.get("source_size_bytes") or sha256(raw) != record.get("source_sha256"):
+        if len(raw) != record.get("source_size_bytes") or sha256(raw) != digest:
             raise ArchiveError(f"Original-byte verification failed for {name}")
         target = source / name
+        if target.is_symlink():
+            raise ArchiveError(f"Restore target is a symbolic link: {target}")
         if target.exists() and not target.is_file():
             raise ArchiveError(f"Restore target is not a regular file: {target}")
         if target.exists():
             existing = read_stable(target)
-            if sha256(existing) == record["source_sha256"]:
+            if sha256(existing) == digest:
                 continue
             if not force_overwrite:
                 raise ArchiveError(
@@ -688,6 +737,7 @@ def run_restore(source: Path, archive_dir: Path, process_name: str, force_overwr
                 )
         restore_items.append((target, raw))
 
+    source.mkdir(parents=True, exist_ok=True)
     for target, raw in restore_items:
         atomic_write(target, raw)
         if read_stable(target) != raw:
@@ -775,6 +825,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("Unknown command.")
     except ArchiveError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"ERROR: filesystem operation failed: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("\nStopped by user.")
