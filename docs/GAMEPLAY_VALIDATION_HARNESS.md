@@ -35,7 +35,7 @@ An add-on file existing in the installed folder is **not** proof that it is disa
 | **M2-C1** | After each Prompt 2 gameplay-code revision | Same M2 trio | All M0/M1 and independent probes | Physical ODM pursue/close/strike; attack animation **and** attributed damage/kill; target recovery |
 | **M1-R** | Only when M1 traversal regression is implicated | Exactly **one of** `AICadetsTraversal` or `AICadetsTraversalReliable`, optional `AICadetsWatcher` | Both M2 controller/panel/watcher, `AICadetsProbe`, the *other* M1 controller, all new active probes | Two anchors, release, gas, collisions/recovery, reset |
 | **M0-R** | Only when spawn/low-level hook regression is suspected | `AICadetsProbe` alone | All M1/M2 controllers and independent probes; omit watchers unless explicitly justified | Single-hook reference behavior |
-| **PRIM-I** | After Prompt 3 creates an *isolated* movement test add-on | **Only** the newly created movement probe; add its dedicated passive logger only if verified | M0/M1/M2 controllers and their mode-specific watchers | Ground Dodge, Jump, directional Dash, `UseGas` pulses, airborne variants, gas costs, state/velocity/displacement |
+| **PRIM-I** | After REC-I passes; Prompt 3 supplies the isolated probe | `AICadetsPrimitiveProbe`; add REC-I recorder if calibrated, otherwise pair `AICadetsPrimitiveObserver` and one short calibration video as provisional evidence | M0/M1/M2 controllers, F8 panel, all M0/M1/M2 watchers and every other active probe | Ground Dodge, Jump, four one-direction Dash cases, gas pulse, jump + dash, airborne dash, ground steer, single hook; measured gas/state/velocity/displacement |
 | **COMP-I** | After Prompt 4 changes only composition parsing/selection code | No gameplay session needed if no runtime behavior changes; run source/mock tests | N/A | Catalog filter, empty/one-option safety, equipped-special swap, novelty soft scoring, gas reserve |
 | **COMP-E** | After Prompt 4 affects executable M2 behavior | M2 trio, with one controller-owned cadet | M0/M1 and independent probes | One character: capability filtering, selected maneuver execution and actual fallback; no fictional specials |
 | **CARRY-I** | First Prompt 5 rescue milestone | **Only** new dedicated Carry mechanics probe; compatible passive observer if validated | M0/M1/M2 controller add-ons and other active probes | Verify true `Carry` special activation, target selection, `IsCarried`, pickup/transport/release; unsupported behavior remains gated |
@@ -43,7 +43,28 @@ An add-on file existing in the installed folder is **not** proof that it is disa
 | **ADAPT-E** | After Prompt 6 changes adaptive scheduling/execution | M2 trio; optional verified passive performance instrumentation | M0/M1 and independent active probes | Movement/attack/rescue regressions, event-triggered response, stable control, frame-time/CPU on real devices |
 | **MOBILE-R** | When AoTTG2 mobile build permits equivalent test setup | Same tested feature add-ons as that milestone, using supported mobile install method | Conflicting controllers and unproven instrumentation | Gameplay parity, performance, device-specific input/state limitations. Do not assume PC plugin or addon path works on mobile |
 
-**Probe filenames for PRIM-I and CARRY-I are placeholders until created by Luna.** Luna must fill in actual filenames/identifiers in its Validation Card and update this harness before asking the user to enable them. `AICadetsM2Watcher` is tailored to M2, **not** automatically suitable as a logger for isolated probes.
+`AICadetsPrimitiveProbe.cl` and `AICadetsPrimitiveObserver.cl` are now the exact PRIM-I source filenames. The observer is a low-rate Custom Logic fallback and is **not** a physics-step recorder. CARRY-I filenames remain placeholders until that probe exists. `AICadetsM2Watcher` is tailored to M2, **not** suitable as a logger for isolated probes.
+
+### PRIM-I prepared card — do not run before REC-I passes
+
+**Status:** source and static checks are prepared; no current-build parser or physics validation has occurred. First qualify the passive recorder with REC-I. If REC-I is unavailable and the project owner later chooses to run a provisional probe, use the low-rate observer plus a short calibration video and label the result provisional.
+
+```text
+SESSION ID: PRIM-I
+GOAL: Measure each documented movement primitive in isolation before any M2 integration.
+BRANCH / EXACT COMMIT / REPORTED BUILD: `codex/2026-11-02-prim-i-offline` at primitive source commit `56cb7d90bd6b2df703b5be6127bcec221a82749f`; record the installed AoTTG2 build separately.
+FILES TO COPY: addons/AICadetsPrimitiveProbe.cl; addons/AICadetsPrimitiveObserver.cl only if REC-I has not qualified a recorder.
+ENABLE: AICadetsPrimitiveProbe with RunTest=true and exactly one TestCase per fresh round; calibrated REC-I recorder if available; otherwise AICadetsPrimitiveObserver with RunObserver=true.
+DISABLE: AICadetsProbe, AICadetsTraversal, AICadetsTraversalReliable, AICadetsWatcher, AICadetsWaveCadet, AICadetsCommandPanel, AICadetsM2Watcher, and every other controller or active probe.
+MAP / MODE / HOST: Private master-host lobby; quiet City 1 / Training / Waves area with clear ground, unobstructed takeoff and a known hookable wall for HookLeft.
+PRECONDITIONS: Confirm RunTest=false by default, then opt in; confirm observer disabled unless selected; verify the spawned probe is master-owned; no unconsenting players.
+ACTIONS: In separate fresh rounds set TestCase to Dodge, Jump, DashForward, DashBackward, DashLeft, DashRight, GasPulse, JumpDashForward, AirDashForward, GroundMove, then HookLeft. Never enable a second controller for the same cadet.
+EXPECTED PHYSICAL RESULT: Record actual position and velocity over time, gas before/after, state/grounded transitions, hook attach/release and landing. Command acknowledgment alone is not a pass.
+EXPECTED LOG EVENTS: probe spawn, selected case, observed airborne/hook prerequisites, bounded action end, final displacement/delta-v/gas delta and stop/abort reason.
+ARTIFACTS: one recorder ZIP and parser report per primitive after REC-I; otherwise the bounded PersistentData observer file plus one calibration clip per unresolved visual question. Include exact TestCase, map, host and add-on settings.
+PASS / FAIL / PARTIAL / INCONCLUSIVE: Pass only when the commanded effect and physical outcome are measurable, resources/state transitions are understood, the stop path is observed, and no unsafe or contradictory behavior occurs. Unsupported state or uncertain coverage is partial/inconclusive.
+ROLLBACK: Remove/disable both primitive add-ons; restore the previous Addons folder copy. No M2 runtime files are changed.
+```
 
 ## First required test: M2-L0
 
