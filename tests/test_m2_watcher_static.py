@@ -8,7 +8,7 @@ from test_wave_m2 import Cadet
 class M2WatcherTests(unittest.TestCase):
     def test_passive_bounded_m2_observer(self):
         src = (Path(__file__).resolve().parents[1] / "addons/AICadetsM2Watcher.cl").read_text()
-        for token in ("AICadetsM2WatchTrace", "AICadetsM2RunId-", "GetAIState()", "_records >= 2000", "AICadetsM2TargetInfo-", "AICadetsM2Navigation-"):
+        for token in ("AICadetsM2WatchTrace", "AICadetsM2RunId-", "GetAIState()", "_records >= 2000", "AICadetsM2TargetInfo-", "AICadetsM2Navigation-", "AICadetsM2ObservedPath-", "AICadetsM2WatcherCadet", "Vector3.Distance("):
             self.assertIn(token, src)
         for token in ("PersistentData.Clear(", "SpawnHumanAt(", "LaunchHookLeft(", "UseGas(", "Attack(", ".MoveTo("):
             self.assertNotIn(token, src)
@@ -38,3 +38,45 @@ class M2WatcherTests(unittest.TestCase):
         self.assertIn("human_state=Idle", observer._trace)
         self.assertIn("animation=idle", observer._trace)
         self.assertEqual(cadet.calls, [])
+
+    def test_watcher_resets_and_publishes_sampled_position_path(self):
+        src = (Path(__file__).resolve().parents[1] / "addons/AICadetsM2Watcher.cl").read_text()
+        cadet = Cadet()
+        cadet.Name = "AICadetsM2-1"
+        cadet.Position = Vector(0.0, 10.0, 0.0)
+        cadet.Grounded = False
+        cadet.IsHookingLeft = False
+        data = {"AICadetsM2ObservedPath-AICadetsM2-1": 99.0}
+        files = set()
+        time = NS(GameTime=0.0)
+
+        def save_to_file(file_name, encrypted):
+            files.add(file_name)
+            return True
+
+        observer = load_controller({
+            "Network": NS(IsMasterClient=True), "Time": time,
+            "Game": NS(AIHumans=[cadet], Print=lambda s: None),
+            "PersistentData": NS(
+                FileExists=lambda file_name: file_name in files,
+                SaveToFile=save_to_file,
+                GetProperty=lambda key, default: data.get(key, default),
+                SetProperty=lambda key, value: data.__setitem__(key, value)),
+            "Convert": NS(ToString=str), "Range": range, "Vector3": Vector,
+        }, src, class_name="AICadetsM2Watcher")
+        observer.OnGameStart()
+        observer.OnTick()
+        self.assertEqual(data["AICadetsM2WatcherCadet"], "AICadetsM2-1")
+        self.assertEqual(data["AICadetsM2ObservedPath-AICadetsM2-1"], 0.0)
+
+        cadet.Position = Vector(2.0, 10.0, 0.0)
+        time.GameTime = 0.02
+        observer.OnTick()
+        self.assertEqual(data["AICadetsM2ObservedPath-AICadetsM2-1"], 2.0)
+        self.assertEqual(data["AICadetsM2ObservedSampleTime-AICadetsM2-1"], 0.02)
+
+        cadet.Position = Vector(5.0, 10.0, 0.0)
+        time.GameTime = 0.24
+        observer.OnTick()
+        self.assertEqual(data["AICadetsM2ObservedPath-AICadetsM2-1"], 5.0)
+        self.assertIn("path_total=5.0", observer._trace)

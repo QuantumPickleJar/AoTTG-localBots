@@ -48,6 +48,7 @@ class Element:
 class OrdersTest(unittest.TestCase):
     def make_controller(self, master=True):
         persistent = {}
+        files = set()
         roots = []
         logs = []
         keypresses = set()
@@ -89,6 +90,7 @@ class OrdersTest(unittest.TestCase):
                 "PersistentData": NS(
                     GetProperty=lambda key, default: persistent.get(key, default),
                     SetProperty=lambda key, value: persistent.__setitem__(key, value),
+                    FileExists=lambda file_name: file_name in files,
                 ),
                 "Game": NS(Print=logs.append, AIHumans=humans),
                 "Convert": NS(ToString=str),
@@ -96,7 +98,95 @@ class OrdersTest(unittest.TestCase):
             SOURCE,
             class_name="AICadetsCommandPanel",
         )
+        controller._testFiles = files
         return controller, persistent, roots, logs, keypresses, camera, inputs, humans, time
+
+    def drive_auto_hold_capture(self, hold_distance):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        humans.append(NS(Name="AICadetsM2-1", IsAlive=True, IsMine=True))
+        data.update({
+            "AICadetsM2WatcherActive": True,
+            "AICadetsM2WatcherFile": "AICadetsM2Watch0",
+            "AICadetsM2WatcherCadet": "AICadetsM2-1",
+            "AICadetsM2ObservedPath-AICadetsM2-1": 0.0,
+            "AICadetsM2ObservedSampleTime-AICadetsM2-1": 2.0,
+            "AICadetsM2Build-AICadetsM2-1": "M2-locomotion-1-test",
+            "AICadetsM2Heartbeat-AICadetsM2-1": 2.0,
+            "AICadetsM2StatusTime-AICadetsM2-1": 2.0,
+            "AICadetsM2State-AICadetsM2-1": "AcquireTarget",
+            "AICadetsM2Mode-AICadetsM2-1": "Engage",
+            "AICadetsM2TargetId-AICadetsM2-1": 1005,
+            "AICadetsM2AckSeq-AICadetsM2-1": 0,
+            "AICadetsM2AckMode-AICadetsM2-1": "none",
+        })
+        panel._testFiles.add("AICadetsM2Watch0")
+        panel.OpenMenu()
+        buttons = {e.Text: e for e in panel._actions.children if hasattr(e, "callback")}
+        buttons["RUN AUTO HOLD CAPTURE (M2-1)"].callback()
+        panel.OnTick()
+        self.assertEqual(data["AICadetsCmdMode"], "EngageDirect")
+
+        data["AICadetsM2AckSeq-AICadetsM2-1"] = 1
+        data["AICadetsM2AckMode-AICadetsM2-1"] = "EngageDirect"
+        time.GameTime = 3.0
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 3.0
+        panel.OnTick()
+        data["AICadetsM2State-AICadetsM2-1"] = "ApproachGround"
+        data["AICadetsM2TargetId-AICadetsM2-1"] = 1005
+        time.GameTime = 3.1
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 3.1
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 3.1
+        panel.OnTick()
+
+        time.GameTime = 5.3
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 5.3
+        data["AICadetsM2ObservedPath-AICadetsM2-1"] = 1.5
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 5.3
+        panel.OnTick()
+        self.assertEqual(data["AICadetsCmdSequence"], 1)
+
+        time.GameTime = 5.5
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 5.5
+        data["AICadetsM2ObservedPath-AICadetsM2-1"] = 2.0
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 5.5
+        panel.OnTick()
+        self.assertEqual(data["AICadetsCmdMode"], "Hold")
+
+        data["AICadetsM2AckSeq-AICadetsM2-1"] = 2
+        data["AICadetsM2AckMode-AICadetsM2-1"] = "Hold"
+        data["AICadetsM2State-AICadetsM2-1"] = "Hold"
+        time.GameTime = 5.6
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 5.6
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 5.6
+        panel.OnTick()
+
+        time.GameTime = 10.7
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 10.7
+        data["AICadetsM2ObservedPath-AICadetsM2-1"] = 2.0 + hold_distance
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 10.7
+        panel.OnTick()
+        self.assertEqual(data["AICadetsCmdMode"], "EngageDirect")
+
+        data["AICadetsM2AckSeq-AICadetsM2-1"] = 3
+        data["AICadetsM2AckMode-AICadetsM2-1"] = "EngageDirect"
+        data["AICadetsM2State-AICadetsM2-1"] = "AcquireTarget"
+        time.GameTime = 10.8
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 10.8
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 10.8
+        panel.OnTick()
+
+        data["AICadetsM2State-AICadetsM2-1"] = "ApproachGround"
+        time.GameTime = 11.0
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 11.0
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 11.0
+        panel.OnTick()
+        time.GameTime = 13.1
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 13.1
+        data["AICadetsM2ObservedPath-AICadetsM2-1"] = 4.0 + hold_distance
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 13.1
+        panel.OnTick()
+        return panel, data, logs
 
     def test_menu_hidden_by_default_f8_controls_cursor_without_pause(self):
         panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
@@ -149,9 +239,9 @@ class OrdersTest(unittest.TestCase):
         panel.OnGameStart()
         panel.OpenMenu()
         buttons = [e for e in panel._actions.children if hasattr(e, "callback")]
-        self.assertEqual(len(buttons), 16)
+        self.assertEqual(len(buttons), 17)
         labels = {e.Text for e in buttons}
-        self.assertTrue({"ENGAGE + DIRECT", "ENGAGE + ENGINE", "HOLD position", "RECOVER + RESUME ENGAGE"}.issubset(labels))
+        self.assertTrue({"ENGAGE + DIRECT", "ENGAGE + ENGINE", "HOLD position", "RECOVER + RESUME ENGAGE", "RUN AUTO HOLD CAPTURE (M2-1)"}.issubset(labels))
         panel.SelectTwo()
         panel.Explore()
         self.assertEqual(data["AICadetsCmdScope"], "AICadetsM2-2")
@@ -272,6 +362,65 @@ class OrdersTest(unittest.TestCase):
         panel.OnFrame()
         panel.Hold()
         self.assertEqual(data, {})
+
+    def test_auto_hold_capture_requires_watcher_measured_motion_and_records_stop(self):
+        panel, data, logs = self.drive_auto_hold_capture(1.5)
+        trace = data["AICadetsM2AutoHoldTestTrace"]
+        self.assertEqual(panel._autoHoldTestStage, "complete")
+        self.assertIn("ground_pursuit_seen target=1005 path=0", trace)
+        self.assertIn("hold_sent seq=2 target=1005 path=2.0", trace)
+        self.assertIn("hold_motion_observed distance=1.5 outcome=within_2_units", trace)
+        self.assertIn("complete hold_within_2_units=True resumed_path=2.0 target=1005", trace)
+        self.assertTrue(any("EngageDirect -> Hold" in message for message in logs))
+
+    def test_auto_hold_capture_records_excess_movement_during_hold_as_failure(self):
+        panel, data, logs = self.drive_auto_hold_capture(2.5)
+        trace = data["AICadetsM2AutoHoldTestTrace"]
+        self.assertEqual(panel._autoHoldTestStage, "complete")
+        self.assertIn("hold_motion_observed distance=2.5 outcome=over_2_units", trace)
+        self.assertIn("complete hold_within_2_units=False resumed_path=2.0 target=1005", trace)
+
+    def test_auto_hold_capture_waits_for_two_units_of_observed_ground_travel(self):
+        panel, data, roots, logs, keys, camera, inputs, humans, time = self.make_controller()
+        panel.OnGameStart()
+        humans.append(NS(Name="AICadetsM2-1", IsAlive=True, IsMine=True))
+        data.update({
+            "AICadetsM2WatcherActive": True,
+            "AICadetsM2WatcherFile": "AICadetsM2Watch0",
+            "AICadetsM2WatcherCadet": "AICadetsM2-1",
+            "AICadetsM2ObservedPath-AICadetsM2-1": 0.0,
+            "AICadetsM2ObservedSampleTime-AICadetsM2-1": 2.0,
+            "AICadetsM2Build-AICadetsM2-1": "M2-locomotion-1-test",
+            "AICadetsM2Heartbeat-AICadetsM2-1": 2.0,
+            "AICadetsM2StatusTime-AICadetsM2-1": 2.0,
+            "AICadetsM2State-AICadetsM2-1": "AcquireTarget",
+            "AICadetsM2Mode-AICadetsM2-1": "Engage",
+            "AICadetsM2TargetId-AICadetsM2-1": 1005,
+            "AICadetsM2AckSeq-AICadetsM2-1": 0,
+            "AICadetsM2AckMode-AICadetsM2-1": "none",
+        })
+        panel._testFiles.add("AICadetsM2Watch0")
+        panel.OpenMenu()
+        buttons = {e.Text: e for e in panel._actions.children if hasattr(e, "callback")}
+        buttons["RUN AUTO HOLD CAPTURE (M2-1)"].callback()
+        panel.OnTick()
+        data["AICadetsM2AckSeq-AICadetsM2-1"] = 1
+        data["AICadetsM2AckMode-AICadetsM2-1"] = "EngageDirect"
+        time.GameTime = 3.0
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 3.0
+        panel.OnTick()
+        data["AICadetsM2State-AICadetsM2-1"] = "ApproachGround"
+        time.GameTime = 3.1
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 3.1
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 3.1
+        panel.OnTick()
+        time.GameTime = 5.5
+        data["AICadetsM2StatusTime-AICadetsM2-1"] = 5.5
+        data["AICadetsM2ObservedPath-AICadetsM2-1"] = 1.99
+        data["AICadetsM2ObservedSampleTime-AICadetsM2-1"] = 5.5
+        panel.OnTick()
+        self.assertEqual(panel._autoHoldTestStage, "wait_ground_pursuit")
+        self.assertEqual(data["AICadetsCmdSequence"], 1)
 
 
 if __name__ == "__main__":

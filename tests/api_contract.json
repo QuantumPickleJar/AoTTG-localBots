@@ -252,6 +252,11 @@
           "min_args": 2,
           "max_args": 2
         },
+        "FileExists": {
+          "signature": "function FileExists(fileName: string) -> bool",
+          "min_args": 1,
+          "max_args": 1
+        },
         "GetProperty": {
           "signature": "function GetProperty(property: string, defaultValue: Object) -> Object",
           "min_args": 2,

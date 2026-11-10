@@ -137,6 +137,12 @@ def validate(source):
 def main():
     addon = ROOT / "addons"
     validate((addon / "AICadetsWaveCadet.cl").read_text())
+    command_panel = (addon / "AICadetsCommandPanel.cl").read_text()
+    m2_watcher = (addon / "AICadetsM2Watcher.cl").read_text()
+    assert 'PersistentData.FileExists(watcherFile)' in command_panel
+    assert 'Vector3.Distance(self._lastMotionSamplePosition, position)' in m2_watcher
+    assert CONTRACT["types"]["PersistentData"]["methods"]["FileExists"]["signature"] == "function FileExists(fileName: string) -> bool"
+    assert CONTRACT["types"]["Vector3"]["methods"]["Distance"]["signature"] == "function Distance(a: Vector3, b: Vector3) -> float"
     # Preserve known M0 probe bytes.
     # Git may check this file out with CRLF on Windows; compare the stable
     # repository bytes so line-ending conversion does not look like an M0 edit.
