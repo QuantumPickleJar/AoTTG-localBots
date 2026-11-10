@@ -131,6 +131,7 @@ Do not needlessly delay future isolated design/tests for unrelated unresolved co
 ## Related documentation
 
 - [M2 locomotion field procedure](M2_LOCOMOTION_STABILIZATION.md)
+- [M2 one-click Hold capture](M2_AUTO_HOLD_CAPTURE.md)
 - [M2 full combat acceptance matrix](M2_TESTING.md)
 - [M1 reference procedure](M1_TESTING.md)
 - [M3 composition and rescue design](M3_COMPOSITION_RESCUE_DESIGN.md)
